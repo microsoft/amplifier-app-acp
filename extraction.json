@@ -1,0 +1,710 @@
+{
+  "sourceRevision": "828d2bff97a77fbdbd0f06429369f7ff1f4abf42",
+  "modules": {
+    "app_guidance": {
+      "source": "app_guidance.py",
+      "sha256": "8d00d111d45818fa777829bf107e6cae77dadc34ead897258f729e0693e8a992",
+      "symbols": [
+        "_app_control_input_error",
+        "install_app_access"
+      ],
+      "lines": 166
+    },
+    "artifact_runtime": {
+      "source": "artifact_runtime.py",
+      "sha256": "e1361c18c861b1c382ecdab58666d2101c4395e7c75e955f728d81473f69781b",
+      "symbols": [
+        "_close_probe",
+        "_finish_probe",
+        "_await_cleanup",
+        "_probe",
+        "verify_imports",
+        "_executable",
+        "_version",
+        "_packages",
+        "discover"
+      ],
+      "lines": 233
+    },
+    "attachments": {
+      "source": "attachments.py",
+      "sha256": "0515e81e3456db99af48544e4ae842c1173b4c49788fa8b6b396bc2a69a53975",
+      "symbols": [
+        "location",
+        "metadata",
+        "file_path",
+        "encode"
+      ],
+      "lines": 86
+    },
+    "automatic_history": {
+      "source": "automatic_history.py",
+      "sha256": "b6ec4ca6003eaf5d556b50fde0850529c6e9f3fddbc9bf4625855a37904c0a86",
+      "symbols": [
+        "directory",
+        "revision",
+        "display_identity",
+        "display_message"
+      ],
+      "lines": 82
+    },
+    "builtin_behaviors": {
+      "source": "builtin_behaviors.py",
+      "sha256": "f84bc393712a6be8845e2609ba26c9e53a1b840153863489cdf0a056b4ed7a0b",
+      "symbols": [
+        "resource_root",
+        "app_behaviors",
+        "resolve_builtin_behavior"
+      ],
+      "lines": 40
+    },
+    "bundle_selection": {
+      "source": "bundle_selection.py",
+      "sha256": "0cc7a707536a1dd7e5024df7a7a489a1d2e037fd2de6623576b8738bcaa9b05f",
+      "symbols": [
+        "reset_controls",
+        "preview",
+        "inspect_bundle",
+        "BundleTransaction",
+        "switch"
+      ],
+      "lines": 169
+    },
+    "bundles": {
+      "source": "bundles.py",
+      "sha256": "a89eeed8daade6f9d334c872747e418cc2cb0a76a8a78ab470fd8313354f0c97",
+      "symbols": [],
+      "lines": 5
+    },
+    "capacity": {
+      "source": "capacity.py",
+      "sha256": "1ae0f0a3bb589ced49f7faf46b24cccbb39e3c0963c4db67890cf376d7a88a4d",
+      "symbols": [
+        "number",
+        "CapacityController"
+      ],
+      "lines": 123
+    },
+    "computation": {
+      "source": "computation.py",
+      "sha256": "8d4358b828ac54afc6db2b94cc0760699680ee57c23e5a72096b33f6d1df4ceb",
+      "symbols": [
+        "tool_schema",
+        "runtimes",
+        "install"
+      ],
+      "lines": 132
+    },
+    "context_continuity": {
+      "source": "context_continuity.py",
+      "sha256": "13435b2274f477854c265c7ee68e8041fd009bda12d8d759c1b514898de8e25b",
+      "symbols": [
+        "digest",
+        "ContextContinuity",
+        "install"
+      ],
+      "lines": 112
+    },
+    "deployment": {
+      "source": "deployment.py",
+      "sha256": "53ecf822b24aaab44050325c83f5a051e2f867107d425c05a8b2831a75ea36e1",
+      "symbols": [
+        "write_file",
+        "write_private"
+      ],
+      "lines": 36
+    },
+    "desktop_readiness": {
+      "source": "desktop_readiness.py",
+      "sha256": "bfab7080aabefbca195158d49e468b77ada84b745b0adc1a439f504e1dc20476",
+      "symbols": [
+        "environment",
+        "worker_report"
+      ],
+      "lines": 45
+    },
+    "execution_events": {
+      "source": "execution_events.py",
+      "sha256": "0faa5f56bf53f9ea69eabc03a123b022b1c59a1eea4b75d402170c8ef1283041",
+      "symbols": [
+        "public_usage",
+        "ExecutionEvents"
+      ],
+      "lines": 395
+    },
+    "history_revision": {
+      "source": "history_revision.py",
+      "sha256": "1be9236b9d64a9e669cc1235167edee5ff66a84083172043e2de228079e5086a",
+      "symbols": [
+        "receipt_path",
+        "same",
+        "recover_pending",
+        "rewind"
+      ],
+      "lines": 125
+    },
+    "host.approvals": {
+      "source": "host/approvals.py",
+      "sha256": "507c7f86d0c8548c7717df245bc46e55404d96903b9c60bf7a73864849901d46",
+      "symbols": [
+        "Approvals"
+      ],
+      "lines": 45
+    },
+    "host.bundle_paths": {
+      "source": "host/bundle_paths.py",
+      "sha256": "ff02302351b4296421c0acf3600d1cf2dd072d2bd3b2816a7ded3c81e59e0bcb",
+      "symbols": [
+        "local_bundle_path"
+      ],
+      "lines": 37
+    },
+    "host.children": {
+      "source": "host/children.py",
+      "sha256": "d32706eff61d5c0f9b4479eef64af9e02fa91a2c062da03ab5c860d4c1439784",
+      "symbols": [
+        "_module_id",
+        "_restrict_child_images",
+        "child_plan",
+        "StandaloneHostAdapter",
+        "Children",
+        "PersistentDelegate",
+        "WorkerControl",
+        "install_children"
+      ],
+      "lines": 593
+    },
+    "host.components": {
+      "source": "host/components.py",
+      "sha256": "ae929e6523b5dae1ef1bbb47d41bcc916463ae4539eb2846c1b83eb9e3554c6d",
+      "symbols": [
+        "HostComponentConflict",
+        "merge_modules",
+        "declarations",
+        "git_source",
+        "installed_package_source",
+        "HostComponents",
+        "compose_bundles",
+        "imagegen_defaults",
+        "ComponentResolver"
+      ],
+      "lines": 255
+    },
+    "host.config": {
+      "source": "host/config.py",
+      "sha256": "016e5fbbfb9aa1dda8a2014bc00b42528846767bf3d420c1f94ba16a58795349",
+      "symbols": [
+        "app_home",
+        "merge",
+        "_load_keys",
+        "credential_environment_source",
+        "expand_environment",
+        "HostConfig",
+        "prepare_registry",
+        "configure_skill_cache",
+        "load_config",
+        "read_config"
+      ],
+      "lines": 251
+    },
+    "host.context_source": {
+      "source": "host/context_source.py",
+      "sha256": "a57fcb5ae930bcbe6a1b39445c9c52576201697848c26f6115faec0260e9a7df",
+      "symbols": [
+        "_repository",
+        "_files",
+        "_git",
+        "_InstalledSource",
+        "equivalent_context_source"
+      ],
+      "lines": 139
+    },
+    "host.mentions": {
+      "source": "host/mentions.py",
+      "sha256": "65759152e9ee8a594760405818703f15b72ba2e84c47e389153f26308f2b025c",
+      "symbols": [
+        "include_instruction_files",
+        "AppMentionResolver",
+        "install",
+        "expand_input"
+      ],
+      "lines": 85
+    },
+    "host.model_selection": {
+      "source": "host/model_selection.py",
+      "sha256": "bc442f1c1150fad4011f1061f0bd5a7b475f555cb355c97dac286cc188ce4b39",
+      "symbols": [
+        "ProviderSelectionError",
+        "inherited_selection",
+        "delegation_routing",
+        "child_routing",
+        "public_routing"
+      ],
+      "lines": 74
+    },
+    "host.naming": {
+      "source": "host/naming.py",
+      "sha256": "9037bb1b4812bb1d302717b640b8aa4c152482cdcf7604ffc94eb7c773373a74",
+      "symbols": [
+        "claim_root_lifecycle",
+        "LiveSessionNaming"
+      ],
+      "lines": 269
+    },
+    "host.prompt_events": {
+      "source": "host/prompt_events.py",
+      "sha256": "64a30509443bad3ccbddf718c4b6e107e7b386e590a054f820afd2b55dc813f5",
+      "symbols": [
+        "install"
+      ],
+      "lines": 33
+    },
+    "host.session": {
+      "source": "host/session.py",
+      "sha256": "addd2e1a4908854353b66a31955877ccebf1a776f53b1c537ff3cca9d2cb89d0",
+      "symbols": [
+        "redact",
+        "live_plan",
+        "repair_interrupted_receipts",
+        "NativeTranscriptConflict",
+        "_NativeTranscriptGuard",
+        "SelectedProvider",
+        "apply_provider_environment",
+        "_apply_settings",
+        "is_snapshot",
+        "_expand_module_configuration",
+        "_apply_host_policy",
+        "compose_configured_bundle",
+        "installed_loop_source",
+        "installed_naming_source",
+        "required_components",
+        "module_source",
+        "load_configured_bundle",
+        "session_registry",
+        "load_root_bundle",
+        "ResolvedRoot",
+        "prepare_manager"
+      ],
+      "lines": 871
+    },
+    "host.storage": {
+      "source": "host/storage.py",
+      "sha256": "03128757e3654c8cfdb0fea2711b852e45ec22f8566329c9093ab06b187b745b",
+      "symbols": [
+        "_metadata",
+        "SessionStore"
+      ],
+      "lines": 258
+    },
+    "host_identity": {
+      "source": "host_identity.py",
+      "sha256": "5644181c7d0d454085605bf6eb737759deb6b436d8bd2a4263ea75aa30f433cf",
+      "symbols": [
+        "local_host_identity"
+      ],
+      "lines": 8
+    },
+    "image_capabilities": {
+      "source": "image_capabilities.py",
+      "sha256": "bd5ea9e1af5cc3bb1f92c812ebdd27daa09b3c97256bd28089fb3fa17c12a701",
+      "symbols": [
+        "ImageCapabilities"
+      ],
+      "lines": 45
+    },
+    "managed_chats": {
+      "source": "managed_chats.py",
+      "sha256": "49da3ce205d6990a3822b55df8a67f09723753dd580c4c0d00d1585fde03ed63",
+      "symbols": [
+        "is_managed",
+        "metadata",
+        "allocate"
+      ],
+      "lines": 96
+    },
+    "memory_consolidation": {
+      "source": "memory_consolidation.py",
+      "sha256": "79301fac8f8320430c4d811d9819de4fd9e1032314a14d09e2cdcb5464c43487",
+      "symbols": [
+        "generate"
+      ],
+      "lines": 40
+    },
+    "memory_delivery": {
+      "source": "memory_delivery.py",
+      "sha256": "74ebcbd16b45730e44f1f5f80e5d475ade234025795e8dfc86ac63184862dfa6",
+      "symbols": [
+        "MemoryDelivery"
+      ],
+      "lines": 61
+    },
+    "message_delivery": {
+      "source": "message_delivery.py",
+      "sha256": "6811cd684e5913bb1870cd1097ad0fe116a60f93fb4c6b1188f37c0666d0df5b",
+      "symbols": [
+        "contains_input"
+      ],
+      "lines": 10
+    },
+    "message_interactions": {
+      "source": "message_interactions.py",
+      "sha256": "abf9459c994213ebfa7f1d2bab8c7021b40c76e5c981ee4942927f5002b119ac",
+      "symbols": [
+        "quoted_text",
+        "fork_annotations",
+        "prepare_input"
+      ],
+      "lines": 36
+    },
+    "module_failures": {
+      "source": "module_failures.py",
+      "sha256": "1eb7b924ca712ef7af1a240dc525aa3c73c17f355abb30622cb6f78f604ad4e0",
+      "symbols": [
+        "safe_failures",
+        "ConfiguredModuleError",
+        "persist_failures",
+        "clear_failures"
+      ],
+      "lines": 60
+    },
+    "naming": {
+      "source": "naming.py",
+      "sha256": "c16cfe878dd15ee24e8deb8b8089422bd62b9efb310c42e6429a6f19d6162428",
+      "symbols": [
+        "automatic_metadata",
+        "accept_generated",
+        "legacy",
+        "read",
+        "initial_name",
+        "adopt"
+      ],
+      "lines": 94
+    },
+    "native_provider": {
+      "source": "native_provider.py",
+      "sha256": "5a4d460e4ab822d8e2eb3e3802038ed133085ba1d4a10c092f0fe5a4d222d269",
+      "symbols": [
+        "NativeProviderHost",
+        "install_native"
+      ],
+      "lines": 199
+    },
+    "observation_input": {
+      "source": "observation_input.py",
+      "sha256": "fd3853d98bc9155dd742dd7a490430d08a477894a1c85f9962fe7188f9ad25d8",
+      "symbols": [
+        "finish",
+        "admit"
+      ],
+      "lines": 72
+    },
+    "output_image_delivery": {
+      "source": "output_image_delivery.py",
+      "sha256": "676e80ad5e15a2aca29e034ab7058b85d1a7fddef267e497d1cf695d2102a45b",
+      "symbols": [
+        "successful_output",
+        "pair_retained",
+        "OutputImageDelivery"
+      ],
+      "lines": 226
+    },
+    "ownership": {
+      "source": "ownership.py",
+      "sha256": "85881000a5d0ce6ef6858132eace09beb51fc5888a122ba4209b6176f5332986",
+      "symbols": [
+        "WorkerOwnership"
+      ],
+      "lines": 103
+    },
+    "provider_catalog": {
+      "source": "provider_catalog.py",
+      "sha256": "63e8fad94a0a753c9560c62ad0a97791e22c66e1f972fec493d67cb6431cf71a",
+      "symbols": [
+        "fingerprint",
+        "_receipt_digest",
+        "generation_identity",
+        "_qualified_provider_sources",
+        "configuration_key",
+        "mounted_catalog_keys",
+        "ProviderCatalog"
+      ],
+      "lines": 238
+    },
+    "provider_environment": {
+      "source": "provider_environment.py",
+      "sha256": "463222c67e6764202c019241b5cf00b9f3a07dacedc5fa75d2e0c3120da7aa38",
+      "symbols": [
+        "provider_class",
+        "close_provider",
+        "config_schema",
+        "construct_schema_provider",
+        "provider_config_schema",
+        "materialize_provider_config",
+        "materialize_bundle_providers",
+        "iter_provider_rows",
+        "_value",
+        "_schema_fields",
+        "_environment_value"
+      ],
+      "lines": 220
+    },
+    "provider_recording": {
+      "source": "provider_recording.py",
+      "sha256": "827dfd19d5e47d0e154011d52a5e4f70c78db0e1a5dac29b7018625ba11f98bd",
+      "symbols": [
+        "recording_enabled",
+        "apply_provider_recording",
+        "redact_request",
+        "install_request_redaction"
+      ],
+      "lines": 151
+    },
+    "recovery_observations": {
+      "source": "recovery_observations.py",
+      "sha256": "fb71bb6930142a4f5005858957c03f045dfbe7780212764630f2f15dd410c566",
+      "symbols": [
+        "recovery_facts"
+      ],
+      "lines": 47
+    },
+    "runtime": {
+      "source": "runtime.py",
+      "sha256": "500af27f1c8a64bbba6f372677604f5d6dbedf00c971e5cfe8d68731cad8e869",
+      "symbols": [
+        "RuntimeStartupError"
+      ],
+      "lines": 6
+    },
+    "runtime_bootstrap": {
+      "source": "runtime_bootstrap.py",
+      "sha256": "9b863774864d52ea572e827d4908fe57ce7958d4cc2173c42acc2f02f6143b54",
+      "symbols": [
+        "bootstrap_app_package"
+      ],
+      "lines": 33
+    },
+    "runtime_controls": {
+      "source": "runtime_controls.py",
+      "sha256": "74664f4f14012b1e255bf370c952205955e4960bf73d09bde8cca6420e09ef96",
+      "symbols": [
+        "public_config",
+        "identity",
+        "restore_redactions",
+        "override_path",
+        "validate_plan",
+        "RuntimeControls"
+      ],
+      "lines": 745
+    },
+    "runtime_environment": {
+      "source": "runtime_environment.py",
+      "sha256": "f05d86bffed25c4fa788985384b6dd9163bcaf6ae3281533de07cce450d7a19e",
+      "symbols": [
+        "manifest_path",
+        "receipt_directory",
+        "manifest_content",
+        "project_path",
+        "locked_sources",
+        "package_name",
+        "toml_value"
+      ],
+      "lines": 80
+    },
+    "runtime_protocol": {
+      "source": "runtime_protocol.py",
+      "sha256": "0316c164a342ab4d7fc58ce4d62070293ce09fb5c35fa169a37ccc37c1390d06",
+      "symbols": [
+        "encode_message"
+      ],
+      "lines": 12
+    },
+    "runtime_qualification": {
+      "source": "runtime_qualification.py",
+      "sha256": "905d2cde966812e00f9143a60530644956e8b3249429a8c53689472761366d7f",
+      "symbols": [
+        "installed_graph",
+        "override_content",
+        "verify_install_overrides",
+        "_local_directory_identity",
+        "verify_recorded",
+        "active_install_overrides"
+      ],
+      "lines": 162
+    },
+    "runtime_worker": {
+      "source": "runtime_worker.py",
+      "sha256": "a1896ace391158bafb9c345e8acc60e6a179af6758d1bf14c0691186bcbce1cf",
+      "symbols": [
+        "configure_protocol",
+        "publish",
+        "Worker"
+      ],
+      "lines": 864
+    },
+    "scheduled_input": {
+      "source": "scheduled_input.py",
+      "sha256": "ed7e44981c5e826dff82be16d88f1c36d342c4419da806916db6ddd24a149f0b",
+      "symbols": [
+        "finish",
+        "admit"
+      ],
+      "lines": 71
+    },
+    "session_files": {
+      "source": "session_files.py",
+      "sha256": "7630e4bd39578fe3f55d04ed34e018d4d61faeb679c1ff3540a3d94715a99bd4",
+      "symbols": [
+        "amplifier_home",
+        "project_slug",
+        "validate_id",
+        "sessions_dir",
+        "capture_sessions_dir",
+        "capture_dir"
+      ],
+      "lines": 41
+    },
+    "session_health": {
+      "source": "session_health.py",
+      "sha256": "50c6c625daf758c137bcfe815a30e54a7798a6aebc44cbeae6837400ad370ebb",
+      "symbols": [
+        "failure_details",
+        "exception_details",
+        "recovery_context"
+      ],
+      "lines": 90
+    },
+    "session_store": {
+      "source": "session_store.py",
+      "sha256": "c55fa42b3ad389984e62b389ffc65410ca6ced097660636dabb15f7af67243fa",
+      "symbols": [
+        "_BoundaryUnavailable",
+        "text_content",
+        "message_time",
+        "matches_user",
+        "_input_identity",
+        "_native_anchor",
+        "user_boundaries",
+        "visible_reference",
+        "complete_tool_exchanges",
+        "_index_visible",
+        "_checkpoint_end",
+        "_full_fork_view",
+        "fork_session"
+      ],
+      "lines": 471
+    },
+    "setup": {
+      "source": "setup.py",
+      "sha256": "5d7fe0ec8a2c163b693f9a35079531e07278b784842dec1206f94bc6ec83b433",
+      "symbols": [
+        "credential_field",
+        "key_preview",
+        "environment_credential"
+      ],
+      "lines": 91
+    },
+    "shared_settings": {
+      "source": "shared_settings.py",
+      "sha256": "dc5e2e1e7f1c59c2e4515d7452d55e2cced30e9b4c3045794336474de9312eeb",
+      "symbols": [
+        "read_yaml",
+        "settings_paths",
+        "read_settings",
+        "routing_dirs"
+      ],
+      "lines": 42
+    },
+    "shared_state": {
+      "source": "shared_state.py",
+      "sha256": "bba781c8c30d1466e32137afa86184a9a4552b5b545b9a4b3de8369b4ad78a95",
+      "symbols": [
+        "Activation",
+        "ActivationGate",
+        "configuration_paths",
+        "configuration_stamp"
+      ],
+      "lines": 91
+    },
+    "shared_state_probe": {
+      "source": "shared_state_probe.py",
+      "sha256": "ddc38a1497625e85310340566bb3fdcbb89179a14e3cbe2a34edde6171de7ba8",
+      "symbols": [
+        "text_content"
+      ],
+      "lines": 15
+    },
+    "surface_context": {
+      "source": "surface_context.py",
+      "sha256": "d073f5709e470fab87e6de789a0a6d2c04632ad1a21c0a5915fd01e1cc1baa30",
+      "symbols": [
+        "compact"
+      ],
+      "lines": 6
+    },
+    "surface_delivery": {
+      "source": "surface_delivery.py",
+      "sha256": "de79319e21585fa58b8653c26f44dc408dd7c344308c90c0c22f67893e152e5b",
+      "symbols": [
+        "retained_surface_receipt",
+        "SurfaceDelivery",
+        "SurfaceProvider"
+      ],
+      "lines": 223
+    },
+    "task_continuity": {
+      "source": "task_continuity.py",
+      "sha256": "9d493286c82dc5df10dcb499791fd37376c1d2410d5af808887be6f17e25f72b",
+      "symbols": [
+        "TaskController"
+      ],
+      "lines": 170
+    },
+    "token_usage": {
+      "source": "token_usage.py",
+      "sha256": "0f18b6d5816d14d4a532c16db67f48f8989ca55e6ab7da522b37a6adbf60f3d0",
+      "symbols": [
+        "with_gross_tokens"
+      ],
+      "lines": 29
+    },
+    "tool_authority": {
+      "source": "tool_authority.py",
+      "sha256": "8d3fb9de3c187dfe80ac4ef2a9468ae7b5aaf9dcda541cf995a3570c3321c7b8",
+      "symbols": [
+        "require_generic_tool"
+      ],
+      "lines": 13
+    },
+    "updates": {
+      "source": "updates.py",
+      "sha256": "33a5a568d1c3e2d1d8f256adf1dcc65f731a0f0d2afec75976da291996016108",
+      "symbols": [
+        "active_release",
+        "foundation_home"
+      ],
+      "lines": 30
+    },
+    "voice_visual_delivery": {
+      "source": "voice_visual_delivery.py",
+      "sha256": "d6fd3d386026eec26f51a808f4e6d6ef626656f52cc13196e9474506e6dbcbf4",
+      "symbols": [
+        "VoiceVisualDelivery"
+      ],
+      "lines": 95
+    },
+    "worker_diagnostics": {
+      "source": "worker_diagnostics.py",
+      "sha256": "586244fb357fa81854c75df1671343177e2ce2e25d7d45aed8bfc176d31b5734",
+      "symbols": [
+        "redact_diagnostic",
+        "_bounded",
+        "_home",
+        "diagnostic_reference",
+        "save_startup_failure",
+        "StartupCapture"
+      ],
+      "lines": 135
+    }
+  },
+  "sourceRepository": "https://github.com/microsoft/amplifier-unified"
+}

@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "amplifier-acp"
+version = "0.1.0"
+description = "ACP v1 adapter for the full modular Amplifier Core and Foundation runtime"
+requires-python = ">=3.13"
+license = "MIT"
+dependencies = [
+  "amplifier-core>=2.0.1",
+  "amplifier-foundation",
+  "amplifier-module-loop-live",
+  "amplifier-module-tool-mcp",
+  "amplifier-module-hooks-session-naming",
+  "filelock>=3.20,<4",
+  "jsonschema>=4.23,<5",
+  "pyyaml>=6.0.3,<7",
+  "websockets>=15,<16",
+]
+
+[project.scripts]
+amplifier-acp = "amplifier_acp.server:main"
+
+[tool.uv]
+no-build-package = ["amplifier-core"]
+
+[tool.uv.sources]
+amplifier-foundation = { git = "https://github.com/microsoft/amplifier-foundation", rev = "main" }
+amplifier-module-loop-live = { git = "https://github.com/microsoft/amplifier-module-loop-live", rev = "main" }
+amplifier-module-hooks-session-naming = { git = "https://github.com/microsoft/amplifier-foundation", rev = "main", subdirectory = "modules/hooks-session-naming" }
+
+amplifier-module-tool-mcp = { git = "https://github.com/microsoft/amplifier-module-tool-mcp", rev = "main" }
+
+amplifier-module-context-simple = { git = "https://github.com/microsoft/amplifier-module-context-simple", rev = "main" }
+amplifier-module-provider-fixture = { path = "tests/fixtures/provider", editable = true }
+
+amplifier-module-tool-delegate = { git = "https://github.com/microsoft/amplifier-foundation", rev = "main", subdirectory = "modules/tool-delegate" }
+amplifier-module-provider-openai = { git = "https://github.com/microsoft/amplifier-module-provider-openai", rev = "main" }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/amplifier_acp"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "amplifier-module-context-simple", "amplifier-module-provider-fixture", "amplifier-module-tool-delegate", "amplifier-module-provider-openai"]

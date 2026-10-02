@@ -1,0 +1,116 @@
+{
+  "recordedAt": "2026-10-02T18:49:56.779172+00:00",
+  "python": "3.13.11",
+  "platform": "Darwin arm64",
+  "nativeSourceRevision": "828d2bff97a77fbdbd0f06429369f7ff1f4abf42",
+  "packages": [
+    {
+      "name": "amplifier-acp",
+      "version": "0.1.0",
+      "source": {
+        "editable": true,
+        "location": "local checkout or test fixture"
+      }
+    },
+    {
+      "name": "amplifier-core",
+      "version": "2.0.1",
+      "source": {}
+    },
+    {
+      "name": "amplifier-foundation",
+      "version": "1.0.0",
+      "source": {
+        "url": "https://github.com/microsoft/amplifier-foundation",
+        "vcs": "git",
+        "commit_id": "18546f64709df8d737b851fada431466b124b359",
+        "requested_revision": "main"
+      }
+    },
+    {
+      "name": "amplifier-module-context-simple",
+      "version": "1.0.0",
+      "source": {
+        "url": "https://github.com/microsoft/amplifier-module-context-simple",
+        "vcs": "git",
+        "commit_id": "c7ec55db96888200ba619adedc857278daf787c5",
+        "requested_revision": "main"
+      }
+    },
+    {
+      "name": "amplifier-module-hooks-session-naming",
+      "version": "0.2.0",
+      "source": {
+        "url": "https://github.com/microsoft/amplifier-foundation",
+        "vcs": "git",
+        "commit_id": "18546f64709df8d737b851fada431466b124b359",
+        "requested_revision": "main"
+      }
+    },
+    {
+      "name": "amplifier-module-loop-live",
+      "version": "0.2.0",
+      "source": {
+        "url": "https://github.com/microsoft/amplifier-module-loop-live",
+        "vcs": "git",
+        "commit_id": "36d242ed2a3a061e2e670779ca646edf85f006be",
+        "requested_revision": "main"
+      }
+    },
+    {
+      "name": "amplifier-module-loop-streaming",
+      "version": "1.0.0",
+      "source": {
+        "url": "https://github.com/microsoft/amplifier-module-loop-streaming",
+        "vcs": "git",
+        "commit_id": "dd916499344671e0209d4951bc025777e3e891fd",
+        "requested_revision": "main"
+      }
+    },
+    {
+      "name": "amplifier-module-provider-fixture",
+      "version": "0.1.0",
+      "source": {
+        "editable": true,
+        "location": "local checkout or test fixture"
+      }
+    },
+    {
+      "name": "amplifier-module-provider-openai",
+      "version": "1.0.0",
+      "source": {
+        "url": "https://github.com/microsoft/amplifier-module-provider-openai",
+        "vcs": "git",
+        "commit_id": "819bc44d7039d481b3938c3b4e46466efad7297c",
+        "requested_revision": "main"
+      }
+    },
+    {
+      "name": "amplifier-module-tool-delegate",
+      "version": "0.1.0",
+      "source": {
+        "url": "https://github.com/microsoft/amplifier-foundation",
+        "vcs": "git",
+        "commit_id": "18546f64709df8d737b851fada431466b124b359",
+        "requested_revision": "main"
+      }
+    },
+    {
+      "name": "amplifier-module-tool-mcp",
+      "version": "0.2.2",
+      "source": {
+        "url": "https://github.com/microsoft/amplifier-module-tool-mcp",
+        "vcs": "git",
+        "commit_id": "1229a364557fd17d95ad31d6805e1a013287b951",
+        "requested_revision": "main"
+      }
+    }
+  ],
+  "validation": {
+    "suite": "141 passed",
+    "liveAccounts": false,
+    "offlineFixtures": true,
+    "additionalTargeted": "3 native lifecycle tests after identity-label change; 2 new retention/content tests",
+    "uniqueTestsPassed": 143
+  }
+}

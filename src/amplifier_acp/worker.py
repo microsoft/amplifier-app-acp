@@ -1,0 +1,131 @@
+"""One process per native session: cwd, credentials and writer leases never mix."""
+from __future__ import annotations
+import asyncio
+import json
+import os
+import sys
+import uuid
+from pathlib import Path
+
+class NativeError(RuntimeError):
+    def __init__(self, message, *, data=None):
+        super().__init__(message)
+        self.data = data or {}
+
+class NativeWorker:
+    def __init__(self, session_id, cwd, config, observe, bridge):
+        self.session_id, self.cwd, self.config = session_id, cwd, config
+        self.observe, self.bridge = observe, bridge
+        self.process = None
+        self.pending = {}
+        self.tasks = set()
+        self.closed = False
+        self.ready = asyncio.get_running_loop().create_future()
+        self.report = {}
+        self._write_lock = asyncio.Lock()
+        self._close_lock = asyncio.Lock()
+
+    async def start(self, host_bridge=False, mcp_servers=None):
+        env = os.environ.copy()
+        # Explicit process env remains authoritative over settings keys.env.
+        if self.config.get('home'):
+            env['AMPLIFIER_HOME'] = str(Path(self.config['home']).expanduser().resolve())
+        if self.config.get('appHome'):
+            env['AMPLIFIER_WEB_HOME'] = str(Path(self.config['appHome']).expanduser().resolve())
+        if self.config.get('registryHome'):
+            env['AMPLIFIER_ACP_REGISTRY_HOME'] = str(Path(self.config['registryHome']).expanduser().resolve())
+        command = self.config.get('workerCommand') or [sys.executable, '-m', 'amplifier_acp.native.runtime_worker']
+        self.process = await asyncio.create_subprocess_exec(*command, cwd=self.cwd, env=env,
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=sys.stderr, limit=48_000_001)
+        self.reader = asyncio.create_task(self.read())
+        await self.write({'op':'start','session':{'id':self.session_id,'workspace':self.cwd,
+            'bundle':self.config.get('bundle'), 'hostBridge':host_bridge, 'mcpServers':mcp_servers or []}})
+        try:
+            self.report = await asyncio.wait_for(asyncio.shield(self.ready), self.config.get('startupTimeout',180))
+        except BaseException:
+            await self.close()
+            raise
+        return self.report
+
+    async def write(self, message):
+        if not self.process or self.process.returncode is not None:
+            raise NativeError('Native runtime is not running; no work was replayed.')
+        encoded = (json.dumps(message,ensure_ascii=False,allow_nan=False)+'\n').encode()
+        if len(encoded)>48_000_000:
+            raise NativeError('Native request exceeds the 48 MB transport limit.')
+        async with self._write_lock:
+            self.process.stdin.write(encoded)
+            await self.process.stdin.drain()
+
+    async def command(self, op, **arguments):
+        identity = str(uuid.uuid4())
+        future = asyncio.get_running_loop().create_future()
+        self.pending[identity]=future
+        try:
+            await self.write({'op':op,'id':identity,**arguments})
+            # No automatic timeout/retry: an admitted operation can have effects.
+            return await future
+        finally:
+            self.pending.pop(identity,None)
+
+    async def control(self, operation, arguments=None):
+        return await self.command('control',operation=operation,arguments=arguments or {})
+
+    def track(self, awaitable):
+        task=asyncio.create_task(awaitable); self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
+
+    async def bridge_request(self, row):
+        try:
+            value = await self.bridge(row['operation'],row.get('args',{}))
+            await self.write({'op':'bridge.result','id':row['id'],'result':value})
+        except BaseException as exc:
+            if not self.closed:
+                await self.write({'op':'bridge.result','id':row['id'],'error':str(exc)})
+
+    async def read(self):
+        failure = NativeError('Native runtime stopped; inspect durable history before retrying.', data={'outcome':'unknown','replayed':False})
+        try:
+            while line := await self.process.stdout.readline():
+                row=json.loads(line)
+                if row.get('op')=='reply':
+                    future=self.pending.get(row.get('id'))
+                    if future and not future.done():
+                        if row.get('error'):future.set_exception(NativeError(row['error'],data={k:v for k,v in row.items() if k not in {'error','op','id'}}))
+                        else:future.set_result(row.get('result'))
+                elif row.get('op')=='bridge':self.track(self.bridge_request(row))
+                else:
+                    if row.get('type')=='runtime.ready' and not self.ready.done():self.ready.set_result(row.get('report',{}))
+                    if row.get('type')=='runtime.error':
+                        failure=NativeError(row.get('error','Runtime failed'),data={k:v for k,v in row.items() if k not in {'type','error'}})
+                        if not self.ready.done():self.ready.set_exception(failure)
+                    await self.observe(row)
+        except (ValueError, OSError, asyncio.IncompleteReadError) as exc:
+            failure=NativeError('Invalid native runtime response; no work replayed.',data={'outcome':'unknown','errorType':type(exc).__name__})
+        finally:
+            if not self.ready.done():self.ready.set_exception(failure)
+            for future in self.pending.values():
+                if not future.done():future.set_exception(failure)
+            await self.observe({'type':'runtime.closed','error':str(failure),'data':failure.data})
+
+    async def close(self):
+        async with self._close_lock:
+            await self._close()
+
+    async def _close(self):
+        if self.closed:return
+        self.closed=True
+        if self.process:
+            if self.process.returncode is None:
+                try:
+                    await self.write({'op':'stop'})
+                    await asyncio.wait_for(self.process.wait(),10)
+                except (TimeoutError, BrokenPipeError, ConnectionResetError, NativeError):
+                    if self.process.returncode is None:
+                        self.process.terminate()
+                        try:await asyncio.wait_for(self.process.wait(),5)
+                        except TimeoutError:self.process.kill();await self.process.wait()
+            if hasattr(self,'reader'):await asyncio.gather(self.reader,return_exceptions=True)
+        for task in self.tasks:task.cancel()
+        await asyncio.gather(*self.tasks,return_exceptions=True)

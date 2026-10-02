@@ -1,0 +1,23 @@
+bundle:
+  name: unified-shell
+  display_name: Unified shell
+  version: 1.0.0
+  description: Discover and use Amplifier Unified shell customization and extension authoring skills.
+  namespace_root: ..
+
+includes:
+  - bundle: git+https://github.com/microsoft/amplifier-bundle-skills@main#subdirectory=behaviors/skills-tool.yaml
+
+tools:
+  - module: tool-skills
+    # Pin the module too: the upstream behavior's module source tracks main.
+    source: git+https://github.com/microsoft/amplifier-bundle-skills@main#subdirectory=modules/tool-skills
+    config:
+      skills:
+        - .amplifier/skills
+        - ~/.amplifier/skills
+        - "@unified:skills"
+
+context:
+  include:
+    - unified:context/shell-skills.md

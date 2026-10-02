@@ -1,0 +1,3 @@
+# Module activators run separately from the worker project. Follow the same
+# Foundation branch; the worker lock records the installed revision for rollback.
+amplifier-foundation @ git+https://github.com/microsoft/amplifier-foundation@main
