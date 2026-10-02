@@ -415,7 +415,7 @@ class Server:
             return {'protocolVersion':1,'agentInfo':{'name':'amplifier-acp','title':'Amplifier','version':__version__},
                 'agentCapabilities':{'loadSession':True,'sessionCapabilities':{'resume':{},'close':{}},
                     'promptCapabilities':{'image':True,'audio':False,'embeddedContext':True},
-                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True},'scheduledTurns':{'version':1,'completion':'settled'},'configurationClone':{'version':1},'lifecycle':{'version':1,'gracefulRetire':True},'relocation':{'version':1,'passiveInspection':True},**({'admin':{'version':1}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
+                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True,'passiveInspect':True},'scheduledTurns':{'version':1,'completion':'settled'},'configurationClone':{'version':1},'lifecycle':{'version':1,'gracefulRetire':True},'relocation':{'version':1,'passiveInspection':True},**({'admin':{'version':1}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
         if not self.initialized:raise RpcError(-32600,'Initialize this connection first.')
         if method in {'_amplifier/relocation','_amplifier/relocation/reconcile'}:
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
@@ -426,12 +426,14 @@ class Server:
             from .admin import Administration
             if not hasattr(self,'admin'):self.admin=Administration(self.config)
             return await self.admin.perform(params.get('cwd'),params.get('operation'),params.get('args',{}))
-        if method=='_amplifier/history':
+        if method in {'_amplifier/history','_amplifier/history/inspect'}:
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
             cwd=Path(params.get('cwd','')).expanduser()
             if not cwd.is_absolute() or not cwd.is_dir():raise RpcError(-32602,'cwd must be an existing absolute directory.')
-            from .history import page
-            return page(self.directory(str(cwd.resolve()),params.get('sessionId')),cursor=params.get('cursor'),limit=params.get('limit',50))
+            from .history import page,inspect
+            directory=self.directory(str(cwd.resolve()),params.get('sessionId'))
+            if method.endswith('/inspect'):return inspect(directory)
+            return page(directory,cursor=params.get('cursor'),limit=params.get('limit',50),expected_revision=params.get('expectedRevision'))
         if method=='_amplifier/session/new':
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
             from .configuration_clone import prepare

@@ -53,6 +53,9 @@
             "enum": [
               "unknown"
             ]
+          },
+          "recordedOnly": {
+            "type": "boolean"
           }
         },
         "required": [

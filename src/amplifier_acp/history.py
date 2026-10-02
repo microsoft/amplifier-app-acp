@@ -21,9 +21,31 @@ def stamp(path):
 
 def source(directory):
     primary=directory/'transcript.jsonl';backup=directory/'transcript.jsonl.backup'
-    if primary.exists():return primary,[]
-    if backup.exists():return backup,[{'code':'backup_read','message':'Primary transcript is missing; reading preserved backup without changing it.'}]
+    if primary.exists() or primary.is_symlink():return primary,[]
+    if backup.exists() or backup.is_symlink():return backup,[{'code':'backup_read','message':'Primary transcript is missing; reading preserved backup without changing it.'}]
     raise HistoryError('Native history does not exist.')
+
+def inspect(directory):
+    """Cheap revision only: regular-file stat, no transcript parse or engine."""
+    directory=Path(directory)
+    if not any(path.exists() or path.is_symlink() for path in (directory/'transcript.jsonl',directory/'transcript.jsonl.backup')):
+        return {'available':False,'revision':None,'diagnostics':[{'code':'missing_native_history'}]}
+    path,diagnostics=source(directory);revision,_=stamp(path)
+    return {'available':True,'revision':revision,'diagnostics':diagnostics}
+
+
+def provenance(row):
+    metadata=row.get('metadata') or {};marker=metadata.get('amplifier_input') or {}
+    result={'authorization':'unverified-native-history','inputOrigin':'unknown'}
+    # Only recorded facts. Input(kind=user) is not proof of current human consent.
+    for name in ('inputOrigin','questionId','scheduledRunId','voiceId','voiceItemId','createdAt'):
+        value=metadata.get(name,row.get(name))
+        if value is None and name=='createdAt':value=metadata.get('timestamp')
+        if isinstance(value,str) and len(value)<=8192:result[name]=value
+        elif name=='createdAt' and type(value) in (int,float):result[name]=value
+    native={key:value for key,value in marker.items() if key in {'id','kind','source','call_id'} and isinstance(value,str) and len(value)<=8192}
+    if native:result['nativeInput']=native
+    return result
 
 def visible(row):
     metadata=row.get('metadata') or {}
@@ -35,7 +57,7 @@ def content_updates(row,position):
     """Public transcript projection; hidden reasoning and system prompts stay private."""
     role=row.get('role');blocks=row.get('content','');updates=[];diagnostics=[]
     voice=(row.get('metadata') or {}).get('amplifier_voice')
-    meta={'amplifier.dev/history':{'position':position,**({'via':'call','callId':voice['callId'],'itemId':voice['itemId'],'recordedOnly':True} if voice else {})}}
+    meta={'amplifier.dev/history':{'position':position,**provenance(row),**({'via':'call','callId':voice['callId'],'itemId':voice['itemId'],'recordedOnly':True} if voice else {})}}
     if not visible(row):return updates,diagnostics
     if role=='tool':
         identity=row.get('tool_call_id')
@@ -79,9 +101,10 @@ def content_updates(row,position):
 def _cursor(revision,offset):
     return base64.urlsafe_b64encode(json.dumps({'revision':revision,'offset':offset},separators=(',',':')).encode()).decode().rstrip('=')
 
-def page(directory,*,cursor=None,limit=50,max_bytes=2_000_000):
+def page(directory,*,cursor=None,limit=50,max_bytes=2_000_000,expected_revision=None):
     if type(limit) is not int or not 1<=limit<=200:raise HistoryError('History turn limit must be an integer from 1 to 200.')
     path,diagnostics=source(Path(directory));revision,size=stamp(path);end=size
+    if expected_revision is not None and revision!=expected_revision:raise HistoryError('Native history changed since inspection; request a fresh revision.')
     if cursor:
         if not isinstance(cursor,str) or len(cursor)>512:raise HistoryError('Invalid history cursor.')
         try:

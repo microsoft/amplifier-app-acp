@@ -38,3 +38,39 @@ def test_backup_and_malformed_records_are_explicit(tmp_path):
     assert page(p)['diagnostics'][0]['code']=='backup_read'
     file.write_text('not-json\n')
     with pytest.raises(HistoryError,match='malformed'):page(p)
+
+def test_passive_revision_never_reads_history_and_metadata_never_grants_authority(tmp_path,monkeypatch):
+    from amplifier_acp.history import inspect
+    p=tmp_path/'session';file=history(p,1)
+    row={'role':'user','content':'scheduled content','metadata':{'amplifier_input':{'id':'stable','kind':'user','source':'user'},'inputOrigin':'schedule','scheduledRunId':'run1','questionId':'question1','createdAt':123}}
+    file.write_text(json.dumps(row)+'\n')
+    with monkeypatch.context() as patch:
+        patch.setattr(type(file),'open',lambda *_a,**_kw:(_ for _ in ()).throw(AssertionError('passive inspect read contents')))
+        revision=inspect(p)['revision']
+    result=page(p,expected_revision=revision);meta=result['updates'][0]['_meta']['amplifier.dev/history']
+    assert meta['scheduledRunId']=='run1' and meta['questionId']=='question1' and meta['nativeInput']['id']=='stable'
+    assert meta['authorization']=='unverified-native-history'
+    assert meta['inputOrigin']=='schedule' and meta['createdAt']==123
+    file.write_text(json.dumps({'role':'user','content':'legacy'})+'\n')
+    with pytest.raises(HistoryError,match='changed'):page(p,expected_revision=revision)
+    assert page(p)['updates'][0]['_meta']['amplifier.dev/history']['inputOrigin']=='unknown'
+    assert inspect(tmp_path/'missing')['available'] is False
+
+
+@pytest.mark.asyncio
+async def test_passive_inspection_over_stdio_never_launches_configured_worker(tmp_path):
+    from client import Client
+    from amplifier_acp.native.session_files import project_slug
+    home=tmp_path/'home';cwd=tmp_path/'cwd';cwd.mkdir();sid='11111111-1111-4111-8111-111111111111'
+    directory=home/'projects'/project_slug(str(cwd))/'sessions'/sid;directory.parent.mkdir(parents=True)
+    history(directory,1)
+    config=tmp_path/'config.json';config.write_text(json.dumps({'home':str(home),'workerCommand':['/must-not-start-for-passive-history']}))
+    client=await Client.launch(config)
+    try:
+        await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
+        stamp=await client.request('_amplifier/history/inspect',{'sessionId':sid,'cwd':str(cwd)})
+        assert stamp['result']['available'] and len(stamp['result']['revision'])==64
+        result=await client.request('_amplifier/history',{'sessionId':sid,'cwd':str(cwd),'expectedRevision':stamp['result']['revision'],'limit':1})
+        assert result['result']['turnGroups'][0]['id']=='turn-0'
+        assert not any(row.get('params',{}).get('event',{}).get('type')=='runtime.ready' for row in client.events)
+    finally:await client.close()

@@ -168,3 +168,16 @@ rejects new work. The host may then close ACP. A false result or lost transport
 is never permission to kill a possibly active worker. Hosts should hold their
 session admission lock during the handshake. `session/cancel` and explicit
 `session/close` remain user-directed termination paths, separate from idle cleanup.
+
+Passive history inspection is negotiated by `history.passiveInspect:true`.
+`_amplifier/history/inspect {sessionId,cwd}` returns
+`{available,revision:string|null,diagnostics}` using regular-file stat only; it
+never parses transcript/events or starts a native worker. Availability means the
+file exists, not that its entire content was validated. `_amplifier/history`
+accepts `expectedRevision` and rejects a changed source before returning rows.
+Per-update history metadata preserves recorded provenance fields where present,
+including native input ID/kind/source, timestamp, schedule/question and voice
+identities. It always carries `authorization:'unverified-native-history'`;
+missing input origin stays unknown. Imported/native transcript roles never prove
+current human authorization; the host's exact admitted-message reader is the
+consent authority. No input is replayed to enrich missing metadata.
