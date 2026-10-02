@@ -53,3 +53,35 @@ async def test_draft_defaults_probe_inspects_bundle_without_session(tmp_path):
   assert response['result']['effective']['model']=='fixture-model',response
   assert not (Path(values['home'])/'projects').exists()
  finally:await client.close()
+
+@pytest.mark.asyncio
+async def test_voice_admin_existing_key_store_private_boundary_and_restart(tmp_path,monkeypatch):
+ monkeypatch.delenv('OPENAI_API_KEY',raising=False);monkeypatch.delenv('AMPLIFIER_VOICE_API_KEY',raising=False)
+ home=tmp_path/'home';home.mkdir();workspace=tmp_path/'workspace';workspace.mkdir();app=tmp_path/'app';config=tmp_path/'agent.json'
+ values={'home':str(home),'appHome':str(app),'adminWorkspaceRoots':[str(workspace)],'workerCommand':['/no/worker/allowed']};config.write_text(json.dumps(values))
+ client=await Client.launch(config)
+ async def initialize():await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
+ async def admin(op,args={}):return await client.request('_amplifier/admin',{'cwd':str(workspace),'operation':op,'args':args})
+ try:
+  await initialize()
+  assert 'error' in await admin('voice.credential')
+  assert not app.exists(),'Denied credential request must cause no file/probe side effect'
+  assert (await admin('voice.configuration'))['result']['available'] is False
+ finally:await client.close()
+ values['adminVoiceCredentials']=True;config.write_text(json.dumps(values));client=await Client.launch(config)
+ try:
+  await initialize()
+  selected=await admin('voice.configure',{'source':'private','apiKey':'synthetic-voice-key-not-an-account'})
+  assert selected['result']['available'] and selected['result']['privateKeyAvailable']
+  assert 'synthetic-voice' not in json.dumps(selected)
+  key=await admin('voice.credential');assert key['result']['apiKey']=='synthetic-voice-key-not-an-account'
+  assert (home/'keys.env').is_file() and (home/'keys.env').stat().st_mode&0o777==0o600
+  assert not (home/'projects').exists()
+  assert 'error' in await admin('voice.configure',{'source':'environment'})
+  assert (await admin('voice.configuration'))['result']['source']=='private'
+  assert not client.events
+ finally:await client.close()
+ client=await Client.launch(config)
+ try:
+  await initialize();assert (await admin('voice.credential'))['result']['apiKey']=='synthetic-voice-key-not-an-account'
+ finally:await client.close()

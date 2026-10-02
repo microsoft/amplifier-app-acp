@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 OPERATIONS={
+ 'voice.configuration','voice.credential','voice.configure',
  'providers.list','providers.schema','providers.models','providers.test','providers.testMessage','providers.credentials',
  'providers.save','providers.remove','providers.move','providers.reorder','providers.finishSetup','providers.login','providers.loginStatus','providers.loginCancel',
  'routing.list','routing.show','routing.save','routing.use','modules.list','modules.save','modules.remove','modules.validate',
@@ -41,6 +42,7 @@ class Administration:
   # Validate all request authority before imports, files, probes or network effects.
   workspace=self.workspace(cwd)
   if operation not in OPERATIONS:raise ValueError('Unknown native administration operation.')
+  if operation in {'voice.credential','voice.configure'} and self.config.get('adminVoiceCredentials') is not True:raise ValueError('Voice credentials require explicit trusted launcher enablement.')
   if not isinstance(args,dict):raise ValueError('Administration args must be an object.')
   if any(key in args for key in ('home','appHome','cwd','sessionId','session_id')):raise ValueError('Native homes and session identity are launcher-owned.')
   if args.get('workspace') and self.workspace(args['workspace'])!=workspace:raise ValueError('Workspace selector disagrees with authorized cwd.')
@@ -50,7 +52,10 @@ class Administration:
   if len(json.dumps(args).encode())>512*1024:raise ValueError('Administration request exceeds size limit.')
   async with self.lock:
    self.initialize();values={**args,'workspace':workspace}
-   if operation.startswith(('providers.','routing.')):
+   if operation.startswith('voice.'):
+    from .native.voice_admin import perform
+    result=perform(self.setup,workspace,operation,args)
+   elif operation.startswith(('providers.','routing.')):
     result=await self.setup.perform(operation,values)
     if operation=='providers.loginStatus':result.update(providers=self.setup.provider_rows(workspace),providersWorkspace=workspace)
    elif operation.startswith(('modules.','sources.')):result=await self.registry.perform(operation,values)
