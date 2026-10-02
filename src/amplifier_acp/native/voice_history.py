@@ -43,6 +43,6 @@ async def record(controls, args):
         except BaseException:
             await context.set_messages(before)
             raise
-    result={'nativeMessageId':'voice:'+hashlib.sha256((controls.session.session_id+'\0'+args['callId']+'\0'+args['itemId']).encode()).hexdigest()[:32],'text':row['content'],'via':'call','revision':digest,'recorded':True,'callId':args['callId'],'itemId':args['itemId'],'role':args['role'],'commandId':args['commandId'],'executed':False}
+    result={'historyTurnId':'native:'+hashlib.sha256((args['callId']+'\0'+args['itemId']).encode()).hexdigest()[:24],'nativeMessageId':'voice:'+hashlib.sha256((controls.session.session_id+'\0'+args['callId']+'\0'+args['itemId']).encode()).hexdigest()[:32],'text':row['content'],'via':'call','revision':digest,'recorded':True,'callId':args['callId'],'itemId':args['itemId'],'role':args['role'],'commandId':args['commandId'],'executed':False}
     write_private(path,json.dumps({'requestHash':digest,'result':result}))
     return {**result,**({'duplicate':True} if already else {})}
