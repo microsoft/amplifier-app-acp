@@ -477,6 +477,10 @@ class Server:
             command=native_meta.get('commandId') or 'acp-delete:'+str(uuid.uuid4())
             await asyncio.to_thread(owner.perform,'delete.standard',{'commandId':command,'expectedHistoryRevision':inspected['historyRevision']})
             return {}
+        if method=='_amplifier/history/before':
+            if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
+            from .history_edit import before
+            return await asyncio.to_thread(before,self,params)
         if method=='_amplifier/history/edit':
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
             from .history_edit import receipt

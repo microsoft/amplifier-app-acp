@@ -9,11 +9,13 @@ async def test_exact_native_edit_rewrites_then_streams_once_and_preserves_events
         await prompt(client,sid,'First original','turn1');await prompt(client,sid,'Second original','turn2');await prompt(client,sid,'Third original','turn3')
         revision=(await action(client,sid,cwd,'inspect'))['result']['historyRevision']
         native=next((tmp_path/'home/projects').glob('*/sessions/'+sid));(native/'events.jsonl').write_text('unchanged full event log\n')
+        prefix=await client.request('_amplifier/history/before',{'sessionId':sid,'cwd':str(cwd),'beforeTurnId':'turn2','expectedRevision':revision,'limit':50})
+        assert [row['id'] for row in prefix['result']['turnGroups']]==['turn1']
         args={'operationId':'edit1','inputId':'replacement1','targetMessageId':'turn2','expectedHistoryRevision':revision,'text':'Second revised'}
         params={'sessionId':sid,'operation':'history.revise','args':args}
         result=await client.request('_amplifier/native',params);assert result.get('result',{}).get('stopReason')=='end_turn',result
         proofs=[row['params']['event'] for row in client.events if row.get('params',{}).get('event',{}).get('type')=='history.revised']
-        assert len(proofs)==1 and proofs[0]['beforeTurnId']=='turn2' and proofs[0]['targetMessageId']=='turn2' and proofs[0]['inputId']=='replacement1'
+        assert len(proofs)==1 and proofs[0]['retainedThroughTurnId']=='turn1' and proofs[0]['beforeTurnId']=='turn2' and proofs[0]['targetMessageId']=='turn2' and proofs[0]['inputId']=='replacement1'
         text=(native/'transcript.jsonl').read_text();assert 'First original' in text and 'Second revised' in text and 'Third original' not in text and 'Second original' not in text
         assert 'history-edit' in text and (native/'events.jsonl').read_text()=='unchanged full event log\n'
         duplicate=await client.request('_amplifier/native',params);assert duplicate['error']['data']['outcome']=='already-admitted'

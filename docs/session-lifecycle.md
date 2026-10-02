@@ -83,7 +83,7 @@ The native writer validates the whole selected source revision, resolves the
 canonical index itself, and uses the retained native rewind/checkpoint journal.
 It clears the old execution goal and preserves original event logs and revision
 receipts. After the canonical rewrite commits, `history.revised` contains
-`operationId,inputId,targetMessageId,beforeMessageId,beforeTurnId,previousRevision,
+`operationId,inputId,targetMessageId,beforeMessageId,beforeTurnId,retainedThroughTurnId,previousRevision,
 historyRevision,eventsPreserved:true`. Only this proof authorizes the host to
 truncate its displayed projection. The replacement then uses the same single
 ACP prompt collector and returns `accepted:true,inputId,operationId,
@@ -97,3 +97,11 @@ execution fence and original journal. `_amplifier/history/edit`
 is implemented. An explicit independent fork can preserve readable evidence for
 continued work. Successful admission receipts remain `admitted`; this is not a
 fabricated model-completion receipt. The host owns terminal turn accounting.
+
+Before admitting a history edit, `_amplifier/history/before` accepts
+`{sessionId,cwd,beforeTurnId,expectedRevision,limit<=200}` and returns the
+standard bounded complete-turn history page immediately before that exact native
+message/input ID. It never starts a worker. The revision must still match at
+edit admission. The resulting proof's `retainedThroughTurnId` is null for an empty
+prefix, otherwise the last retained canonical turn ID. Clients can capture this
+page before the edit and replace their displayed prefix only after commit proof.

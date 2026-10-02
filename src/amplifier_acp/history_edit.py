@@ -52,7 +52,10 @@ async def revise(worker,args,publish):
         if row_input.get('kind')=='user' and row_input.get('id'):item['inputId']=row_input['id']
         displayed.append(item)
     target_id=message_id(original,position);before_turn=marker.get('id') or target_id
-    record={'operationId':args['operationId'],'inputId':args['inputId'],'targetMessageId':args['targetMessageId'],'beforeMessageId':target_id,'beforeTurnId':before_turn,'previousRevision':revision,'historyCwd':cwd,'status':'preparing','requestHash':hashlib.sha256(json.dumps(args,sort_keys=True,separators=(',',':')).encode()).hexdigest(),'eventsPreserved':True,'replayed':False}
+    retained_turn=None
+    for offset,row in rows[:target]:
+        if row.get('role')=='user' and visible(row):retained_turn=(row.get('metadata') or {}).get('amplifier_input',{}).get('id') or message_id(row,offset)
+    record={'operationId':args['operationId'],'inputId':args['inputId'],'targetMessageId':args['targetMessageId'],'beforeMessageId':target_id,'beforeTurnId':before_turn,'retainedThroughTurnId':retained_turn,'previousRevision':revision,'historyCwd':cwd,'status':'preparing','requestHash':hashlib.sha256(json.dumps(args,sort_keys=True,separators=(',',':')).encode()).hexdigest(),'eventsPreserved':True,'replayed':False}
     write(file,record);write(fence,{'operationId':args['operationId'],'inputId':args['inputId']})
     from .native.history_revision import rewind,receipt_path
     try:
@@ -61,7 +64,7 @@ async def revise(worker,args,publish):
         await rewind(worker.controls,{'operationId':args['operationId'],'source':{'id':identity,'workspace':cwd,'status':'idle','messages':displayed},'messageId':target_id})
         proof={**record,'status':'rewritten','historyRevision':stamp(directory/'transcript.jsonl')[0]}
         write(file,proof)
-        publish({'type':'history.revised',**{key:proof[key] for key in ('operationId','inputId','targetMessageId','beforeMessageId','beforeTurnId','previousRevision','historyRevision','eventsPreserved')}})
+        publish({'type':'history.revised',**{key:proof[key] for key in ('operationId','inputId','targetMessageId','beforeMessageId','beforeTurnId','retainedThroughTurnId','previousRevision','historyRevision','eventsPreserved')}})
         from amplifier_module_loop_live.runtime import Input
         accepted=await worker.runtime.submit(Input('user',args['text'],id=args['inputId'],activation=worker.activation))
         write(file,{**proof,'status':'admitted','accepted':True});fence.unlink()
@@ -78,3 +81,14 @@ async def revise(worker,args,publish):
             fence.unlink(missing_ok=True)
             return {'accepted':False,'executed':False,'reason':'Native history revision was rolled back; replacement input was not admitted.'}
         raise
+
+
+def before(server,params):
+    from . import history
+    cwd=params.get('cwd','');identity=params.get('sessionId')
+    if not Path(cwd).is_absolute() or not Path(cwd).is_dir():raise ValueError('Exact native history workspace required')
+    directory=server.directory(cwd,identity)
+    rows,_,revision=canonical(directory,params.get('expectedRevision'))
+    target=bound(rows,params.get('beforeTurnId'),user=True);offset=rows[target][0]
+    if not offset:return {'updates':[],'turnGroups':[],'nextCursor':None,'revision':revision,'diagnostics':[]}
+    return history.page(directory,cursor=history._cursor(revision,offset),limit=params.get('limit',50),expected_revision=revision)
