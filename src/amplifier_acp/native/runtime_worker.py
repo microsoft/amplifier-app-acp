@@ -711,6 +711,7 @@ class Worker:
                 self.memory_task = None
 
     async def _command_serial(self, data):
+        from amplifier_acp.native.input_provenance import reserved as input_reserved
         identity = data.get("id")
         try:
             op = data.get("op")
@@ -759,6 +760,7 @@ class Worker:
             elif not self.session or not self.execution:
                 raise RuntimeError("Session is not ready")
             elif op in {"delivery", "retry"} and (
+                input_reserved(self.input_provenance_path,data['input_id']) or
                 data['input_id'] in self.runtime.accepted or
                 contains_input(
                     await self.session.coordinator.get('context').get_messages(), data['input_id'])
@@ -820,6 +822,9 @@ class Worker:
                     self.bundle_preview = {**await asyncio.wait_for(preview(self.controls, self.workspace, arguments['bundle']), 150),
                                            'previewId': str(uuid.uuid4())}
                     result = self.bundle_preview
+                elif data["operation"] == "history.revise":
+                    from amplifier_acp.history_edit import revise
+                    result=await revise(self,arguments,publish)
                 elif data["operation"] == "history.edit":
                     if self.approvals or self.bridges or not self.runtime.inbox.empty():
                         raise ValueError('Finish pending interactions before editing history.')

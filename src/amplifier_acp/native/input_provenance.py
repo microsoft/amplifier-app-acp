@@ -26,3 +26,10 @@ def reserve(path,identity,metadata):
         db.execute('CREATE TABLE IF NOT EXISTS provenance(id TEXT PRIMARY KEY,body TEXT NOT NULL)')
         if db.execute('SELECT 1 FROM provenance WHERE id=?',(identity,)).fetchone():raise ValueError('This input was already reserved; uncertain work is not replayed')
         db.execute('INSERT INTO provenance VALUES (?,?)',(identity,body));db.commit()
+
+
+def reserved(path,identity):
+    path=Path(path)
+    if not path.exists():return False
+    if path.is_symlink():raise ValueError('Input provenance storage cannot be a symlink')
+    with sqlite3.connect(path) as db:return db.execute('SELECT 1 FROM provenance WHERE id=?',(identity,)).fetchone() is not None

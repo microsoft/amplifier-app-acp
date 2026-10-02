@@ -454,7 +454,7 @@ class Server:
             return {'protocolVersion':1,'agentInfo':{'name':'amplifier-acp','title':'Amplifier','version':__version__},
                 'agentCapabilities':{'loadSession':True,'sessionCapabilities':{'resume':{},'close':{},'delete':{}},
                     'promptCapabilities':{'image':True,'audio':False,'embeddedContext':True},
-                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True,'passiveInspect':True},'scheduledTurns':{'version':1,'completion':'settled'},'questionTurns':{'version':1,'completion':'settled','active':False},'observationTurns':{'version':1,'completion':'settled','active':False},'configurationClone':{'version':1},'taskState':{'version':1,'passive':True},'sessionLifecycle':{'version':1,'passive':True,'deletion':'preserve-history'},'activeSteering':{'version':1,'mode':'request_boundary','cancellable':False,'runtimeNegotiated':True},'lifecycle':{'version':1,'gracefulRetire':True},'relocation':{'version':1,'passiveInspection':True},**({'admin':{'version':1,**({'generations':{'version':1}} if self.config.get('adminGenerations') else {})}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
+                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True,'passiveInspect':True},'scheduledTurns':{'version':1,'completion':'settled'},'questionTurns':{'version':1,'completion':'settled','active':False},'observationTurns':{'version':1,'completion':'settled','active':False},'configurationClone':{'version':1},'taskState':{'version':1,'passive':True},'historyEdits':{'version':1,'completion':'settled','active':False},'sessionLifecycle':{'version':1,'passive':True,'deletion':'preserve-history'},'activeSteering':{'version':1,'mode':'request_boundary','cancellable':False,'runtimeNegotiated':True},'lifecycle':{'version':1,'gracefulRetire':True},'relocation':{'version':1,'passiveInspection':True},**({'admin':{'version':1,**({'generations':{'version':1}} if self.config.get('adminGenerations') else {})}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
         if not self.initialized:raise RpcError(-32600,'Initialize this connection first.')
         if method in {'_amplifier/relocation','_amplifier/relocation/reconcile'}:
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
@@ -477,6 +477,10 @@ class Server:
             command=native_meta.get('commandId') or 'acp-delete:'+str(uuid.uuid4())
             await asyncio.to_thread(owner.perform,'delete.standard',{'commandId':command,'expectedHistoryRevision':inspected['historyRevision']})
             return {}
+        if method=='_amplifier/history/edit':
+            if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
+            from .history_edit import receipt
+            return receipt(self,params)
         if method=='_amplifier/session':
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
             from .session_lifecycle import Lifecycle
@@ -585,7 +589,8 @@ class Server:
             if operation=='session.relocation.inspect':
                 from .relocation import state
                 return state(self,identity,session.cwd)
-            if operation in {'schedule.submit','question.submit','observation.submit'}:return await session.settled_input(operation,args,require_existing=require_existing)
+            if operation in {'schedule.submit','question.submit','observation.submit','history.revise'}:return await session.settled_input(operation,args,require_existing=require_existing)
+            if operation=='history.edit':raise RpcError(-32601,'Legacy host-projection history edits are unavailable; use negotiated history.revise.')
             if operation=='steer':raise RpcError(-32601,'Unanchored root steering is unavailable over ACP; use negotiated steer.submit.')
             if operation=='steer.submit':
                 from .steering import submit
@@ -634,7 +639,7 @@ class Server:
 NATIVE_CONTROLS=['session.relocate','session.relocation.inspect','configuration.snapshot','configuration.inspect','configuration.exportResources','configuration.providers','configuration.providerModels',
     'configuration.providerTest','configuration.providerLogin','configuration.providerLoginStatus','configuration.providerLoginCancel','configuration.cancel','configuration.apply','configuration.toggle','catalog.inspect','usage.inspect',
     'context.clear','goals.get','goals.set','goals.clear','budget.get','budget.set','provider.reset','provider.select','tool.invoke',
-    'voice.transcript.record','mode.list','mode.set','mode.clear','native.status','native.compact','history.snapshot','history.edit','bundle.preview','bundle.switch',
+    'voice.transcript.record','mode.list','mode.set','mode.clear','native.status','native.compact','history.snapshot','history.revise','bundle.preview','bundle.switch',
     'session.naming','steer.submit','question.submit','schedule.submit','observation.submit','memory.consolidate','operations.submit','operations.cancel','operations.write',
     'kernels.create','kernels.execute','kernels.interrupt','kernels.reset','kernels.close','capacity.get','capacity.set','capacity.quota',
     'task.get','task.create','task.update','task.pause','task.resume','task.block','task.complete']

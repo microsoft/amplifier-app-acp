@@ -36,6 +36,8 @@ def lifecycle_state(server,identity,cwd):
 def guard_start(server,identity,cwd):
     value=lifecycle_state(server,identity,cwd)
     if value['deleted']:raise ValueError('This native session was removed from discovery; restore it before continuing. Its history is preserved.')
+    pending=location(home(server),identity)/'history-edit-pending.json'
+    if pending.exists():raise ValueError('Native history edit outcome is unresolved; inspect its receipt before execution. No input replayed.')
     path=location(home(server),identity)/'history-fork.json'
     fork=record(path) if path.exists() else None
     if fork and fork.get('state')!='committed':raise ValueError('History fork creation is unresolved; inspect its original receipt. No work replayed.')

@@ -67,3 +67,33 @@ history, unsafe files, stale boundaries, and missing native bundle identity fail
 explicitly. Managed-chat hard deletion, full portability archives, shared artifact
 copying, and reference-only recovery copies are not claimed by these methods.
 Live model/account acceptance is separate from fixture validation.
+
+## Edit one native history boundary and continue
+
+`native.historyEdits` advertises `{version:1,completion:"settled",active:false}`.
+The admitted `_amplifier/native` operation `history.revise` accepts exactly
+`{inputId,operationId,targetMessageId,expectedHistoryRevision,text}`. The host
+reserves the replacement input identity under ordinary turn admission first.
+Both identities are 1–200 characters. Text has the native 200,000-character bound.
+A target is a native visible user-message ID or its recorded original input ID;
+steering corrections are not independent edit anchors. No client transcript is
+accepted. The legacy projection-driven `history.edit` is refused over ACP.
+
+The native writer validates the whole selected source revision, resolves the
+canonical index itself, and uses the retained native rewind/checkpoint journal.
+It clears the old execution goal and preserves original event logs and revision
+receipts. After the canonical rewrite commits, `history.revised` contains
+`operationId,inputId,targetMessageId,beforeMessageId,beforeTurnId,previousRevision,
+historyRevision,eventsPreserved:true`. Only this proof authorizes the host to
+truncate its displayed projection. The replacement then uses the same single
+ACP prompt collector and returns `accepted:true,inputId,operationId,
+historyRevision,stopReason`. Events may precede the control response.
+
+Stale/busy preflight is `accepted:false,executed:false`. Confirmed rollback is a
+known no-admission outcome. An ambiguous rewrite or input effect retains an
+execution fence and original journal. `_amplifier/history/edit`
+`{sessionId,cwd,operationId}` reads its small passive receipt; interrupted
+`preparing` is reported `unknown`. No automatic replay or uncertain-fence clearing
+is implemented. An explicit independent fork can preserve readable evidence for
+continued work. Successful admission receipts remain `admitted`; this is not a
+fabricated model-completion receipt. The host owns terminal turn accounting.

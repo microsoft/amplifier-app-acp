@@ -21,6 +21,12 @@ class FixtureProvider:
         await asyncio.sleep(60)
         return True
     async def complete(self,request,**kwargs):
+        if self.config.get('rewindGate') and not getattr(self,'rewindWrapped',False):
+            self.rewindWrapped=True;context=self.coordinator.get('context');original_set=context.set_messages
+            async def paused_set(messages):
+                await original_set(messages)
+                await gate(self.config,'rewind')
+            context.set_messages=paused_set
         if self.config.get('steeringUnavailable'):self.coordinator.register_capability('live.steering',{'version':1,'mode':'unavailable'})
         if self.config.get('injectionGate') and not getattr(self,'injectionWrapped',False):
             self.injectionWrapped=True
