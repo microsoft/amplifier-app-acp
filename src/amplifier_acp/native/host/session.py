@@ -874,3 +874,35 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
             await session.cleanup()
         jobs.close()
         raise
+
+
+async def prepare_dependencies(workspace, *, bundle=None, install_overrides=None, dependency_batch=None, global_only=False, runtime_plan=None):
+    """Prepare a fresh qualification worker before importing its live runtime.
+
+    This first probe only installs configured dependencies. A separate process
+    mounts the resulting frozen worker normally; source changes never mix an
+    already imported wheel runtime with an editable cache in one interpreter.
+    No conversation, history store, job recovery or model execution is opened.
+    """
+    config = load_config(workspace, global_only=global_only)
+    from .config import prepare_registry
+    prepare_registry(config)
+    execution_workspace = Path(config.workspace).expanduser().resolve(strict=True)
+    os.chdir(execution_workspace)
+    _, loaded, _ = await load_root_bundle(config, bundle or config.active_bundle,
+                                          execution_workspace=execution_workspace)
+    snapshot = is_snapshot(loaded)
+    if runtime_plan is not None:
+        loaded = apply_runtime_plan(loaded, runtime_plan, config, execution_workspace)
+    adapted, _ = live_plan(loaded.to_mount_plan())
+    components = getattr(loaded, '_host_components', None) or required_components()
+    loaded.session = adapted['session']
+    loaded.agents = adapted.get('agents', {})
+    components.apply(loaded)
+    from .config import configure_skill_cache
+    configure_skill_cache(loaded, config.registry_home)
+    return await loaded.prepare(strict=True, refresh_dependencies=True,
+        **({"dependency_batch": dependency_batch} if dependency_batch is not None else {}),
+        **({'install_overrides': Path(install_overrides)} if install_overrides is not None else {}),
+        cache_dir=config.registry_home / 'cache',
+        source_resolver=lambda module, source: module_source(config, snapshot, module, source, components))

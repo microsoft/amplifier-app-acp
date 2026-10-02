@@ -43,11 +43,17 @@ class NativeWorker:
         generation=self.config.get('runtimeGeneration',active_release(app_home).get('current'))
         if generation is not None and (not isinstance(generation,str) or len(generation)!=32 or any(c not in '0123456789abcdef' for c in generation)):
             raise NativeError('Invalid configured native runtime generation.')
-        if generation and not self.config.get('workerCommand'):
-            raise NativeError('This native home has a qualified generation. Configure its explicit workerCommand before starting; the adapter will not mount a different environment silently.')
+        managed_command=None
+        if generation and self.config.get('managedGenerations') is True:
+            from .native.runtime_profiles import ensure
+            from .generations import launcher
+            generation=await ensure(app_home,generation,{'id':self.session_id,'workspace':self.cwd,'bundle':self.config.get('cloneBundle') or self.config.get('bundle')},shared_home=env.get('AMPLIFIER_HOME'))
+            managed_command=(await launcher(app_home,generation))['workerCommand']
+        if generation and not self.config.get('workerCommand') and not managed_command:
+            raise NativeError('This native home has a qualified generation. Configure its explicit workerCommand or opt into managedGenerations before starting; the adapter will not mount a different environment silently.')
         env['AMPLIFIER_UNIFIED_RELEASE']=generation or ''
         if generation and (app_home/'updates/releases'/generation/'profiles-qualified.json').exists():env['AMPLIFIER_RUNTIME_IMMUTABLE']='1'
-        command = self.config.get('workerCommand') or [sys.executable, '-m', 'amplifier_acp.native.runtime_worker']
+        command = managed_command or self.config.get('workerCommand') or [sys.executable, '-m', 'amplifier_acp.native.runtime_worker']
         self.process = await asyncio.create_subprocess_exec(*command, cwd=self.config.get('executionDirectory',self.cwd), env=env,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=sys.stderr, limit=48_000_001)

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string"
+    },
+    "cwd": {
+      "type": "string"
+    },
+    "expectedRevision": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId",
+    "cwd"
+  ],
+  "additionalProperties": false
+}

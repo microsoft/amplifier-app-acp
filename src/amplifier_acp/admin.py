@@ -5,7 +5,9 @@ import json
 import os
 from pathlib import Path
 
-OPERATIONS={
+from .generations import OPERATIONS as GENERATION_OPERATIONS
+
+OPERATIONS=GENERATION_OPERATIONS | {
  'voice.configuration','voice.credential','voice.configure',
  'providers.list','providers.schema','providers.models','providers.test','providers.testMessage','providers.credentials',
  'providers.save','providers.remove','providers.move','providers.reorder','providers.finishSetup','providers.login','providers.loginStatus','providers.loginCancel',
@@ -29,6 +31,7 @@ class Administration:
   if self.config.get('home'):os.environ['AMPLIFIER_HOME']=str(Path(self.config['home']).expanduser().resolve())
   if self.config.get('appHome'):os.environ['AMPLIFIER_WEB_HOME']=str(Path(self.config['appHome']).expanduser().resolve())
   if self.config.get('registryHome'):os.environ['AMPLIFIER_ACP_REGISTRY_HOME']=str(Path(self.config['registryHome']).expanduser().resolve())
+  if self.config.get('runtimeManifest'):os.environ['AMPLIFIER_ACP_RUNTIME_MANIFEST']=str(Path(self.config['runtimeManifest']).resolve(strict=True))
   from .native.host.config import app_home
   from .native.setup import SetupManager
   from .native.registry import RegistryManager
@@ -42,6 +45,7 @@ class Administration:
   # Validate all request authority before imports, files, probes or network effects.
   workspace=self.workspace(cwd)
   if operation not in OPERATIONS:raise ValueError('Unknown native administration operation.')
+  if operation in GENERATION_OPERATIONS and self.config.get('adminGenerations') is not True:raise ValueError('Native generation maintenance requires explicit trusted launcher enablement.')
   if operation in {'voice.credential','voice.configure'} and self.config.get('adminVoiceCredentials') is not True:raise ValueError('Voice credentials require explicit trusted launcher enablement.')
   if not isinstance(args,dict):raise ValueError('Administration args must be an object.')
   if any(key in args for key in ('home','appHome','cwd','sessionId','session_id')):raise ValueError('Native homes and session identity are launcher-owned.')
@@ -50,6 +54,13 @@ class Administration:
   if settings_dir.exists() and not settings_dir.resolve().is_relative_to(Path(workspace)):
    raise ValueError('Workspace settings escape the authorized workspace.')
   if len(json.dumps(args).encode())>512*1024:raise ValueError('Administration request exceeds size limit.')
+  if operation in GENERATION_OPERATIONS:
+   self.initialize()
+   from .generations import Generations
+   if not hasattr(self,'generations'):self.generations=Generations(self.home,self.config)
+   result=await self.generations.perform(workspace,operation,args)
+   if len(json.dumps(result).encode())>768*1024:raise ValueError('Native generation result exceeds bounded representation limit.')
+   return result
   async with self.lock:
    self.initialize();values={**args,'workspace':workspace}
    if operation.startswith('voice.'):

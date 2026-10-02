@@ -207,3 +207,50 @@ contract and is not claimed by this idle-only extension.
 The existing host observation proof, task revision guard, finite one-iteration
 explanation and tool denial apply. A busy or changed authority is refused before
 execution; accepted observations settle with `stopReason`, never replay on retry.
+
+### Native generation maintenance
+
+Trusted launchers may enable `adminGenerations:true` alongside administration
+roots. `_amplifier/admin` then accepts `generations.inspect`, `check`, `prepare`,
+`promote`, `rollback`, `receipt`, `launcher`, and `ensure`. Reads are passive;
+mutations require a durable `commandId` and serialize in the native owner.
+
+- `inspect {limit?:1..100,cursor?:string}` returns paged source summaries, pointer,
+  bounded sanitized diagnostics and five most recent check timings.
+- `check {commandId}` records current native source availability without installs.
+- `prepare {commandId,checkId?}` snapshots native sources and configuration,
+  prepares/freeze-verifies dependencies, then mounts offered profiles in isolated
+  read-only probes. Explicit `checkId` is a CAS; omission waits for an in-progress
+  check and uses its completed result.
+- `promote {commandId,generation,expectedCurrent:null|string}` and
+  `rollback {commandId,expectedCurrent}` switch only future workers after verifying
+  receipts. They preserve active workers and never replay conversation input.
+- `receipt {commandId}` returns one exact durable result. Unknown means inspect;
+  a repeated command never reruns an uncertain operation.
+- `launcher {generation?}` returns the verified native-owned `workerCommand` and
+  `runtimeGeneration` for a trusted compositor. These paths are server-only.
+- `ensure {commandId,nativeSessionId,generation?,bundle?}` lazily qualifies one
+  selected saved configuration in the authorized workspace.
+
+`managedGenerations:true` lets execution processes resolve the selected native
+launcher and lazily qualify a session before starting its worker. Running workers
+retain their captured generation. Default launchers continue requiring explicit
+`workerCommand` for preexisting generation pointers. `runtimeManifest` and
+`generationProfiles` are optional trusted launcher inputs for distributions and
+isolated fixtures, never public request fields.
+
+Each mutation returns `{commandId,operation,state,result?,errorType?,detail?}`.
+States are running, succeeded, failed or unknown. Inspecting native maintenance
+while a mutation runs remains responsive and does not start another operation.
+See [maintenance parity](docs/maintenance-parity.md) for retained behavior and
+explicit remaining distribution, repair, retention and UI gaps.
+
+### Passive saved task authority
+
+`taskState:{version:1,passive:true}` advertises `_amplifier/task/inspect`
+`{sessionId,cwd,expectedRevision?}`. The result is
+`{available,revision,task,source:"persisted-native-controls"}`. It verifies the
+native session's immutable history workspace and reads only its bounded persisted
+control record. Missing state is distinct from corrupt, oversized or changed
+state. This is saved task authority, not proof that a runtime is currently active;
+execution still rechecks live task revision and host admission.

@@ -23,6 +23,11 @@ import time
 import uuid
 
 
+if not __package__:
+    from runtime_bootstrap import bootstrap_app_package
+    bootstrap_app_package()
+    __package__='amplifier_acp.native'
+
 try:
     from .runtime_protocol import MAX_MESSAGE_BYTES, encode_message
     from .message_delivery import contains_input
