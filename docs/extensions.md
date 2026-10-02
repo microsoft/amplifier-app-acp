@@ -24,7 +24,8 @@ controls, child messaging/steering/stopping, root steering, naming, scheduling,
 observations, memory, kernels, history editing and generic tool invocation.
 `server.NATIVE_CONTROLS` is the exact allowlist; unknown operations fail.
 
-`steer` arguments are `{text,inputId?}`. Worker controls use
+Root steering uses the anchored `steer.submit` contract below; unanchored `steer`
+is refused. Worker controls use
 `{worker_id,text?,input_id?}`. No execution occurs merely to list these names;
 calling the capability report mounts only the explicitly selected session.
 
@@ -160,3 +161,34 @@ it cannot report a successful cancellation. It never replays user input.
 `voice.transcript.record` accepts exactly `{callId,itemId,role,text,append,commandId}` under `_amplifier/native`. It records spoken user/assistant history through the native context and normal Foundation checkpoint without submitting a prompt. The trusted host verifies the call owner before invoking it. Idle context and native writer ownership are required. A known busy response is `{recorded:false,reason:'busy',retryable:true,executed:false}`; only that permits automatic later retry. A transport loss remains unknown: retain the durable input and inspect the receipt/history before any retry. Reusing an identical command returns its receipt; different content for that identity is rejected. Successful results include stable `historyTurnId` matching the passive history turn-group ID and `nativeMessageId`, `text`, `role`, `via:'call'`, `callId`, `itemId`, and `revision`; the compositor may update its selected voice projection. History updates label `amplifier.dev/history.recordedOnly` and voice identifiers so historical speech cannot imply executed agent work. The native history and fork path retain the metadata. This operation does not alter any Core, context, or provider module class.
 
 Trusted administration also supports `voice.configuration` (sanitized `{available,source,environmentAvailable,privateKeyAvailable,preferredModel,voice,interruptions,reason}`), `voice.configure {source:'environment'|'private',apiKey?}`, and server-only `voice.credential {}` returning `{apiKey,source,available}`. Credential resolution/configuration additionally require launcher `adminVoiceCredentials:true` as well as authorized admin workspace roots. They use the existing SettingsStore and SetupManager key owner, including private keys.env and process-environment precedence; no second secret store exists. The host must check active call/preview ownership before configuration and call these directly over its private admin connection. Never expose credential reads or secret configure arguments in generic capability actions, agent catalogs, durable host receipts, logs, or client records. No native execution worker starts. Voice model/name defaults mirror the existing voice preferences; model execution and validation remain owned by the media component.
+
+## Active steering
+
+`native.activeSteering` advertises `{version:1,mode:"request_boundary",
+cancellable:false,runtimeNegotiated:true}`. This is adapter support, not a claim
+that every mounted provider supports it. The mounted loop must expose public
+`live.steering` version 1 in request-boundary mode. Unsupported or provider-native
+steering is refused before queueing; there is no unanchored fallback.
+
+`_amplifier/native` operation `steer.submit` accepts
+`{inputId,activeInputId,text,provenance?}`. IDs are bounded at 128 characters,
+text at 16,000 characters, provenance at 8 KiB. `activeInputId` must identify the
+currently collected ACP prompt. Wait for its `generation.started` event carrying
+`activeInputId` before sending. No second prompt collector is created.
+
+The adapter reserves a durable exact-request receipt before native dispatch.
+Acceptance means queued, not delivered. Response `{accepted:true,inputId,
+activeInputId,generationId,disposition}` may race authoritative events.
+`steering.applied`, `steering.held`, and `steering.unknown` notifications carry
+`input_id`, `activeInputId`, and `target_generation_id`. Applied means context
+insertion confirmed. Held means it missed that generation without insertion;
+it never becomes a fresh turn. Interrupted context insertion is unknown.
+A late held event may follow the original prompt's normal completion.
+
+Already admitted corrections cannot be withdrawn or replaced. Exact duplicate
+requests inspect the saved disposition without queueing again; changed content
+under the same ID fails. Reconnection can use passive `_amplifier/steering`
+`{sessionId,cwd,inputId}` returning `{receipt}` without starting a runtime.
+A reserved/queued receipt after disconnection is uncertain; it never authorizes
+a replay. Runtime loss classifies unresolved live receipts unknown. Receipt
+queries use indexed dispositions, independent of prior-session receipt count.

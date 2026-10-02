@@ -25,6 +25,9 @@ class Session:
         self.bundle_override=None;self.execution_directory=cwd;self.relocating=False
         self.worker=None; self.prompt=None; self.input_id=None; self.cancelled=False
         self.streamed=False; self.had_deltas=False; self.last_model_id=None; self.awaiting_children=False; self.tools=set(); self.lock=asyncio.Lock();self.report={}
+        from .steering import Receipts
+        from .relocation import home
+        self.steering=Receipts(home(server),identity);self.steering_lock=asyncio.Lock();self.generation_id=None
         self.config_options=[];self.mcp_servers=[];self.idle_task=None;self.start_lock=asyncio.Lock();self.config_cancel=None;self.config_applying=False;self.retiring=False;self.retired=False;self.active_requests=0
 
     async def start(self):
@@ -113,6 +116,23 @@ class Session:
         kind=row.get('type')
         root=row.get('sessionId') or row.get('session_id') or self.identity
         is_root=root==self.identity
+        if is_root and kind=='generation.started':
+            self.generation_id=row.get('generation_id')
+            if self.prompt and not self.prompt.done():row={**row,'activeInputId':self.input_id}
+        if is_root and kind in {'input.delivered','steering.applied','steering.held','steering.unknown'} and row.get('input_id'):
+            receipt=self.steering.read(row['input_id'])
+            if receipt and receipt['generationId']==row.get('target_generation_id'):
+                disposition='applied' if kind in {'input.delivered','steering.applied'} else kind.split('.')[1]
+                self.steering.update(row['input_id'],{'accepted':True,'disposition':disposition,**({'reason':row['reason']} if row.get('reason') else {})})
+                row={**row,'activeInputId':receipt['activeInputId']}
+        if is_root and kind in {'generation.finished','generation.failed','generation.detached','runtime.closed'}:
+            # A late anchored command may be classified held immediately after
+            # generation.finished when the loop drains its inbox. Only runtime
+            # loss proves there will be no further authoritative disposition.
+            uncertain=self.steering.uncertain() if kind=='runtime.closed' else []
+            for receipt in uncertain:
+                if NATIVE in self.server.extensions:await self.server.notify('_amplifier/event',{'sessionId':self.identity,'event':{'type':'steering.unknown','input_id':receipt['inputId'],'activeInputId':receipt['activeInputId'],'target_generation_id':receipt['generationId'],'reason':receipt['reason']}})
+            self.generation_id=None
         if NATIVE in self.server.extensions and kind not in {'assistant.delta','assistant.message','execution.event'}:
             safe={k:v for k,v in row.items() if k not in {'prompt','options','error','report'}}
             await self.server.notify('_amplifier/event',{'sessionId':self.identity,'event':safe})
@@ -415,7 +435,7 @@ class Server:
             return {'protocolVersion':1,'agentInfo':{'name':'amplifier-acp','title':'Amplifier','version':__version__},
                 'agentCapabilities':{'loadSession':True,'sessionCapabilities':{'resume':{},'close':{}},
                     'promptCapabilities':{'image':True,'audio':False,'embeddedContext':True},
-                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True,'passiveInspect':True},'scheduledTurns':{'version':1,'completion':'settled'},'questionTurns':{'version':1,'completion':'settled','active':False},'observationTurns':{'version':1,'completion':'settled','active':False},'configurationClone':{'version':1},'taskState':{'version':1,'passive':True},'lifecycle':{'version':1,'gracefulRetire':True},'relocation':{'version':1,'passiveInspection':True},**({'admin':{'version':1,**({'generations':{'version':1}} if self.config.get('adminGenerations') else {})}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
+                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True,'passiveInspect':True},'scheduledTurns':{'version':1,'completion':'settled'},'questionTurns':{'version':1,'completion':'settled','active':False},'observationTurns':{'version':1,'completion':'settled','active':False},'configurationClone':{'version':1},'taskState':{'version':1,'passive':True},'activeSteering':{'version':1,'mode':'request_boundary','cancellable':False,'runtimeNegotiated':True},'lifecycle':{'version':1,'gracefulRetire':True},'relocation':{'version':1,'passiveInspection':True},**({'admin':{'version':1,**({'generations':{'version':1}} if self.config.get('adminGenerations') else {})}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
         if not self.initialized:raise RpcError(-32600,'Initialize this connection first.')
         if method in {'_amplifier/relocation','_amplifier/relocation/reconcile'}:
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
@@ -426,6 +446,15 @@ class Server:
             from .admin import Administration
             if not hasattr(self,'admin'):self.admin=Administration(self.config)
             return await self.admin.perform(params.get('cwd'),params.get('operation'),params.get('args',{}))
+        if method=='_amplifier/steering':
+            if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
+            cwd=Path(params.get('cwd',''))
+            if not cwd.is_absolute() or not cwd.is_dir():raise RpcError(-32602,'Existing native history workspace required.')
+            directory=self.directory(str(cwd.resolve()),params.get('sessionId'))
+            if not directory.is_dir():raise RpcError(-32602,'Native session does not exist in this workspace.')
+            from .steering import Receipts
+            from .relocation import home
+            return {'receipt':Receipts(home(self),params['sessionId']).read(params.get('inputId'))}
         if method=='_amplifier/task/inspect':
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
             from .passive_task import inspect
@@ -515,6 +544,10 @@ class Server:
             if operation=='session.relocation.inspect':
                 from .relocation import state
                 return state(self,identity,session.cwd)
+            if operation=='steer':raise RpcError(-32601,'Unanchored root steering is unavailable over ACP; use negotiated steer.submit.')
+            if operation=='steer.submit':
+                from .steering import submit
+                return await submit(session,args)
             await session.start()
             if operation=='configuration.snapshot':
                 if session.lock.locked():raise RpcError(-32000,'Configuration snapshot requires an idle session.')
@@ -526,8 +559,6 @@ class Server:
                     'controls':NATIVE_CONTROLS,'workerOperations':['worker.steer','worker.message','worker.stop']}
             if operation in {'worker.steer','worker.message','worker.stop'}:
                 return await session.worker.command(operation,**args)
-            if operation=='steer':
-                return await session.worker.command('steer',text=args.get('text',''),input_id=args.get('inputId') or str(uuid.uuid4()))
             if operation not in NATIVE_CONTROLS:raise RpcError(-32601,'Unknown native operation.')
             if operation=='configuration.cancel':
                 if session.config_applying:raise RpcError(-32000,'Configuration changes are already applying.')
@@ -563,7 +594,7 @@ NATIVE_CONTROLS=['session.relocate','session.relocation.inspect','configuration.
     'configuration.providerTest','configuration.providerLogin','configuration.providerLoginStatus','configuration.providerLoginCancel','configuration.cancel','configuration.apply','configuration.toggle','catalog.inspect','usage.inspect',
     'context.clear','goals.get','goals.set','goals.clear','budget.get','budget.set','provider.reset','provider.select','tool.invoke',
     'voice.transcript.record','mode.list','mode.set','mode.clear','native.status','native.compact','history.snapshot','history.edit','bundle.preview','bundle.switch',
-    'session.naming','question.submit','schedule.submit','observation.submit','memory.consolidate','operations.submit','operations.cancel','operations.write',
+    'session.naming','steer.submit','question.submit','schedule.submit','observation.submit','memory.consolidate','operations.submit','operations.cancel','operations.write',
     'kernels.create','kernels.execute','kernels.interrupt','kernels.reset','kernels.close','capacity.get','capacity.set','capacity.quota',
     'task.get','task.create','task.update','task.pause','task.resume','task.block','task.complete']
 

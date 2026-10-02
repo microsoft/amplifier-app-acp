@@ -1,5 +1,13 @@
 """Offline fixture provider. Every turn still crosses actual Core/Foundation/loop-live."""
 import asyncio
+from pathlib import Path
+
+async def gate(config,name):
+    directory=Path(config["gateDirectory"]);directory.mkdir(parents=True,exist_ok=True)
+    (directory/(name+".entered")).touch()
+    async with asyncio.timeout(30):
+        while not (directory/(name+".release")).exists():await asyncio.sleep(.01)
+
 from amplifier_core.models import ProviderInfo, ToolResult
 from amplifier_core.message_models import ChatResponse,TextBlock,Usage,ToolCall
 class FixtureProvider:
@@ -13,17 +21,41 @@ class FixtureProvider:
         await asyncio.sleep(60)
         return True
     async def complete(self,request,**kwargs):
+        if self.config.get('steeringUnavailable'):self.coordinator.register_capability('live.steering',{'version':1,'mode':'unavailable'})
+        if self.config.get('injectionGate') and not getattr(self,'injectionWrapped',False):
+            self.injectionWrapped=True
+            context=self.coordinator.get('context');original=context.add_message
+            async def paused_add(message):
+                await original(message)
+                if message.get('metadata',{}).get('amplifier_input',{}).get('id')==self.config['injectionGate']:await gate(self.config,'injection')
+            context.add_message=paused_add
         prompt=next((m.content for m in reversed(request.messages) if m.role=='user'),'')
         if isinstance(prompt,list):prompt=' '.join(getattr(b,'text','') for b in prompt)
+        if 'steering-late' in str(prompt):
+            checkpoint=self.coordinator.get_capability('live.checkpoint')
+            async def paused_checkpoint(*args,**kwargs):
+                await gate(self.config,'checkpoint')
+                return await checkpoint(*args,**kwargs)
+            self.coordinator.register_capability('live.checkpoint',paused_checkpoint)
+        if 'steering-apply' in str(prompt) and request.messages[-1].role!='tool':
+            return ChatResponse(content=[TextBlock(text='Before deterministic steering boundary.')],tool_calls=[ToolCall(id='wait-call',name='fixture_wait',arguments={})],finish_reason='tool_calls')
         if 'slow' in str(prompt):await asyncio.sleep(60)
         if 'permission' in str(prompt) and request.messages[-1].role!='tool':
             return ChatResponse(content=[TextBlock(text='Before permission tool.')],tool_calls=[ToolCall(id='permit-call',name='fixture_permit',arguments={})],finish_reason='tool_calls')
         return ChatResponse(content=[TextBlock(text='Native graph reply: '+str(prompt))],finish_reason='stop',usage=Usage(input_tokens=8,output_tokens=5,total_tokens=13))
 async def mount(coordinator,config=None):
-    await coordinator.mount('providers',FixtureProvider(config),name='fixture')
+    provider=FixtureProvider(config);provider.coordinator=coordinator
+    await coordinator.mount('providers',provider,name='fixture')
     class Permit:
         name='fixture_permit';description='Ask the fixture approval surface';input_schema={'type':'object','properties':{}}
         async def execute(self,args):
             decision=await coordinator.approval_system.request_approval('Fixture permission',options=['allow','deny'])
             return ToolResult(success=True,output={'decision':decision})
     await coordinator.mount('tools',Permit(),name='fixture_permit')
+
+    class Wait:
+        name='fixture_wait';description='Wait for an isolated fixture test gate';input_schema={'type':'object','properties':{}}
+        async def execute(self,args):
+            await gate(config,'tool')
+            return ToolResult(success=True,output={'released':True})
+    if config and config.get('gateDirectory'):await coordinator.mount('tools',Wait(),name='fixture_wait')

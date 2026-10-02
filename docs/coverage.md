@@ -12,7 +12,7 @@ Adapter-specific changes:
   implementation/resources are retained inside it pending independent extraction.
 - App guidance/provider transformations and host admission require negotiated
   host support. Missing optional host features fail explicitly.
-- Root steering uses the existing loop-live Input channel; no kernel change.
+- Root steering uses the public loop-live anchored request-boundary capability; old or provider-native loops explicitly refuse. Applied, held, cancellation, unknown context effect, exact duplicates and passive receipt recovery have actual Core/Foundation protocol fixture coverage.
 - Client MCP servers use the public ecosystem MCPManager and tool wrappers.
 - Durable saves emit location-only hints. Passive history projects native records
   into ACP updates without engine startup, bounded by turns and bytes.

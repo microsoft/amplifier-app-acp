@@ -1,0 +1,120 @@
+"""Actual Core/Foundation, subprocess protocol, public loop-live anchored capability."""
+import asyncio,json
+from pathlib import Path
+import pytest,yaml
+from client import Client
+from native_setup import configuration
+from amplifier_acp.steering import Receipts
+
+async def opened(tmp_path,**provider_config):
+    config,cwd=configuration(tmp_path)
+    bundle=tmp_path/'fixture.yaml';value=yaml.safe_load(bundle.read_text());value['providers'][0]['config']={'gateDirectory':str(tmp_path/'gates'),**provider_config};bundle.write_text(yaml.safe_dump(value))
+    client=await Client.launch(config)
+    await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
+    made=await client.request('session/new',{'cwd':str(cwd),'mcpServers':[]});assert 'result' in made,made
+    return client,made['result']['sessionId'],cwd
+
+async def entered(tmp_path,name):
+    async with asyncio.timeout(20):
+        while not (tmp_path/'gates'/f'{name}.entered').exists():await asyncio.sleep(.01)
+
+def release(tmp_path,name):(tmp_path/'gates'/f'{name}.release').touch()
+def events(client,kind):return [r['params']['event'] for r in client.events if r.get('method')=='_amplifier/event' and r['params']['event']['type']==kind]
+async def steer(client,sid,args):return await client.request('_amplifier/native',{'sessionId':sid,'operation':'steer.submit','args':args})
+async def receipt(client,sid,cwd,input_id):return (await client.request('_amplifier/steering',{'sessionId':sid,'cwd':str(cwd),'inputId':input_id}))['result']['receipt']
+
+def test_receipt_monotonic_exact_identity_unknown_never_replayed(tmp_path):
+    store=Receipts(tmp_path,'fixture');args={'inputId':'edit1','activeInputId':'turn1','text':'correction'}
+    store.reserve(args,'generation1');store.update('edit1',{'accepted':True,'disposition':'applied'})
+    assert store.update('edit1',{'disposition':'queued'})['disposition']=='applied'
+    with pytest.raises(ValueError,match='conflicts'):store.read('edit1',{**args,'text':'different'})
+    store.reserve({**args,'inputId':'edit2'},'generation1')
+    assert store.uncertain('generation1')[0]['disposition']=='unknown'
+    assert not store.uncertain('generation1')
+
+@pytest.mark.asyncio
+async def test_actual_anchored_applied_same_collector_exact_duplicate_and_canonical_provenance(tmp_path):
+    client,sid,cwd=await opened(tmp_path)
+    try:
+        prompt=asyncio.create_task(client.request('session/prompt',{'sessionId':sid,'prompt':[{'type':'text','text':'steering-apply'}],'_meta':{'amplifier.dev/command':{'commandId':'turn1'}}}))
+        await entered(tmp_path,'tool')
+        assert events(client,'generation.started')[0]['activeInputId']=='turn1'
+        args={'inputId':'edit1','activeInputId':'turn1','text':'Use the corrected direction','provenance':{'source':'fixture'}}
+        accepted=(await steer(client,sid,args))['result'];assert accepted['accepted'] and accepted['disposition']=='queued',accepted
+        duplicate=(await steer(client,sid,args))['result'];assert duplicate['disposition']=='queued' and duplicate['replayed'] is False
+        conflict=await steer(client,sid,{**args,'text':'different'});assert 'error' in conflict
+        release(tmp_path,'tool');assert (await prompt)['result']['stopReason']=='end_turn'
+        row=await receipt(client,sid,cwd,'edit1');assert row['disposition']=='applied',row
+        applied=events(client,'steering.applied');assert len(applied)==1 and applied[0]['activeInputId']=='turn1' and applied[0]['target_generation_id']==row['generationId']
+        assert len(events(client,'generation.started'))==1
+        history=await client.request('_amplifier/history',{'sessionId':sid,'cwd':str(cwd),'limit':50})
+        assert sum(u.get('content',{}).get('text')=='Use the corrected direction' for u in history['result']['updates'])==1
+        transcript=next((tmp_path/'home/projects').glob('*/sessions/*/transcript.jsonl')).read_text()
+        assert '"inputOrigin": "steering"' in transcript and '"activeInputId": "turn1"' in transcript
+        assert (await steer(client,sid,{'inputId':'late','activeInputId':'turn1','text':'No generation'}))['result']['executed'] is False
+    finally:await client.close()
+
+@pytest.mark.asyncio
+async def test_late_held_never_fresh_turn_and_passive_receipt_survives_restart(tmp_path):
+    client,sid,cwd=await opened(tmp_path)
+    args={'inputId':'late1','activeInputId':'turn1','text':'This missed the request boundary'}
+    try:
+        prompt=asyncio.create_task(client.request('session/prompt',{'sessionId':sid,'prompt':[{'type':'text','text':'steering-late'}],'_meta':{'amplifier.dev/command':{'commandId':'turn1'}}}))
+        await entered(tmp_path,'checkpoint')
+        assert (await steer(client,sid,args))['result']['accepted']
+        release(tmp_path,'checkpoint');assert (await prompt)['result']['stopReason']=='end_turn'
+        async with asyncio.timeout(5):
+            while not events(client,'steering.held'):await asyncio.sleep(.01)
+        saved=await receipt(client,sid,cwd,args['inputId']);assert saved['disposition']=='held',saved
+        assert len(events(client,'generation.started'))==1
+        history=await client.request('_amplifier/history',{'sessionId':sid,'cwd':str(cwd),'limit':50})
+        assert not any(u.get('content',{}).get('text')==args['text'] for u in history['result']['updates'])
+    finally:await client.close()
+    config=tmp_path/'config.json';value=json.loads(config.read_text());value['workerCommand']=['/does-not-exist'];config.write_text(json.dumps(value))
+    passive=await Client.launch(config)
+    try:
+        await passive.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
+        assert (await receipt(passive,sid,cwd,args['inputId']))['disposition']=='held'
+    finally:await passive.close()
+
+
+def test_receipt_pending_query_uses_index_for_large_session(tmp_path):
+    store=Receipts(tmp_path,'fixture')
+    with store.db(create=True) as db:
+        db.executemany('INSERT INTO receipts VALUES (?,?,?)',[(str(i),'signature',json.dumps({'inputId':str(i),'disposition':'applied','generationId':'old'})) for i in range(25000)])
+        plans=db.execute("EXPLAIN QUERY PLAN SELECT id,body FROM receipts WHERE json_extract(body,'$.disposition') IN ('reserved','queued') LIMIT 2000").fetchall()
+    assert any('receipts_disposition' in row[-1] for row in plans),plans
+    assert store.uncertain()==[]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('injection',[False,True])
+async def test_cancel_preserves_held_vs_uncertain_context_effect(tmp_path,injection):
+    client,sid,cwd=await opened(tmp_path,**({'injectionGate':'edit1'} if injection else {}))
+    try:
+        prompt=asyncio.create_task(client.request('session/prompt',{'sessionId':sid,'prompt':[{'type':'text','text':'steering-apply'}],'_meta':{'amplifier.dev/command':{'commandId':'turn1'}}}))
+        await entered(tmp_path,'tool')
+        args={'inputId':'edit1','activeInputId':'turn1','text':'Possible partial context effect'}
+        assert (await steer(client,sid,args))['result']['accepted']
+        if injection:
+            release(tmp_path,'tool');await entered(tmp_path,'injection')
+        await client.request('session/cancel',{'sessionId':sid})
+        assert (await prompt)['result']['stopReason']=='cancelled'
+        saved=await receipt(client,sid,cwd,'edit1')
+        assert saved['disposition']==('unknown' if injection else 'held'),saved
+        assert (await steer(client,sid,args))['result']['disposition']==saved['disposition']
+        assert len(events(client,'generation.started'))==1
+    finally:await client.close()
+
+@pytest.mark.asyncio
+async def test_mounted_runtime_without_anchored_contract_refuses_no_fallback(tmp_path):
+    client,sid,cwd=await opened(tmp_path,steeringUnavailable=True)
+    try:
+        prompt=asyncio.create_task(client.request('session/prompt',{'sessionId':sid,'prompt':[{'type':'text','text':'steering-apply'}],'_meta':{'amplifier.dev/command':{'commandId':'turn1'}}}))
+        await entered(tmp_path,'tool')
+        result=(await steer(client,sid,{'inputId':'edit1','activeInputId':'turn1','text':'No fallback input'}))['result']
+        assert result['accepted'] is False and result['executed'] is False
+        release(tmp_path,'tool');await prompt
+        assert len(events(client,'generation.started'))==1
+        assert not events(client,'steering.applied')
+    finally:await client.close()

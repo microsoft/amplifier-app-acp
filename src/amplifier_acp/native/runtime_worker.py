@@ -152,6 +152,8 @@ class Worker:
         root_generation = event_session_id == root_session_id and event_root_id == root_session_id
         if root_generation and event.get('type') == 'generation.started':
             self.root_generation_outcome = None
+            capability=self.session.coordinator.get_capability('live.steering')
+            if isinstance(capability,dict):event['activeSteering']={key:capability[key] for key in ('version','mode','cancellable') if key in capability}
         elif root_generation and event.get('type') in {'generation.finished', 'generation.failed', 'generation.detached'}:
             self.root_generation_outcome = {
                 'generation.finished': 'completed',
@@ -782,6 +784,19 @@ class Worker:
                 if data["operation"] == "schedule.submit":
                     from amplifier_acp.native.scheduled_input import admit
                     result = await admit(self.controls, self.runtime, arguments, self.activation)
+                elif data["operation"] == "steer.submit":
+                    capability=self.session.coordinator.get_capability('live.steering')
+                    generation=self.runtime.generation
+                    if not isinstance(capability,dict) or capability.get('version')!=1 or capability.get('mode')!='request_boundary' or not callable(capability.get('submit')):
+                        result={'accepted':False,'executed':False,'reason':'This mounted runtime has no anchored request-boundary steering capability.'}
+                    elif not generation or generation['id']!=arguments.get('generationId') or generation.get('initial_input_id')!=arguments.get('activeInputId'):
+                        result={'accepted':False,'executed':False,'reason':'The requested generation ended before steering admission.'}
+                    else:
+                        from amplifier_acp.native.input_provenance import reserve
+                        from amplifier_module_loop_live.runtime import Input
+                        reserve(self.input_provenance_path,arguments['inputId'],{'inputOrigin':'steering','activeInputId':arguments['activeInputId'],**({'steeringProvenance':arguments['provenance']} if arguments.get('provenance') else {})})
+                        try:result=await capability['submit'](Input('steer',arguments['text'],id=arguments['inputId'],activation=self.activation),arguments['generationId'])
+                        except ValueError as error:result={'accepted':False,'executed':False,'reason':str(error)}
                 elif data["operation"] == "question.submit":
                     from amplifier_acp.native.question_input import admit
                     authority=(lambda value:self.bridge("questions.delivery.admit",value)) if self.start_config.get("hostInfo",{}).get("features",{}).get("questions") else None
