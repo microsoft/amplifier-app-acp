@@ -22,7 +22,7 @@ class RpcError(Exception):
 class Session:
     def __init__(self,server,identity,cwd):
         self.server,self.identity,self.cwd=server,identity,cwd
-        self.bundle_override=None
+        self.bundle_override=None;self.execution_directory=cwd;self.relocating=False
         self.worker=None; self.prompt=None; self.input_id=None; self.cancelled=False
         self.streamed=False; self.had_deltas=False; self.last_model_id=None; self.awaiting_children=False; self.tools=set(); self.lock=asyncio.Lock();self.report={}
         self.config_options=[];self.mcp_servers=[];self.idle_task=None;self.start_lock=asyncio.Lock();self.config_cancel=None;self.config_applying=False
@@ -50,9 +50,14 @@ class Session:
 
     async def _start(self):
         if not self.config_applying:self.restore_configuration()
+        if not self.relocating:
+            from .relocation import state
+            location=state(self.server,self.identity,self.cwd)
+            if location['blocked']:raise RpcError(-32000,'Native relocation outcome is unresolved; inspect its receipt before execution.',{'outcome':'unknown','replayed':False})
+            self.execution_directory=location['executionDirectory']
         if self.worker and (self.worker.closed or self.cancelled):await self.worker.close()
         if self.worker and self.worker.process.returncode is None:return
-        config={**self.server.config,**({'cloneBundle':self.bundle_override} if self.bundle_override else {})}
+        config={**self.server.config,'executionDirectory':self.execution_directory,**({'cloneBundle':self.bundle_override} if self.bundle_override else {})}
         self.worker=NativeWorker(self.identity,self.cwd,config,self.observe,self.bridge)
         self.report=await self.worker.start(self.server.host_info if HOST in self.server.extensions else None,self.mcp_servers)
         self.cancelled=False
@@ -382,8 +387,12 @@ class Server:
             return {'protocolVersion':1,'agentInfo':{'name':'amplifier-acp','title':'Amplifier','version':__version__},
                 'agentCapabilities':{'loadSession':True,'sessionCapabilities':{'resume':{},'close':{}},
                     'promptCapabilities':{'image':True,'audio':False,'embeddedContext':True},
-                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True},'scheduledTurns':{'version':1,'completion':'settled'},'configurationClone':{'version':1},**({'admin':{'version':1}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
+                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True},'scheduledTurns':{'version':1,'completion':'settled'},'configurationClone':{'version':1},'relocation':{'version':1,'passiveInspection':True},**({'admin':{'version':1}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
         if not self.initialized:raise RpcError(-32600,'Initialize this connection first.')
+        if method in {'_amplifier/relocation','_amplifier/relocation/reconcile'}:
+            if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
+            from .relocation import passive
+            return passive(self,params,reconcile=method.endswith('/reconcile'))
         if method=='_amplifier/admin':
             if NATIVE not in self.extensions or not self.config.get('adminWorkspaceRoots'):raise RpcError(-32601,'Native administration was not negotiated or launcher-enabled.')
             from .admin import Administration
@@ -407,10 +416,12 @@ class Server:
             except BaseException:self.sessions.pop(identity,None);raise
             from .configuration_clone import confirmed
             confirmed(self,identity)
-            return {'sessionId':identity,'configOptions':session.config_options,'_meta':{NATIVE:{'nativeSessionId':identity,'agentKind':'amplifier-core-foundation','creationConfirmed':True,'configurationHash':params['source']['configurationHash']}}}
+            return {'sessionId':identity,'configOptions':session.config_options,'_meta':{NATIVE:{'nativeSessionId':identity,'agentKind':'amplifier-core-foundation','creationConfirmed':True,'configurationHash':params['source']['configurationHash'],'historyCwd':session.cwd,'executionDirectory':session.execution_directory,'executionRevision':0}}}
         if method in {'session/new','session/load','session/resume'}:
-            cwd=Path(params.get('cwd','')).expanduser()
-            if not cwd.is_absolute() or not cwd.is_dir():raise RpcError(-32602,'cwd must be an existing absolute directory.')
+            requested=Path(params.get('cwd','')).expanduser()
+            native_meta=(params.get('_meta') or {}).get(NATIVE,{}) if NATIVE in self.extensions else {}
+            cwd=Path(native_meta.get('historyCwd') or requested).expanduser()
+            if not cwd.is_absolute() or not cwd.is_dir() or not requested.is_absolute() or not requested.is_dir():raise RpcError(-32602,'cwd/historyCwd must be existing absolute directories.')
             from .mcp import validate_servers
             mcp_servers=validate_servers(params.get('mcpServers',[]))
             if params.get('additionalDirectories'):raise RpcError(-32602,'Additional directories are not advertised; configure native filesystem policy explicitly.')
@@ -429,10 +440,17 @@ class Server:
                 if session.prompt and not session.prompt.done():raise RpcError(-32000,'Cannot change MCP connections during an active turn.')
                 await session.worker.close()
             session.mcp_servers=mcp_servers
+            if native_meta.get('historyCwd'):
+                from .relocation import state
+                if state(self,identity,session.cwd)['executionDirectory']!=str(requested.resolve()):raise RpcError(-32602,'Requested execution cwd does not match native saved location; inspect relocation metadata.')
             try:await session.start()
             except BaseException:self.sessions.pop(identity,None);raise
+            if native_meta.get('historyCwd') and str(requested.resolve())!=session.execution_directory:
+                await session.close();raise RpcError(-32602,'Requested execution cwd does not match native saved location; inspect relocation metadata.')
             if method=='session/load':await self.replay(session)
-            result={'configOptions':session.config_options,'_meta':{NATIVE:{'nativeSessionId':identity,'agentKind':'amplifier-core-foundation'}}}
+            from .relocation import state
+            location=state(self,identity,session.cwd)
+            result={'configOptions':session.config_options,'_meta':{NATIVE:{'nativeSessionId':identity,'agentKind':'amplifier-core-foundation','historyCwd':session.cwd,'executionDirectory':session.execution_directory,'executionRevision':location['executionRevision']}}}
             if method=='session/new':result['sessionId']=identity
             return result
         identity=params.get('sessionId');session=self.sessions.get(identity)
@@ -450,10 +468,16 @@ class Server:
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
             operation=params.get('operation');args=params.get('args',{})
             if not isinstance(operation,str) or not isinstance(args,dict):raise RpcError(-32602,'Native operation and object args are required.')
+            if operation=='session.relocate':
+                from .relocation import relocate
+                return await relocate(session,args)
+            if operation=='session.relocation.inspect':
+                from .relocation import state
+                return state(self,identity,session.cwd)
             await session.start()
             if operation=='configuration.snapshot':
                 if session.lock.locked():raise RpcError(-32000,'Configuration snapshot requires an idle session.')
-                result=await session.worker.control(operation,{'bundle':session.report.get('bundle')})
+                result=await session.worker.control(operation,{'bundle':session.report.get('bundle'),'historyCwd':session.cwd})
                 return result
             if operation=='schedule.submit':return await session.scheduled(args)
             if operation=='capabilities':
@@ -494,7 +518,7 @@ class Server:
             for task in self.tasks:task.cancel()
             await asyncio.gather(*self.tasks,return_exceptions=True)
 
-NATIVE_CONTROLS=['configuration.snapshot','configuration.inspect','configuration.exportResources','configuration.providers','configuration.providerModels',
+NATIVE_CONTROLS=['session.relocate','session.relocation.inspect','configuration.snapshot','configuration.inspect','configuration.exportResources','configuration.providers','configuration.providerModels',
     'configuration.providerTest','configuration.providerLogin','configuration.providerLoginStatus','configuration.providerLoginCancel','configuration.cancel','configuration.apply','configuration.toggle','catalog.inspect','usage.inspect',
     'context.clear','goals.get','goals.set','goals.clear','budget.get','budget.set','provider.reset','provider.select','tool.invoke',
     'voice.transcript.record','mode.list','mode.set','mode.clear','native.status','native.compact','history.snapshot','history.edit','bundle.preview','bundle.switch',

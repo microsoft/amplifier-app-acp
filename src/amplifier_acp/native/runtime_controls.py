@@ -321,7 +321,7 @@ class RuntimeControls:
             self.require_idle()
             self.persist()
             from amplifier_acp.configuration_clone import snapshot
-            return snapshot(app_home(), self.session.session_id, str(self.coordinator.config.get("working_dir") or Path.cwd()), args.get('bundle'))
+            return snapshot(app_home(), self.session.session_id, str(args.get("historyCwd") or self.coordinator.config.get("working_dir") or Path.cwd()), args.get('bundle'))
         if operation == "configuration.inspect":
             return self.configuration()
         if operation == "history.snapshot":

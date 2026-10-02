@@ -127,3 +127,27 @@ cross the wire. A confirmed response is standard NewSession plus native metadata
 creation require receipt inspection, never another create. The source host must
 hold its configuration/admission lock through creation. Cross-workspace cloning
 is deliberately refused until a workspace owner supplies an explicit contract.
+
+Execution handoff advertises `relocation:{version:1,passiveInspection:true}`.
+Native operation `session.relocate {commandId,target,expectedExecutionRevision}`
+validates two worktrees share a Git common directory, requires the runtime's
+acknowledged parked/retired boundary, then remounts the same native session with
+unchanged history/settings workspace and the new execution directory. The native
+revision here counts location changes, independently of any host admission
+counter. Result `{applied:true,historyCwd,executionDirectory,executionRevision,
+commandId,blocked:false}` is durable only after remount succeeds. No turn is
+submitted or replayed. A failed/uncertain remount leaves a durable fence.
+
+Passive `_amplifier/relocation {sessionId,historyCwd}` reads location and receipt
+without opening Core: `{sessionId,historyCwd,executionDirectory,
+executionRevision,blocked,receipt?}`. Receipt has `{commandId,status:
+"applied"|"remounting",target,from,expectedExecutionRevision,historyCwd,signature}`.
+`_amplifier/relocation/reconcile` adds original `commandId` and confirms only an
+already-written native location marker matching that receipt; absent proof it
+returns `blocked:true,reconciled:false`, never repeats the effect. Standard
+resume/load use execution `cwd` plus negotiated `_meta["amplifier.dev/native"]
+={historyCwd:<original>}; returned native metadata includes both directories and
+location revision. Passive history still uses original historyCwd. Configuration
+snapshot references include executionDirectory/locationRevision so a fresh
+configuration-only clone preserves the selected worktree while its own history
+identity and location revision start fresh.

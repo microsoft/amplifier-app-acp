@@ -1,1 +1,64 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"Native configuration clone creation","type":"object","additionalProperties":false,"required":["sessionId","cwd","source","commandId"],"properties":{"sessionId":{"type":"string","format":"uuid"},"cwd":{"type":"string","minLength":1},"mcpServers":{"type":"array"},"commandId":{"type":"string","minLength":1,"maxLength":200},"source":{"type":"object","additionalProperties":false,"required":["version","sourceSessionId","sourceCwd","configurationHash"],"properties":{"version":{"const":1},"sourceSessionId":{"type":"string","minLength":1},"sourceCwd":{"type":"string","minLength":1},"configurationHash":{"type":"string","pattern":"^[0-9a-f]{64}$"}}}}}
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Native configuration clone creation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sessionId",
+    "cwd",
+    "source",
+    "commandId"
+  ],
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "cwd": {
+      "type": "string",
+      "minLength": 1
+    },
+    "mcpServers": {
+      "type": "array"
+    },
+    "commandId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "sourceSessionId",
+        "sourceCwd",
+        "configurationHash"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "sourceSessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceCwd": {
+          "type": "string",
+          "minLength": 1
+        },
+        "configurationHash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "executionDirectory": {
+          "type": "string"
+        },
+        "locationRevision": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

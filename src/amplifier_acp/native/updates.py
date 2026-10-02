@@ -3,6 +3,7 @@ from __future__ import annotations
 
 
 import json
+import os
 
 
 from pathlib import Path
@@ -24,7 +25,16 @@ def active_release(home):
     return value
 
 
+def selected_release(home):
+    # Workers capture their source generation at spawn; the serving host follows
+    # the current pointer. Never change a running worker's resolver underneath it.
+    selected = os.environ.get('AMPLIFIER_UNIFIED_RELEASE')
+    identity = (selected or None) if selected is not None else active_release(home).get('current')
+    if identity is not None and not re.fullmatch(r'[a-f0-9]{32}', identity):
+        raise ValueError('Invalid worker source generation')
+    return identity
+
 def foundation_home(home):
     home = Path(home)
-    identity = active_release(home).get('current')
+    identity = selected_release(home)
     return home / 'updates' / 'releases' / identity / 'foundation' if identity else home / 'foundation'

@@ -20,6 +20,7 @@ class NativeWorker:
         self.pending = {}
         self.tasks = set()
         self.closed = False
+        self.generation_lease = None
         self.ready = asyncio.get_running_loop().create_future()
         self.report = {}
         self._write_lock = asyncio.Lock()
@@ -27,6 +28,8 @@ class NativeWorker:
 
     async def start(self, host_info=None, mcp_servers=None):
         env = os.environ.copy()
+        # An inherited shell's venv must not redirect Foundation installers.
+        env.pop('VIRTUAL_ENV',None)
         # Explicit process env remains authoritative over settings keys.env.
         if self.config.get('home'):
             env['AMPLIFIER_HOME'] = str(Path(self.config['home']).expanduser().resolve())
@@ -35,10 +38,24 @@ class NativeWorker:
         if self.config.get('registryHome'):
             env['AMPLIFIER_ACP_REGISTRY_HOME'] = str(Path(self.config['registryHome']).expanduser().resolve())
         env['AMPLIFIER_ACP_HOST_FEATURES']=json.dumps((host_info or {}).get('features',{}))
+        from .native.updates import active_release
+        app_home=Path(env.get('AMPLIFIER_WEB_HOME',Path.home()/'.amplifier-unified'))
+        generation=self.config.get('runtimeGeneration',active_release(app_home).get('current'))
+        if generation is not None and (not isinstance(generation,str) or len(generation)!=32 or any(c not in '0123456789abcdef' for c in generation)):
+            raise NativeError('Invalid configured native runtime generation.')
+        if generation and not self.config.get('workerCommand'):
+            raise NativeError('This native home has a qualified generation. Configure its explicit workerCommand before starting; the adapter will not mount a different environment silently.')
+        env['AMPLIFIER_UNIFIED_RELEASE']=generation or ''
+        if generation and (app_home/'updates/releases'/generation/'profiles-qualified.json').exists():env['AMPLIFIER_RUNTIME_IMMUTABLE']='1'
         command = self.config.get('workerCommand') or [sys.executable, '-m', 'amplifier_acp.native.runtime_worker']
-        self.process = await asyncio.create_subprocess_exec(*command, cwd=self.cwd, env=env,
+        self.process = await asyncio.create_subprocess_exec(*command, cwd=self.config.get('executionDirectory',self.cwd), env=env,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=sys.stderr, limit=48_000_001)
+        if generation:
+            from .native.generation_leases import acquire
+            try:self.generation_lease=acquire(app_home,generation,self.process.pid)
+            except BaseException:
+                self.process.terminate();await self.process.wait();raise
         self.reader = asyncio.create_task(self.read())
         bundle=self.config.get('bundle')
         app_home=Path(env.get('AMPLIFIER_WEB_HOME',Path.home()/'.amplifier-unified'))
@@ -49,7 +66,7 @@ class NativeWorker:
             if 'active' in saved:bundle=saved['active']
         if self.config.get('cloneBundle'):bundle=self.config['cloneBundle']
         await self.write({'op':'start','session':{'id':self.session_id,'workspace':self.cwd,
-            'bundle':bundle, 'hostBridge':host_info is not None, 'hostInfo':host_info or {}, 'mcpServers':mcp_servers or []}})
+            'workingDirectory':self.config.get('executionDirectory',self.cwd),'bundle':bundle, 'hostBridge':host_info is not None, 'hostInfo':host_info or {}, 'mcpServers':mcp_servers or []}})
         try:
             self.report = await asyncio.wait_for(asyncio.shield(self.ready), self.config.get('startupTimeout',180))
         except BaseException:
@@ -138,3 +155,4 @@ class NativeWorker:
             if hasattr(self,'reader'):await asyncio.gather(self.reader,return_exceptions=True)
         for task in self.tasks:task.cancel()
         await asyncio.gather(*self.tasks,return_exceptions=True)
+        if self.generation_lease:self.generation_lease.unlink(missing_ok=True)

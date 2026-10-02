@@ -234,7 +234,7 @@ def load_config(workspace, *, home=None, legacy_home=None, session_id=None, glob
     return read_config(workspace, home=home, shared_home=shared, session_id=session_id, global_only=global_only)
 
 
-def read_config(workspace, *, home=None, shared_home=None, session_id=None, global_only=False, settings_cache=None):
+def read_config(workspace, *, home=None, shared_home=None, session_id=None, global_only=False, settings_cache=None, registry_home=None):
     """Read runtime settings without loading keys, preparing caches or writing."""
     home = Path(home or app_home()).expanduser().resolve()
     workspace = Path(workspace).expanduser().resolve(strict=True)
@@ -243,7 +243,7 @@ def read_config(workspace, *, home=None, shared_home=None, session_id=None, glob
     from ..updates import foundation_home as original_foundation_home
     def foundation_home(home):
         return Path(os.environ["AMPLIFIER_ACP_REGISTRY_HOME"]).expanduser().resolve() if os.environ.get("AMPLIFIER_ACP_REGISTRY_HOME") else original_foundation_home(home)
-    registry_home = foundation_home(home)
+    registry_home = Path(registry_home) if registry_home is not None else foundation_home(home)
     # Keep explicit app-cache source overrides aligned with the active snapshot.
     def relocate(value):
         if isinstance(value, dict): return {k:relocate(v) for k,v in value.items()}

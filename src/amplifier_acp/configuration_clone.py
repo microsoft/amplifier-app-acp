@@ -35,7 +35,9 @@ def capture(home,identity,cwd,bundle):
     state=read(directory/'control-state.json')
     controls={k:copy.deepcopy(state[k]) for k in ('selection','configurator','mode','budget') if k in state}
     if 'capacity' in state:controls['capacity']={**copy.deepcopy(state['capacity']),'revision':0}
-    value={'workspace':str(Path(cwd).resolve()),'bundle':bundle,'plan':plan,'controls':controls}
+    history=str(Path(cwd).resolve());execution=read(directory/'execution-location.json') if (directory/'execution-location.json').exists() else {}
+    if (directory/'execution-relocation.json').exists() and read(directory/'execution-relocation.json').get('status')!='applied':raise ValueError('Source execution relocation is unresolved')
+    value={'workspace':history,'executionDirectory':execution.get('executionDirectory',history),'locationRevision':execution.get('executionRevision',0),'bundle':bundle,'plan':plan,'controls':controls}
     if not isinstance(bundle,str) or not bundle:raise ValueError('Source bundle identity is unavailable.')
     if len(json.dumps(value).encode())>MAX_BYTES:raise ValueError('Native configuration exceeds clone bound.')
     return value
@@ -45,7 +47,7 @@ def snapshot(home,identity,cwd,bundle):
     from .native.host.config import write_private
     directory=location(home,identity)/'configuration-snapshots'
     write_private(directory/(digest+'.json'),json.dumps(value))
-    return {'version':1,'sourceSessionId':identity,'sourceCwd':value['workspace'],'configurationHash':digest}
+    return {'version':1,'sourceSessionId':identity,'sourceCwd':value['workspace'],'configurationHash':digest,'executionDirectory':value['executionDirectory'],'locationRevision':value['locationRevision']}
 
 def prepare(server,params):
     identity=params.get('sessionId');command=params.get('commandId');source=params.get('source')
@@ -63,6 +65,10 @@ def prepare(server,params):
     saved=read(original/'configuration-snapshots'/(digest+'.json'))
     if fingerprint(saved)!=digest or fingerprint(capture(home,source['sourceSessionId'],cwd,saved['bundle']))!=digest:
         raise ValueError('Reviewed native configuration changed; preview again.')
+    if source.get('executionDirectory',saved['executionDirectory'])!=saved['executionDirectory'] or source.get('locationRevision',saved['locationRevision'])!=saved['locationRevision']:raise ValueError('Source execution reference changed')
+    if saved['executionDirectory']!=cwd:
+        from .relocation import validate_target
+        validate_target(cwd,saved['executionDirectory'])
     target=location(home,identity)
     native=server.directory(cwd,identity)
     if identity in server.sessions or target.exists() or native.exists():raise ValueError('Reserved identity already exists; inspect the original creation receipt. No work replayed.')
@@ -75,6 +81,7 @@ def prepare(server,params):
     write_private(target/'creation-receipt.json',json.dumps({'commandId':command,'source':source,'state':'reserved'}))
     write_private(target/'configuration.json',json.dumps(saved['plan']))
     write_private(target/'control-state.json',json.dumps(saved['controls']))
+    write_private(target/'execution-location.json',json.dumps({'sessionId':identity,'historyCwd':cwd,'executionDirectory':saved['executionDirectory'],'executionRevision':0}))
     return identity,saved['bundle']
 
 def confirmed(server,identity):

@@ -145,8 +145,8 @@ def active_install_overrides(home, current_override=None):
     An explicit user override remains authoritative. Legacy generations have no
     new policy. Validate an existing graph before mounting another conversation.
     """
-    from .updates import active_release
-    generation = active_release(home).get('current')
+    from .updates import selected_release
+    generation = selected_release(home)
     receipt = environments.receipt_directory(home, generation)
     if not (receipt / 'runtime-installed.json').exists():
         return None
