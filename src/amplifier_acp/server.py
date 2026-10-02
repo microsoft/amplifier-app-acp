@@ -22,6 +22,7 @@ class RpcError(Exception):
 class Session:
     def __init__(self,server,identity,cwd):
         self.server,self.identity,self.cwd=server,identity,cwd
+        self.bundle_override=None
         self.worker=None; self.prompt=None; self.input_id=None; self.cancelled=False
         self.streamed=False; self.had_deltas=False; self.last_model_id=None; self.awaiting_children=False; self.tools=set(); self.lock=asyncio.Lock();self.report={}
         self.config_options=[];self.mcp_servers=[];self.idle_task=None;self.start_lock=asyncio.Lock();self.config_cancel=None;self.config_applying=False
@@ -51,7 +52,8 @@ class Session:
         if not self.config_applying:self.restore_configuration()
         if self.worker and (self.worker.closed or self.cancelled):await self.worker.close()
         if self.worker and self.worker.process.returncode is None:return
-        self.worker=NativeWorker(self.identity,self.cwd,self.server.config,self.observe,self.bridge)
+        config={**self.server.config,**({'cloneBundle':self.bundle_override} if self.bundle_override else {})}
+        self.worker=NativeWorker(self.identity,self.cwd,config,self.observe,self.bridge)
         self.report=await self.worker.start(self.server.host_info if HOST in self.server.extensions else None,self.mcp_servers)
         self.cancelled=False
         await self.refresh_options(notify=False)
@@ -105,6 +107,9 @@ class Session:
         kind=row.get('type')
         root=row.get('sessionId') or row.get('session_id') or self.identity
         is_root=root==self.identity
+        if NATIVE in self.server.extensions and kind not in {'assistant.delta','assistant.message','execution.event'}:
+            safe={k:v for k,v in row.items() if k not in {'prompt','options','error','report'}}
+            await self.server.notify('_amplifier/event',{'sessionId':self.identity,'event':safe})
         if kind=='runtime.ready':self.report=row.get('report',{})
         if kind=='approval.requested':self.server.track(self.permission(row))
         elif kind=='assistant.delta' and is_root:
@@ -147,10 +152,6 @@ class Session:
             if self.prompt and not self.prompt.done():
                 if self.cancelled:self.prompt.set_result({'stopReason':'cancelled'})
                 else:self.prompt.set_exception(NativeError(row['error'],data=row.get('data')))
-        # Advanced events are opt-in; baseline peers see only ACP messages.
-        if NATIVE in self.server.extensions and kind not in {'assistant.delta','assistant.message','execution.event'}:
-            safe={k:v for k,v in row.items() if k not in {'prompt','options','error','report'}}
-            await self.server.notify('_amplifier/event',{'sessionId':self.identity,'event':safe})
 
     async def refresh_options(self,notify=True):
         state=await self.worker.control('mode.list')
@@ -269,6 +270,29 @@ class Session:
                 self.prompt=None
                 self.schedule_retirement()
 
+    async def scheduled(self,args):
+        """One admitted finite run shares ACP streaming and terminal settlement."""
+        if self.lock.locked():return {'accepted':False,'reason':'A turn is already active.'}
+        identity=args.get('inputId')
+        if not isinstance(identity,str) or not identity or len(identity)>200:raise RpcError(-32602,'A bounded deterministic inputId is required.')
+        if not isinstance(args.get('text'),str) or not args['text'].strip():raise RpcError(-32602,'Scheduled text is required.')
+        if args.get('kind') not in {'task','monitor'}:raise RpcError(-32602,'Scheduled kind must be task or monitor.')
+        async with self.lock:
+            await self.start()
+            previous=await self.worker.command('delivery',input_id=identity)
+            if previous.get('delivery')=='accepted':
+                raise RpcError(-32001,'Scheduled input was already admitted; inspect its history.',{'outcome':'already-admitted','commandId':identity,'replayed':False})
+            self.input_id=identity;self.cancelled=False;self.streamed=False;self.had_deltas=False;self.last_model_id=None;self.awaiting_children=False
+            self.prompt=asyncio.get_running_loop().create_future()
+            try:
+                result=await self.worker.control('schedule.submit',args)
+                if not result.get('accepted'):return result
+                return {**result,**await self.prompt}
+            finally:
+                if self.prompt and not self.prompt.done():self.prompt.cancel()
+                self.prompt=None
+                self.schedule_retirement()
+
     async def cancel(self):
         self.cancelled=True
         if self.worker and self.worker.process.returncode is None:
@@ -358,7 +382,7 @@ class Server:
             return {'protocolVersion':1,'agentInfo':{'name':'amplifier-acp','title':'Amplifier','version':__version__},
                 'agentCapabilities':{'loadSession':True,'sessionCapabilities':{'resume':{},'close':{}},
                     'promptCapabilities':{'image':True,'audio':False,'embeddedContext':True},
-                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True},**({'admin':{'version':1}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
+                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True},'scheduledTurns':{'version':1,'completion':'settled'},'configurationClone':{'version':1},**({'admin':{'version':1}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
         if not self.initialized:raise RpcError(-32600,'Initialize this connection first.')
         if method=='_amplifier/admin':
             if NATIVE not in self.extensions or not self.config.get('adminWorkspaceRoots'):raise RpcError(-32601,'Native administration was not negotiated or launcher-enabled.')
@@ -371,6 +395,19 @@ class Server:
             if not cwd.is_absolute() or not cwd.is_dir():raise RpcError(-32602,'cwd must be an existing absolute directory.')
             from .history import page
             return page(self.directory(str(cwd.resolve()),params.get('sessionId')),cursor=params.get('cursor'),limit=params.get('limit',50))
+        if method=='_amplifier/session/new':
+            if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
+            from .configuration_clone import prepare
+            identity,bundle=prepare(self,params)
+            session=Session(self,identity,str(Path(params['cwd']).resolve()));session.bundle_override=bundle
+            self.sessions[identity]=session
+            from .mcp import validate_servers
+            session.mcp_servers=validate_servers(params.get('mcpServers',[]))
+            try:await session.start()
+            except BaseException:self.sessions.pop(identity,None);raise
+            from .configuration_clone import confirmed
+            confirmed(self,identity)
+            return {'sessionId':identity,'configOptions':session.config_options,'_meta':{NATIVE:{'nativeSessionId':identity,'agentKind':'amplifier-core-foundation','creationConfirmed':True,'configurationHash':params['source']['configurationHash']}}}
         if method in {'session/new','session/load','session/resume'}:
             cwd=Path(params.get('cwd','')).expanduser()
             if not cwd.is_absolute() or not cwd.is_dir():raise RpcError(-32602,'cwd must be an existing absolute directory.')
@@ -414,6 +451,11 @@ class Server:
             operation=params.get('operation');args=params.get('args',{})
             if not isinstance(operation,str) or not isinstance(args,dict):raise RpcError(-32602,'Native operation and object args are required.')
             await session.start()
+            if operation=='configuration.snapshot':
+                if session.lock.locked():raise RpcError(-32000,'Configuration snapshot requires an idle session.')
+                result=await session.worker.control(operation,{'bundle':session.report.get('bundle')})
+                return result
+            if operation=='schedule.submit':return await session.scheduled(args)
             if operation=='capabilities':
                 return {'version':1,'agentKind':'amplifier-core-foundation','report':session.report,'hostBridge':HOST in self.extensions,'hostCapabilities':self.host_info if HOST in self.extensions else {},
                     'controls':NATIVE_CONTROLS,'workerOperations':['worker.steer','worker.message','worker.stop']}
@@ -452,7 +494,7 @@ class Server:
             for task in self.tasks:task.cancel()
             await asyncio.gather(*self.tasks,return_exceptions=True)
 
-NATIVE_CONTROLS=['configuration.inspect','configuration.exportResources','configuration.providers','configuration.providerModels',
+NATIVE_CONTROLS=['configuration.snapshot','configuration.inspect','configuration.exportResources','configuration.providers','configuration.providerModels',
     'configuration.providerTest','configuration.providerLogin','configuration.providerLoginStatus','configuration.providerLoginCancel','configuration.cancel','configuration.apply','configuration.toggle','catalog.inspect','usage.inspect',
     'context.clear','goals.get','goals.set','goals.clear','budget.get','budget.set','provider.reset','provider.select','tool.invoke',
     'voice.transcript.record','mode.list','mode.set','mode.clear','native.status','native.compact','history.snapshot','history.edit','bundle.preview','bundle.switch',

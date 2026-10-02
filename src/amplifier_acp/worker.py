@@ -47,6 +47,7 @@ class NativeWorker:
             import yaml
             saved=(yaml.safe_load(settings.read_text()) or {}).get('bundle',{})
             if 'active' in saved:bundle=saved['active']
+        if self.config.get('cloneBundle'):bundle=self.config['cloneBundle']
         await self.write({'op':'start','session':{'id':self.session_id,'workspace':self.cwd,
             'bundle':bundle, 'hostBridge':host_info is not None, 'hostInfo':host_info or {}, 'mcpServers':mcp_servers or []}})
         try:

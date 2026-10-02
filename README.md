@@ -104,3 +104,26 @@ rerunning qualification (`uv sync --upgrade`).
 Live provider accounts, production history and external editor clients have not
 been exercised by these fixture tests. Source extraction and passing regressions
 do not by themselves establish full production feature acceptance.
+
+Scheduled turns require negotiated `scheduledTurns: {version: 1, completion: "settled"}`.
+`_amplifier/native` operation `schedule.submit` accepts `{inputId, taskId,
+taskRevision, text, kind: "task" | "monitor"}`. It shares the prompt lock and
+standard ACP streaming, returns `{accepted:false,reason}` before execution or
+`{accepted:true,inputId,stopReason}` only after settlement. Uncertain transport
+loss is never a rejection or permission to replay. Reused admitted input IDs are
+rejected with `already-admitted`. Monitor execution keeps the native finite-run
+continuation guard and saved task goal restoration.
+
+Configuration inheritance is advertised as `configurationClone: {version:1}`.
+`configuration.snapshot` returns the opaque native-owned reference `{version:1,
+sourceSessionId,sourceCwd,configurationHash}`. The source must be idle. A separately
+initialized process accepts `_amplifier/session/new` with `{sessionId:<reserved
+UUID>,cwd,mcpServers:[],source:<reference>,commandId}`. It verifies the current
+source configuration, exclusively reserves the identity and mounts the complete
+native bundle/plan/provider/mode/budget/capacity settings. History, goals, tasks,
+receipts and execution state are excluded. Private plan/credential values never
+cross the wire. A confirmed response is standard NewSession plus native metadata
+`creationConfirmed:true,configurationHash`. Duplicate identities or interrupted
+creation require receipt inspection, never another create. The source host must
+hold its configuration/admission lock through creation. Cross-workspace cloning
+is deliberately refused until a workspace owner supplies an explicit contract.
