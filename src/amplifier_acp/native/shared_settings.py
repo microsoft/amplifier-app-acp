@@ -40,3 +40,18 @@ def routing_dirs(workspace, *, shared_home=None, global_only=False):
     workspace = Path(workspace).expanduser().resolve()
     from .managed_chats import metadata
     return [root / "routing"] if global_only or metadata(workspace) else [workspace / ".amplifier" / "routing.local", workspace / ".amplifier" / "routing", root / "routing"]
+
+
+def overlay(base, patch):
+    from amplifier_foundation.settings import overlay as merge
+    return merge(base, patch)
+
+
+def atomic_write(path, contents, *, private=False):
+    from amplifier_foundation.settings import atomic_write as write
+    return write(path, contents, private=private)
+
+
+def update_settings(path, mutator):
+    from amplifier_foundation.settings import update_settings as update
+    return update(path, mutator)

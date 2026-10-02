@@ -210,10 +210,12 @@ class Worker:
                     task = asyncio.create_task(self.park())
                     self.tasks.add(task)
                     task.add_done_callback(self.tasks.discard)
-        coordinator.register_capability("operations.observe", observe_operation)
+        if self.start_config.get("hostInfo",{}).get("features",{}).get("operations"):
+            coordinator.register_capability("operations.observe", observe_operation)
         async def admit_questions(question_ids):
             return await self.bridge("questions.admit", {"questionIds": question_ids})
-        coordinator.register_capability("questions.admit", admit_questions)
+        if self.start_config.get("hostInfo",{}).get("features",{}).get("questions"):
+            coordinator.register_capability("questions.admit", admit_questions)
         def public_stream():
             from amplifier_acp.native.execution_events import CALL_PURPOSE
             return not CALL_PURPOSE.get()
@@ -360,7 +362,7 @@ class Worker:
             from amplifier_acp.native.attachments import encode
             self.session.coordinator.register_capability('live.attachments.encode',encode)
             self.controls = RuntimeControls(self.session, self.runtime, self.telemetry)
-            self.controls.capacity.admit = (lambda row: self.bridge("capacity.admit", {"call": row})) if config.get("hostBridge") else None
+            self.controls.capacity.admit = (lambda row: self.bridge("capacity.admit", {"call": row})) if config.get("hostInfo",{}).get("features",{}).get("capacity") else None
             self.telemetry.admission_guard = self.controls.capacity.guard
             # Preserve app controls on native mounts. A legacy common snapshot
             # retains its previous restoration policy during one-time recovery.
@@ -384,8 +386,8 @@ class Worker:
                 report["fork_context_messages"] = len(messages)
             host = self
             from amplifier_acp.native.app_guidance import install_app_access
-            if config.get("hostBridge"):
-                await install_app_access(self.session.coordinator, self.app_access_bridge(self.session.coordinator))
+            if config.get("hostBridge") and config.get("hostInfo",{}).get("appControl"):
+                await install_app_access(self.session.coordinator, self.app_access_bridge(self.session.coordinator), host_info=config.get("hostInfo",{}))
             original_host = self.session.coordinator.get_capability("live.host")
             class ObservedHost:
                 def __getattr__(self, name):
@@ -394,8 +396,8 @@ class Worker:
                     result = await original_host.prepare_execution(loop, coordinator, providers)
                     if coordinator:
                         host.install_activity(coordinator)
-                        if config.get("hostBridge"):
-                            await install_app_access(coordinator, host.app_access_bridge(coordinator))
+                        if config.get("hostBridge") and config.get("hostInfo",{}).get("appControl"):
+                            await install_app_access(coordinator, host.app_access_bridge(coordinator), host_info=config.get("hostInfo",{}))
                         from amplifier_acp.native.host.session import SelectedProvider
                         transform = coordinator.get_capability('web.provider_transform') or (lambda provider: provider)
                         if isinstance(getattr(loop,'root_provider',None), SelectedProvider):
@@ -623,6 +625,7 @@ class Worker:
                     and not self.approvals and not self.bridges and not self.operation_ids and not self.operation_controls and not self.remounting
                     and not self.runtime.queued_inputs and self.runtime.inbox.empty()
                     and not self.runtime.generation
+                    and not any(not row["task"].done() for row in self.controls.logins.values())
                     and not (self.naming and self.naming.pending and not self.naming.pending.done())
                     and not (loop and (loop.pending or loop._active_jobs())))
                 publish({"op": "reply", "id": data.get("id"), "result": {"retired": settled}})

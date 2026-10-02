@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsoft.github.io/amplifier-acp/schemas/host-capabilities.v1.json",
+  "type": "object",
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "name": {
+      "type": "string",
+      "maxLength": 100
+    },
+    "appControl": {
+      "type": "object",
+      "properties": {
+        "operations": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "get_state",
+              "list_actions",
+              "dispatch",
+              "history",
+              "context.read",
+              "context.focus"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "guidance": {
+          "type": "string",
+          "maxLength": 16000
+        }
+      },
+      "required": [
+        "operations"
+      ],
+      "additionalProperties": false
+    },
+    "features": {
+      "type": "object",
+      "properties": {
+        "context": {
+          "type": "boolean"
+        },
+        "memory": {
+          "type": "boolean"
+        },
+        "outputs": {
+          "type": "boolean"
+        },
+        "visual": {
+          "type": "boolean"
+        },
+        "capacity": {
+          "type": "boolean"
+        },
+        "operations": {
+          "type": "boolean"
+        },
+        "questions": {
+          "type": "boolean"
+        },
+        "observation": {
+          "type": "boolean"
+        },
+        "unifiedShell": {
+          "type": "boolean"
+        },
+        "imageGeneration": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "version"
+  ],
+  "additionalProperties": false
+}

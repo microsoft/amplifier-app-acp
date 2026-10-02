@@ -1,28 +1,12 @@
-"""Extracted native application runtime; provenance in extraction.json."""
+"""Private model catalogs with expiry, restart reuse and single-flight refresh."""
 import asyncio
-
-
 import copy
-
-
 from functools import lru_cache
-
-
 import hashlib
-
-
 import json
-
-
 import os
-
-
 import time
-
-
 import uuid
-
-
 from pathlib import Path
 
 
@@ -133,6 +117,10 @@ def mounted_catalog_keys(home,workspace,rows,sources):
         configuration_key(workspace,row['module'],row.get('config',{}),
             sources[row.get('instance_id') or row.get('id') or row['module'].removeprefix('provider-')],home=home)
         for row in rows}
+
+
+def model_key(identity):
+    return ('providers.models', identity)
 
 
 class ProviderCatalog:

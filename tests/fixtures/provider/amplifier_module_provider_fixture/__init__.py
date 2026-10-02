@@ -8,6 +8,10 @@ class FixtureProvider:
     def __init__(self,config=None):self.config=config or {}
     def get_info(self):return ProviderInfo(id='fixture',display_name='Offline fixture',defaults={'model':'fixture-model','max_tokens':4096},capabilities=['tools'])
     async def list_models(self):return [{'id':'fixture-model'}]
+    async def login(self,print_fn=None):
+        if print_fn:print_fn('Offline fixture sign-in')
+        await asyncio.sleep(60)
+        return True
     async def complete(self,request,**kwargs):
         prompt=next((m.content for m in reversed(request.messages) if m.role=='user'),'')
         if isinstance(prompt,list):prompt=' '.join(getattr(b,'text','') for b in prompt)

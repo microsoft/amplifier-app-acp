@@ -325,7 +325,7 @@ class RuntimeControls:
             return {"messages":await self.coordinator.get("context").get_messages()}
         if operation == "configuration.exportResources":
             return self.export_resources()
-        if operation in {"configuration.providers", "configuration.providerModels", "configuration.providerTest", "configuration.providerLogin"}:
+        if operation in {"configuration.providers", "configuration.providerModels", "configuration.providerTest", "configuration.providerLogin", "configuration.providerLoginStatus", "configuration.providerLoginCancel"}:
             return await self.provider_control(operation,args)
         if operation == "configuration.apply":
             self.require_idle()
@@ -535,6 +535,13 @@ class RuntimeControls:
             if operation == "configuration.providerTest":
                 return {"provider":name,"reachable":True,"modelCount":len(result),"method":"provider.list_models"}
             return {"provider":name,"models":result,'supported':True}
+        if operation in {"configuration.providerLoginStatus", "configuration.providerLoginCancel"}:
+            row = self.logins.get(name)
+            if row is None:raise ValueError("No sign-in is active for this mounted provider")
+            if operation == "configuration.providerLoginCancel" and not row["task"].done():
+                row["task"].cancel()
+                await asyncio.gather(row["task"], return_exceptions=True)
+            return {key:value for key,value in row.items() if key != "task"}
         method = getattr(provider,"login",None)
         if not callable(method):
             raise ValueError("This provider does not expose an interactive login API; configure its credential fields instead")

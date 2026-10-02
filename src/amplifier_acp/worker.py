@@ -25,7 +25,7 @@ class NativeWorker:
         self._write_lock = asyncio.Lock()
         self._close_lock = asyncio.Lock()
 
-    async def start(self, host_bridge=False, mcp_servers=None):
+    async def start(self, host_info=None, mcp_servers=None):
         env = os.environ.copy()
         # Explicit process env remains authoritative over settings keys.env.
         if self.config.get('home'):
@@ -34,13 +34,21 @@ class NativeWorker:
             env['AMPLIFIER_WEB_HOME'] = str(Path(self.config['appHome']).expanduser().resolve())
         if self.config.get('registryHome'):
             env['AMPLIFIER_ACP_REGISTRY_HOME'] = str(Path(self.config['registryHome']).expanduser().resolve())
+        env['AMPLIFIER_ACP_HOST_FEATURES']=json.dumps((host_info or {}).get('features',{}))
         command = self.config.get('workerCommand') or [sys.executable, '-m', 'amplifier_acp.native.runtime_worker']
         self.process = await asyncio.create_subprocess_exec(*command, cwd=self.cwd, env=env,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=sys.stderr, limit=48_000_001)
         self.reader = asyncio.create_task(self.read())
+        bundle=self.config.get('bundle')
+        app_home=Path(env.get('AMPLIFIER_WEB_HOME',Path.home()/'.amplifier-unified'))
+        settings=app_home/'admin-settings.yaml'
+        if settings.exists():
+            import yaml
+            saved=(yaml.safe_load(settings.read_text()) or {}).get('bundle',{})
+            if 'active' in saved:bundle=saved['active']
         await self.write({'op':'start','session':{'id':self.session_id,'workspace':self.cwd,
-            'bundle':self.config.get('bundle'), 'hostBridge':host_bridge, 'mcpServers':mcp_servers or []}})
+            'bundle':bundle, 'hostBridge':host_info is not None, 'hostInfo':host_info or {}, 'mcpServers':mcp_servers or []}})
         try:
             self.report = await asyncio.wait_for(asyncio.shield(self.ready), self.config.get('startupTimeout',180))
         except BaseException:

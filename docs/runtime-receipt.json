@@ -107,10 +107,11 @@
     }
   ],
   "validation": {
-    "suite": "141 passed",
+    "suite": "251 passed in 30.80s",
+    "additionalTargeted": "6 public schema fixture tests passed after adding host capability schema (252 unique tests covered)",
+    "uniqueTestsPassed": 252,
     "liveAccounts": false,
     "offlineFixtures": true,
-    "additionalTargeted": "3 native lifecycle tests after identity-label change; 2 new retention/content tests",
-    "uniqueTestsPassed": 143
+    "nodeCapabilityIntegration": "7 passed including upstream ACP SDK against actual native admin subprocess"
   }
 }

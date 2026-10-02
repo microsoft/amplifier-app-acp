@@ -44,3 +44,20 @@ an isolated native/config/history root.
 `workerCommand` is a trusted launcher/testing override; it is not accepted from
 ACP requests. It permits deterministic transport fixtures without adding a mock
 production backend. The normal launch always uses the extracted full worker.
+
+Native administration and Unified capability integration add the original
+provider/routing, module/source and bundle manager behavior without AppService.
+Their 100 ported regression tests verify private credentials, scope precedence,
+registration/discovery/export validation, model catalogs and cancellation.
+Native subprocess coverage includes queued configuration cancellation, actual
+Core remount preserving history, and provider login retaining its worker until
+completion/cancel. Live OAuth/accounts remain untested. Behavioral validation
+requires pytest/pytest-asyncio installed in the configured runtime and fails
+explicitly if absent; it does not install undeclared test runners mid-request.
+
+Application access is now explicitly negotiated by operation and feature; see
+`host-bridge.md`. Generic ACP sessions never receive Unified UI claims or default
+Unified shell/imagegen behaviors. Explicit native settings remain authoritative.
+Configuration remounts keep a private durable rollback journal: failed mounts
+restore prior settings/runtime; restart recovers an interrupted transaction
+without replaying input. Recovery failure remains explicit rather than success.

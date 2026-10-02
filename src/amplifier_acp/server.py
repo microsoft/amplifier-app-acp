@@ -24,17 +24,35 @@ class Session:
         self.server,self.identity,self.cwd=server,identity,cwd
         self.worker=None; self.prompt=None; self.input_id=None; self.cancelled=False
         self.streamed=False; self.had_deltas=False; self.last_model_id=None; self.awaiting_children=False; self.tools=set(); self.lock=asyncio.Lock();self.report={}
-        self.config_options=[];self.mcp_servers=[];self.idle_task=None;self.start_lock=asyncio.Lock()
+        self.config_options=[];self.mcp_servers=[];self.idle_task=None;self.start_lock=asyncio.Lock();self.config_cancel=None;self.config_applying=False
 
     async def start(self):
         async with self.start_lock:
             await self._start()
 
+    def configuration_journal(self):
+        home=Path(self.server.config.get('appHome') or os.environ.get('AMPLIFIER_WEB_HOME') or Path.home()/'.amplifier-unified').expanduser().resolve()
+        return home/'sessions'/self.identity/'configuration-transaction.json'
+
+    def restore_configuration(self):
+        path=self.configuration_journal()
+        if not path.exists():return
+        saved=json.loads(path.read_text())
+        expected={'configuration.json','control-state.json','effective-configuration.json'}
+        if set(saved)!=expected:raise RpcError(-32000,'Invalid configuration recovery journal; files preserved.')
+        from .native.host.config import write_private
+        for name,value in saved.items():
+            target=path.with_name(name)
+            if value is None:target.unlink(missing_ok=True)
+            else:write_private(target,value)
+        path.unlink()
+
     async def _start(self):
+        if not self.config_applying:self.restore_configuration()
         if self.worker and (self.worker.closed or self.cancelled):await self.worker.close()
         if self.worker and self.worker.process.returncode is None:return
         self.worker=NativeWorker(self.identity,self.cwd,self.server.config,self.observe,self.bridge)
-        self.report=await self.worker.start(HOST in self.server.extensions,self.mcp_servers)
+        self.report=await self.worker.start(self.server.host_info if HOST in self.server.extensions else None,self.mcp_servers)
         self.cancelled=False
         await self.refresh_options(notify=False)
         self.schedule_retirement()
@@ -87,6 +105,7 @@ class Session:
         kind=row.get('type')
         root=row.get('sessionId') or row.get('session_id') or self.identity
         is_root=root==self.identity
+        if kind=='runtime.ready':self.report=row.get('report',{})
         if kind=='approval.requested':self.server.track(self.permission(row))
         elif kind=='assistant.delta' and is_root:
             self.streamed=True;self.had_deltas=True
@@ -143,9 +162,13 @@ class Session:
                     {'value':r['name'],'name':r['name'],'description':r.get('description','')} for r in state['modes']]})
         # Configured choices are not a remote model catalog and never trigger model calls.
         choices=[r for r in self.report.get('provider_choices',[]) if r.get('model')]
+        selection=self.report.get('selection') or self.report.get('effective_selection') or {}
+        selected_id=selection.get('instance') or selection.get('id')
+        if selected_id and selection.get('model') and not any(r.get('id')==selected_id and r.get('model')==selection['model'] for r in choices):
+            choices.append({'id':selected_id,'model':selection['model'],'display_name':selected_id})
+        self.model_choices=choices
         if choices:
-            selection=self.report.get('selection') or self.report.get('effective_selection') or {}
-            current=next((str(i) for i,r in enumerate(choices) if r.get('id')==(selection.get('instance') or selection.get('id'))),'__default__')
+            current=next((str(i) for i,r in enumerate(choices) if r.get('id')==selected_id and r.get('model')==selection.get('model')),'__default__')
             options.append({'id':'model','name':'Configured model','category':'model','type':'select','currentValue':current,
                 'options':[{'value':'__default__','name':'Bundle default'}]+[{'value':str(i),'name':str(r.get('display_name') or r['id'])+' / '+r['model']} for i,r in enumerate(choices)]})
         self.config_options=options
@@ -160,10 +183,47 @@ class Session:
         if identity=='mode':await self.worker.control('mode.clear' if value=='__default__' else 'mode.set',{} if value=='__default__' else {'name':value})
         elif value=='__default__':await self.worker.control('provider.reset');self.report['selection']=None;self.report['effective_selection']=None
         else:
-            choices=[r for r in self.report.get('provider_choices',[]) if r.get('model')];choice=choices[int(value)]
+            choice=self.model_choices[int(value)]
             selection={'instance':choice['id'],'model':choice['model']}
             await self.worker.control('provider.select',selection);self.report['selection']=selection
         return {'configOptions':await self.refresh_options()}
+
+    async def apply_configuration(self,args):
+        if self.config_cancel is not None:raise RpcError(-32000,'A configuration change is already pending.')
+        if self.lock.locked() and not args.get('whenIdle'):raise RpcError(-32000,'Configuration requires an idle turn.')
+        cancel=self.config_cancel=asyncio.Event()
+        acquiring=asyncio.create_task(self.lock.acquire());cancelled=asyncio.create_task(cancel.wait())
+        held=False
+        try:
+            await asyncio.wait({acquiring,cancelled},return_when=asyncio.FIRST_COMPLETED)
+            held=acquiring.done() and not acquiring.cancelled() and acquiring.result()
+            if cancel.is_set():return {'cancelled':True,'applied':False}
+            if not held:await acquiring;held=True
+            self.config_applying=True
+            journal=self.configuration_journal()
+            paths=[journal.with_name(name) for name in ('configuration.json','control-state.json','effective-configuration.json')]
+            saved={path.name:path.read_text() if path.exists() else None for path in paths}
+            from .native.host.config import write_private
+            write_private(journal,json.dumps(saved))
+            try:
+                result=await self.worker.control('configuration.apply',args)
+                if result.get('requiresRestart'):
+                    await self.worker.close()
+                    await self.start()
+                    result={**result,'requiresRestart':False,'remounted':True,'configuration':await self.worker.control('configuration.inspect')}
+                journal.unlink()
+            except (NativeError,ValueError,RpcError) as error:
+                await self.worker.close()
+                self.restore_configuration()
+                try:await self.start()
+                except Exception:
+                    raise RpcError(-32000,'Configuration failed; prior settings restored but runtime recovery failed. No input was replayed.',{'restored':True,'ready':False,'replayed':False}) from error
+                raise RpcError(-32000,'Configuration failed; prior settings and runtime restored. No input was replayed.',{'restored':True,'ready':True,'replayed':False}) from error
+            return result
+        finally:
+            acquiring.cancel();cancelled.cancel();await asyncio.gather(acquiring,cancelled,return_exceptions=True)
+            if held:self.lock.release()
+            self.config_cancel=None;self.config_applying=False
 
     async def send(self,blocks,meta):
         if self.lock.locked():raise RpcError(-32000,'A prompt is already active for this session.')
@@ -215,6 +275,7 @@ class Session:
             await self.worker.close()
 
     async def close(self):
+        if self.config_cancel:self.config_cancel.set()
         if self.idle_task:self.idle_task.cancel()
         self.cancelled=True
         if self.worker:await self.worker.close()
@@ -285,12 +346,25 @@ class Server:
             if self.initialized:raise RpcError(-32600,'Connection already initialized.')
             self.initialized=True
             meta=(params.get('clientCapabilities') or {}).get('_meta') or {}
+            host=meta.get(HOST,{})
+            self.host_info=host if isinstance(host,dict) and host.get('version')==1 else {}
+            features=self.host_info.get('features',{})
+            app=self.host_info.get('appControl',{})
+            if not isinstance(features,dict) or any(not isinstance(value,bool) for value in features.values()):raise RpcError(-32602,'Host feature flags must be booleans.')
+            if not isinstance(app,dict) or not isinstance(app.get('operations',[]),list) or any(not isinstance(op,str) for op in app.get('operations',[])):raise RpcError(-32602,'Host appControl requires an operation list.')
+            if 'guidance' in app and not isinstance(app['guidance'],str):raise RpcError(-32602,'Host guidance must be text.')
+            if len(json.dumps(self.host_info).encode())>32768:raise RpcError(-32602,'Host capability metadata exceeds 32 KiB.')
             self.extensions={key for key in (NATIVE,HOST) if isinstance(meta.get(key),dict) and meta[key].get('version')==1}
             return {'protocolVersion':1,'agentInfo':{'name':'amplifier-acp','title':'Amplifier','version':__version__},
                 'agentCapabilities':{'loadSession':True,'sessionCapabilities':{'resume':{},'close':{}},
                     'promptCapabilities':{'image':True,'audio':False,'embeddedContext':True},
-                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True}},HOST:{'version':1}}},'authMethods':[]}
+                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True},**({'admin':{'version':1}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
         if not self.initialized:raise RpcError(-32600,'Initialize this connection first.')
+        if method=='_amplifier/admin':
+            if NATIVE not in self.extensions or not self.config.get('adminWorkspaceRoots'):raise RpcError(-32601,'Native administration was not negotiated or launcher-enabled.')
+            from .admin import Administration
+            if not hasattr(self,'admin'):self.admin=Administration(self.config)
+            return await self.admin.perform(params.get('cwd'),params.get('operation'),params.get('args',{}))
         if method=='_amplifier/history':
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
             cwd=Path(params.get('cwd','')).expanduser()
@@ -341,14 +415,22 @@ class Server:
             if not isinstance(operation,str) or not isinstance(args,dict):raise RpcError(-32602,'Native operation and object args are required.')
             await session.start()
             if operation=='capabilities':
-                return {'version':1,'agentKind':'amplifier-core-foundation','report':session.report,'hostBridge':HOST in self.extensions,
+                return {'version':1,'agentKind':'amplifier-core-foundation','report':session.report,'hostBridge':HOST in self.extensions,'hostCapabilities':self.host_info if HOST in self.extensions else {},
                     'controls':NATIVE_CONTROLS,'workerOperations':['worker.steer','worker.message','worker.stop']}
             if operation in {'worker.steer','worker.message','worker.stop'}:
                 return await session.worker.command(operation,**args)
             if operation=='steer':
                 return await session.worker.command('steer',text=args.get('text',''),input_id=args.get('inputId') or str(uuid.uuid4()))
             if operation not in NATIVE_CONTROLS:raise RpcError(-32601,'Unknown native operation.')
-            return await session.worker.control(operation,args)
+            if operation=='configuration.cancel':
+                if session.config_applying:raise RpcError(-32000,'Configuration changes are already applying.')
+                if session.config_cancel:session.config_cancel.set()
+                return {'cancelled':session.config_cancel is not None}
+            result=await session.apply_configuration(args) if operation=='configuration.apply' else await session.worker.control(operation,args)
+            if operation in {'configuration.apply','bundle.switch','provider.select','provider.reset','mode.set','mode.clear'}:
+                if operation in {'provider.select','provider.reset'}:session.report['selection']=result.get('selection');session.report['effective_selection']=None
+                await session.refresh_options()
+            return result
         raise RpcError(-32601,'Method is not supported.')
 
     async def run(self):
@@ -362,6 +444,7 @@ class Server:
                 self.track(self.handle(row))
         finally:
             transport.close()
+            if hasattr(self,'admin'):await self.admin.close()
             # A lost client means cancellation, never automatic replay on reconnect.
             for session in list(self.sessions.values()):await session.close()
             for future in self.pending.values():
@@ -370,7 +453,7 @@ class Server:
             await asyncio.gather(*self.tasks,return_exceptions=True)
 
 NATIVE_CONTROLS=['configuration.inspect','configuration.exportResources','configuration.providers','configuration.providerModels',
-    'configuration.providerTest','configuration.providerLogin','configuration.apply','configuration.toggle','catalog.inspect','usage.inspect',
+    'configuration.providerTest','configuration.providerLogin','configuration.providerLoginStatus','configuration.providerLoginCancel','configuration.cancel','configuration.apply','configuration.toggle','catalog.inspect','usage.inspect',
     'context.clear','goals.get','goals.set','goals.clear','budget.get','budget.set','provider.reset','provider.select','tool.invoke',
     'mode.list','mode.set','mode.clear','native.status','native.compact','history.snapshot','history.edit','bundle.preview','bundle.switch',
     'session.naming','schedule.submit','observation.submit','memory.consolidate','operations.submit','operations.cancel','operations.write',

@@ -167,3 +167,38 @@ async def switch(worker, args):
         raise
     finally:
         worker.remounting = False
+
+
+BUNDLE_LABELS = {
+    'foundation': ('Foundation', 'Standard Amplifier tools and agent orchestration.'),
+    'amplifier-dev': ('Amplifier development', 'Tools and expertise for developing the Amplifier ecosystem.'),
+    'exp-delegation': ('Experimental · Delegation only', 'Delegate work to specialized agents.'),
+    'anchors': ('Anchors', 'General-purpose tools, instructions, and agents.'),
+    'anchors-amp-dev': ('Anchors · Amplifier development', 'Anchors with Amplifier ecosystem knowledge and tooling.'),
+    'work': ('Work', 'A small tool set with live delegation and managed context.'),
+    'anchors-work': ('Anchors + Work', 'Anchors capabilities with Work execution and context handling.'),
+}
+
+
+def catalog_entry(name, metadata=None):
+    label, description = BUNDLE_LABELS.get(name, (name, 'Registered root bundle.'))
+    metadata = metadata or {}
+    display_name = metadata.get('display_name')
+    if isinstance(display_name, str) and display_name.strip():
+        label = display_name.strip()
+    if isinstance(metadata.get('description'), str) and metadata['description'].strip():
+        description = metadata['description'].strip()
+    return {'name': name, 'value': name, 'label': label, 'description': description}
+
+
+def defaults(home, workspace, app_bundle=None, *, global_only=False):
+    from .shared_settings import read_yaml, settings_paths
+    paths = settings_paths(workspace, global_only=global_only)
+    values = {key: read_yaml(path).get('bundle', {}).get('active') for key, path in paths.items()}
+    workspace_bundle = values.get('local') or values.get('project')
+    effective = workspace_bundle or app_bundle or values['global'] or 'work'
+    source = 'workspace' if workspace_bundle else 'app' if app_bundle else 'shared'
+    return {'app': app_bundle or None, 'workspace': workspace_bundle or None,
+            'shared': values['global'] or None, 'effective': effective, 'source': source,
+            'workspacePath': str(Path(workspace).expanduser().resolve()),
+            'workspaceInherited': values.get('project') or None}

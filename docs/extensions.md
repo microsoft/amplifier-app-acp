@@ -121,3 +121,38 @@ lightweight building block is a different project and is not a dependency.
 Unified-specific capability manifests, records and action envelopes remain owned
 by the Unified protocol-extension project; this adapter does not redefine them.
 Schema `$id` values express intended public identity, not a claim of deployment.
+
+## Optional native administration
+
+The launcher opts in with `adminWorkspaceRoots: ["/authorized/workspace"]`.
+Only then does `agentCapabilities._meta['amplifier.dev/native'].admin` advertise
+`{version:1}`. A peer must also negotiate native version 1. Request:
+
+```json
+{"method":"_amplifier/admin","params":{"cwd":"/authorized/workspace","operation":"providers.list","args":{}}}
+```
+
+`schemas/native-admin-request.v1.json` owns this public boundary. The trusted
+host resolves cwd from its authenticated session or configured default. Native
+homes, arbitrary cwd overrides and session IDs cannot be supplied in args.
+The adapter resolves workspace roots and rejects escaped symlinks before effects.
+
+This surface retains native SetupManager (providers/routing), RegistryManager
+(modules/source overrides), BundleManager (discovery/composition/export), scoped
+Foundation settings locks and isolated public provider metadata/auth probes.
+It never creates a Core session or an execution worker. `providers.testMessage`
+is an explicit bounded inference test; reads do not perform inference. The
+provider owns credentials and authentication. Configured module sources are
+prepared through Foundation if the sign-in provider has not yet been installed.
+Unsupported standalone login remains explicit; a mounted provider's native
+login/status/cancel controls are available through `_amplifier/native`.
+
+App bundle defaults are stored separately in private `admin-settings.yaml`;
+workspace/shared defaults retain community settings files. Native saved sessions
+keep their recorded root. `configuration.defaults` prepares a bundle and inspects
+provider metadata in an isolated probe, without mounting an agent session.
+
+`configuration.apply` now remounts the same native session and returns actual
+configuration after successful readiness. `whenIdle:true` can wait behind the
+active prompt; `configuration.cancel` cancels only a waiting apply. Once applying,
+it cannot report a successful cancellation. It never replays user input.

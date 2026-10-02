@@ -591,7 +591,7 @@ class ResolvedRoot:
 
 async def prepare_manager(workspace, *, runtime=None, bundle=None, background_delegate=True,
                           ask=None, report_dir=None, resume=False, selection=None,
-                          application_host="Amplifier Unified", shared_handle=None,
+                          application_host="Amplifier ACP", shared_handle=None,
                           shared_handle_getter=None, shared_snapshot=None,
                           write_guard=None, resolved_root=None, execution_workspace=None,
                           refresh_dependencies=False, install_overrides=None, qualification_readonly=False, **kwargs):

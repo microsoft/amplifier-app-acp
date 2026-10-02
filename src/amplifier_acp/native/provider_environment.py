@@ -1,30 +1,15 @@
-"""Extracted native application runtime; provenance in extraction.json."""
+"""Strict, schema-aware environment materialization for provider configs."""
 from __future__ import annotations
 
-
 import asyncio
-
-
 import copy
-
-
 import importlib
-
-
 import importlib.metadata
-
-
 import inspect
-
-
 import json
-
-
 import re
 
-
 from .host.config import expand_environment
-
 
 _ENV_REFERENCE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}\Z")
 
@@ -47,6 +32,17 @@ def provider_class(module_id):
     if not candidates:
         raise ValueError("No public provider setup class")
     return candidates[0]
+
+
+def construct_provider(cls, config):
+    """Use the established provider-probe constructor contract."""
+    parameters = inspect.signature(cls).parameters
+    kwargs = {key: config.get(key) for key in ("api_key", "github_token") if key in parameters}
+    if "base_url" in parameters and "base_url" in config:
+        kwargs["base_url"] = config["base_url"]
+    if "config" in parameters:
+        kwargs["config"] = config
+    return cls(**kwargs)
 
 
 async def close_provider(provider):

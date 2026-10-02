@@ -24,7 +24,8 @@ uv run --no-dev amplifier-acp --config /absolute/agent.json
   "bundle": "work",
   "startupTimeout": 180,
   "idleSeconds": 60,
-  "maxSessions": 32
+  "maxSessions": 32,
+  "adminWorkspaceRoots": ["/owned/workspace"]
 }
 ```
 
@@ -66,6 +67,11 @@ remain authoritative. Existing event logs are preserved. The extracted runtime
 uses Foundation writer ownership, detects noncooperating transcript changes,
 and retains interrupted child/job evidence. Missing/corrupt/owned history fails
 explicitly rather than becoming a replacement conversation.
+
+Optional administration is launcher-authorized and never opens an agent session;
+see [the application bridge contract](docs/host-bridge.md) and
+[extension schemas](docs/extensions.md). Omit `adminWorkspaceRoots` to disable it.
+Generic ACP peers receive no implicit Unified UI guidance or app behavior.
 
 ## Extensions
 

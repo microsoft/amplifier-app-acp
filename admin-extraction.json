@@ -1,0 +1,114 @@
+{
+  "sourceRevision": "828d2bff97a77fbdbd0f06429369f7ff1f4abf42",
+  "modules": {
+    "setup": {
+      "source": "setup.py",
+      "sha256": "5d7fe0ec8a2c163b693f9a35079531e07278b784842dec1206f94bc6ec83b433",
+      "symbols": [
+        "*"
+      ]
+    },
+    "bundles": {
+      "source": "bundles.py",
+      "sha256": "a89eeed8daade6f9d334c872747e418cc2cb0a76a8a78ab470fd8313354f0c97",
+      "symbols": [
+        "*"
+      ]
+    },
+    "registry": {
+      "source": "registry.py",
+      "sha256": "f85b19802a31c377cbdfa02e36f48de80982a053316ae7584579c58d63b8f1b0",
+      "symbols": [
+        "*"
+      ]
+    },
+    "preferences": {
+      "source": "preferences.py",
+      "sha256": "19ffec8b83c51d5077b6eaecf242d8936aacc62ba317a75430ab1758c6298eb9",
+      "symbols": [
+        "*"
+      ]
+    },
+    "probe_diagnostics": {
+      "source": "probe_diagnostics.py",
+      "sha256": "eff529d608cf2bf863c21effb3890a110c7494d9c26ab5a0b35b4b11b29a41c5",
+      "symbols": [
+        "*"
+      ]
+    },
+    "provider_probe": {
+      "source": "provider_probe.py",
+      "sha256": "351678c7c1050f2e8a54a71810b632cd4dec0e3300a17d5a61a6d73d2f412273",
+      "symbols": [
+        "*"
+      ]
+    },
+    "provider_auth": {
+      "source": "provider_auth.py",
+      "sha256": "7e18cf6e520c69b9d0254d3f737c8044920568d663b5ff963364349bee6e34a5",
+      "symbols": [
+        "*"
+      ]
+    },
+    "module_validate": {
+      "source": "module_validate.py",
+      "sha256": "8a90cbcace9923a763152b8a6f08c47fbb3d4f59a035f05f41e6dc50e5111c41",
+      "symbols": [
+        "*"
+      ]
+    },
+    "shared_settings": {
+      "source": "shared_settings.py",
+      "sha256": "dc5e2e1e7f1c59c2e4515d7452d55e2cced30e9b4c3045794336474de9312eeb",
+      "symbols": [
+        "overlay",
+        "atomic_write",
+        "update_settings"
+      ]
+    },
+    "bundle_selection": {
+      "source": "bundle_selection.py",
+      "sha256": "0cc7a707536a1dd7e5024df7a7a489a1d2e037fd2de6623576b8738bcaa9b05f",
+      "symbols": [
+        "BUNDLE_LABELS",
+        "catalog_entry",
+        "defaults"
+      ]
+    },
+    "provider_test": {
+      "source": "provider_test.py",
+      "sha256": "1e9cf772ee4496df3512536ae16c04e51a06bb48181d01ebf5db2fc3494ac690",
+      "symbols": [
+        "*"
+      ]
+    },
+    "provider_catalog": {
+      "source": "provider_catalog.py",
+      "sha256": "63e8fad94a0a753c9560c62ad0a97791e22c66e1f972fec493d67cb6431cf71a",
+      "symbols": [
+        "*"
+      ]
+    },
+    "draft_defaults": {
+      "source": "draft_defaults.py",
+      "sha256": "30c8091cb7648bb6ec69d9a4fbb95fcf8dc6d22afa692f8dc777db1f8709fd1f",
+      "symbols": [
+        "*"
+      ]
+    },
+    "draft_defaults_probe": {
+      "source": "draft_defaults_probe.py",
+      "sha256": "202cdbf7670b0fcab9d392af0ef8efbb03c16a13542d0b7c2ed89a9128cf7b89",
+      "symbols": [
+        "*"
+      ]
+    },
+    "provider_environment": {
+      "source": "provider_environment.py",
+      "sha256": "463222c67e6764202c019241b5cf00b9f3a07dacedc5fa75d2e0c3120da7aa38",
+      "symbols": [
+        "*"
+      ]
+    }
+  }
+}
