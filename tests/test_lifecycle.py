@@ -54,6 +54,11 @@ async def test_settled_worker_retires_and_reopens_without_replay(tmp_path):
             if any(r.get('params',{}).get('event',{}).get('type')=='runtime.closed' for r in client.events):break
             await asyncio.sleep(.05)
         assert any(r.get('params',{}).get('event',{}).get('type')=='runtime.closed' for r in client.events)
+        count=len(client.events)
+        rejected=await client.request('_amplifier/native',{'sessionId':sid,'operation':'operations.cancel','args':{'processId':'old'},'_meta':{'amplifier.dev/native':{'requireExisting':True}}})
+        assert rejected.get('error',{}).get('code')==-32008,rejected
+        assert rejected['error']['data']=={'executed':False,'replayed':False}
+        assert not any(r.get('params',{}).get('event',{}).get('type')=='runtime.ready' for r in client.events[count:])
         second=await client.request('session/prompt',{'sessionId':sid,'prompt':[{'type':'text','text':'second explicit turn'}]})
         assert second['result']['stopReason']=='end_turn'
         history=await client.request('_amplifier/history',{'sessionId':sid,'cwd':str(cwd),'limit':50})

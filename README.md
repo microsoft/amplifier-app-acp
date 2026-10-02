@@ -151,3 +151,9 @@ location revision. Passive history still uses original historyCwd. Configuration
 snapshot references include executionDirectory/locationRevision so a fresh
 configuration-only clone preserves the selected worktree while its own history
 identity and location revision start fresh.
+
+Historical operation controls may set native request metadata
+`_meta["amplifier.dev/native"]={requireExisting:true}`. This checks the actual
+native worker, independently of the ACP connection's lifetime, and refuses cold
+or retired workers before startup. A warm ACP connection is not proof of a live
+process owner. The host's `nativeControlExisting` must pass this metadata.

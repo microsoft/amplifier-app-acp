@@ -468,6 +468,9 @@ class Server:
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
             operation=params.get('operation');args=params.get('args',{})
             if not isinstance(operation,str) or not isinstance(args,dict):raise RpcError(-32602,'Native operation and object args are required.')
+            require_existing=((params.get('_meta') or {}).get(NATIVE) or {}).get('requireExisting',False)
+            if require_existing and (not session.worker or session.worker.closed or not session.worker.process or session.worker.process.returncode is not None or session.cancelled):
+                raise RpcError(-32008,'The original native worker is unavailable; no process was started.',{'executed':False,'replayed':False})
             if operation=='session.relocate':
                 from .relocation import relocate
                 return await relocate(session,args)
