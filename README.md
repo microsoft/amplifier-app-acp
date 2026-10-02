@@ -157,3 +157,14 @@ Historical operation controls may set native request metadata
 native worker, independently of the ACP connection's lifetime, and refuses cold
 or retired workers before startup. A warm ACP connection is not proof of a live
 process owner. The host's `nativeControlExisting` must pass this metadata.
+
+Native idle retirement is negotiated as
+`_meta['amplifier.dev/native'].lifecycle:{version:1,gracefulRetire:true}`.
+`_amplifier/retire {sessionId}` never mounts a worker. It atomically refuses
+active requests, queued work, jobs, approvals, bridges, process controls, logins,
+naming and auxiliary memory calls. `{retired:true}` means the native worker
+committed retirement and exited; this connection's session handle permanently
+rejects new work. The host may then close ACP. A false result or lost transport
+is never permission to kill a possibly active worker. Hosts should hold their
+session admission lock during the handshake. `session/cancel` and explicit
+`session/close` remain user-directed termination paths, separate from idle cleanup.

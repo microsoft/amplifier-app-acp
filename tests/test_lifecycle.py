@@ -64,4 +64,57 @@ async def test_settled_worker_retires_and_reopens_without_replay(tmp_path):
         history=await client.request('_amplifier/history',{'sessionId':sid,'cwd':str(cwd),'limit':50})
         visible=[u['content']['text'] for u in history['result']['updates'] if u['sessionUpdate']=='user_message_chunk']
         assert visible==['first retained turn','second explicit turn']
+        for _ in range(100):
+            retired=await client.request('_amplifier/retire',{'sessionId':sid})
+            if retired['result']['retired']:break
+            await asyncio.sleep(.05)
+        assert retired['result']['retired'],retired
     finally:await client.close()
+
+@pytest.mark.asyncio
+async def test_graceful_connection_retirement_refuses_active_work_and_never_reopens(tmp_path):
+    config,cwd=configuration(tmp_path,idleSeconds=60);client=await Client.launch(config)
+    try:
+        initialized=await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
+        assert initialized['result']['agentCapabilities']['_meta']['amplifier.dev/native']['lifecycle']['gracefulRetire']
+        sid=(await client.request('session/new',{'cwd':str(cwd),'mcpServers':[]}))['result']['sessionId']
+        prompt=asyncio.create_task(client.request('session/prompt',{'sessionId':sid,'prompt':[{'type':'text','text':'slow turn'}]},timeout=30))
+        for _ in range(100):
+            if any(r.get('params',{}).get('event',{}).get('type')=='generation.started' for r in client.events):break
+            await asyncio.sleep(.01)
+        refused=await client.request('_amplifier/retire',{'sessionId':sid})
+        assert refused['result']=={'retired':False,'reason':'active_request'},refused
+        await client.send({'jsonrpc':'2.0','method':'session/cancel','params':{'sessionId':sid}})
+        assert (await prompt)['result']['stopReason']=='cancelled'
+        for _ in range(100):
+            retired=await client.request('_amplifier/retire',{'sessionId':sid})
+            if retired['result']['retired']:break
+            await asyncio.sleep(.02)
+        assert retired['result']['retired'],retired
+        count=len(client.events)
+        rejected=await client.request('session/prompt',{'sessionId':sid,'prompt':[{'type':'text','text':'must not run'}]})
+        assert rejected['error']['code']==-32008
+        assert not any(r.get('params',{}).get('event',{}).get('type')=='runtime.ready' for r in client.events[count:])
+        assert (await client.request('_amplifier/retire',{'sessionId':sid}))['result']=={'retired':True}
+    finally:await client.close()
+
+@pytest.mark.asyncio
+async def test_native_retirement_gate_covers_jobs_permissions_processes_and_auxiliary(monkeypatch):
+    from types import SimpleNamespace
+    from amplifier_acp.native import runtime_worker
+    records=[];monkeypatch.setattr(runtime_worker,'publish',records.append)
+    worker=runtime_worker.Worker();worker.parked=True
+    jobs=[];loop=SimpleNamespace(pending=False,_active_jobs=lambda:jobs)
+    worker.session=SimpleNamespace(coordinator=SimpleNamespace(get=lambda _:loop))
+    worker.runtime=SimpleNamespace(queued_inputs=[],inbox=asyncio.Queue(),generation=None)
+    worker.controls=SimpleNamespace(logins={})
+    pending=asyncio.create_task(asyncio.sleep(30))
+    try:
+        for attribute,value in [('approvals',{'a':True}),('bridges',{'b':True}),('operation_ids',{'process'}),('memory_task',pending),('naming',SimpleNamespace(pending=pending))]:
+            before=getattr(worker,attribute);setattr(worker,attribute,value)
+            await worker.command({'op':'retire','id':attribute});assert records[-1]['result']=={'retired':False} and not worker.shutdown.is_set()
+            setattr(worker,attribute,before)
+        jobs.append('child');await worker.command({'op':'retire','id':'child'});assert records[-1]['result']=={'retired':False};jobs.clear()
+        await worker.command({'op':'retire','id':'settled'});assert records[-1]['result']=={'retired':True} and worker.shutdown.is_set()
+        await worker.command({'op':'send','id':'late'});assert 'retirement' in records[-1]['error']
+    finally:pending.cancel();await asyncio.gather(pending,return_exceptions=True)

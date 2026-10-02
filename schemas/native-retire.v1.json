@@ -1,0 +1,10 @@
+{
+ "$schema":"https://json-schema.org/draft/2020-12/schema",
+ "$id":"https://microsoft.github.io/amplifier-app-acp/schemas/native-retire.v1.json",
+ "title":"Negotiated native graceful retirement",
+ "oneOf":[
+  {"type":"object","properties":{"sessionId":{"type":"string","minLength":1}},"required":["sessionId"],"additionalProperties":false},
+  {"type":"object","properties":{"retired":{"const":true}},"required":["retired"],"additionalProperties":false},
+  {"type":"object","properties":{"retired":{"const":false},"reason":{"enum":["active_request","owned_work","retirement_unknown"]}},"required":["retired","reason"],"additionalProperties":false}
+ ]
+}

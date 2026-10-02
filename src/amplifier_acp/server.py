@@ -25,7 +25,7 @@ class Session:
         self.bundle_override=None;self.execution_directory=cwd;self.relocating=False
         self.worker=None; self.prompt=None; self.input_id=None; self.cancelled=False
         self.streamed=False; self.had_deltas=False; self.last_model_id=None; self.awaiting_children=False; self.tools=set(); self.lock=asyncio.Lock();self.report={}
-        self.config_options=[];self.mcp_servers=[];self.idle_task=None;self.start_lock=asyncio.Lock();self.config_cancel=None;self.config_applying=False
+        self.config_options=[];self.mcp_servers=[];self.idle_task=None;self.start_lock=asyncio.Lock();self.config_cancel=None;self.config_applying=False;self.retiring=False;self.retired=False;self.active_requests=0
 
     async def start(self):
         async with self.start_lock:
@@ -49,6 +49,7 @@ class Session:
         path.unlink()
 
     async def _start(self):
+        if self.retiring or self.retired:raise RpcError(-32008,'Native session is retiring; this handle cannot accept new work.')
         if not self.config_applying:self.restore_configuration()
         if not self.relocating:
             from .relocation import state
@@ -69,7 +70,7 @@ class Session:
         async def retire():
             while self.worker and not self.worker.closed:
                 await asyncio.sleep(max(1,self.server.config.get("idleSeconds",60)))
-                if self.prompt and not self.prompt.done():continue
+                if self.active_requests or self.start_lock.locked() or self.config_applying or self.prompt and not self.prompt.done():continue
                 try:
                     result=await self.worker.command("retire")
                     if result.get("retired"):
@@ -303,6 +304,27 @@ class Session:
         if self.worker and self.worker.process.returncode is None:
             await self.worker.close()
 
+    async def retire(self):
+        if self.retired:return {'retired':True}
+        if self.retiring:return {'retired':False,'reason':'retirement_unknown'}
+        if self.active_requests or self.lock.locked() or self.config_applying or self.start_lock.locked():return {'retired':False,'reason':'active_request'}
+        async with self.start_lock:
+            self.retiring=True
+            if self.idle_task:self.idle_task.cancel()
+            worker=self.worker
+            try:
+                if worker and worker.process and worker.process.returncode is None:
+                    result=await worker.command('retire')
+                    if not result.get('retired'):
+                        self.retiring=False;self.schedule_retirement()
+                        return {'retired':False,'reason':'owned_work'}
+                    await asyncio.wait_for(worker.process.wait(),30)
+                self.retired=True
+                return {'retired':True}
+            except (NativeError,asyncio.TimeoutError):
+                # A lost retirement result never authorizes process termination.
+                return {'retired':False,'reason':'retirement_unknown'}
+
     async def close(self):
         if self.config_cancel:self.config_cancel.set()
         if self.idle_task:self.idle_task.cancel()
@@ -334,6 +356,9 @@ class Server:
 
     async def handle(self,row):
         identity=row.get('id') if isinstance(row,dict) else None
+        params=row.get('params') if isinstance(row,dict) else None
+        tracked=self.sessions.get(params.get('sessionId')) if isinstance(params,dict) and row.get('method')!='_amplifier/retire' else None
+        if tracked:tracked.active_requests+=1
         try:
             if not isinstance(row,dict) or row.get('jsonrpc')!='2.0' or ('method' in row and not isinstance(row['method'],str)):
                 await self.send({'jsonrpc':'2.0','id':identity,'error':{'code':-32600,'message':'Invalid JSON-RPC request.'}})
@@ -354,6 +379,9 @@ class Server:
         except Exception as exc:
             print(f'ACP request failed: {type(exc).__name__}',file=sys.stderr)
             if identity is not None:await self.send({'jsonrpc':'2.0','id':identity,'error':{'code':-32603,'message':'Agent request failed; see local diagnostics.'}})
+
+        finally:
+            if tracked:tracked.active_requests-=1
 
     def directory(self,cwd,identity):
         from .native.session_files import project_slug,validate_id
@@ -387,7 +415,7 @@ class Server:
             return {'protocolVersion':1,'agentInfo':{'name':'amplifier-acp','title':'Amplifier','version':__version__},
                 'agentCapabilities':{'loadSession':True,'sessionCapabilities':{'resume':{},'close':{}},
                     'promptCapabilities':{'image':True,'audio':False,'embeddedContext':True},
-                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True},'scheduledTurns':{'version':1,'completion':'settled'},'configurationClone':{'version':1},'relocation':{'version':1,'passiveInspection':True},**({'admin':{'version':1}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
+                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True},'scheduledTurns':{'version':1,'completion':'settled'},'configurationClone':{'version':1},'lifecycle':{'version':1,'gracefulRetire':True},'relocation':{'version':1,'passiveInspection':True},**({'admin':{'version':1}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
         if not self.initialized:raise RpcError(-32600,'Initialize this connection first.')
         if method in {'_amplifier/relocation','_amplifier/relocation/reconcile'}:
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
@@ -455,6 +483,10 @@ class Server:
             return result
         identity=params.get('sessionId');session=self.sessions.get(identity)
         if not session:raise RpcError(-32602,'Session is not loaded on this connection.')
+        if method=='_amplifier/retire':
+            if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
+            return await session.retire()
+        if method!='session/close' and (session.retiring or session.retired):raise RpcError(-32008,'Native session handle has retired; reopen it explicitly without replay.')
         if method=='session/prompt':
             blocks=params.get('prompt')
             if not isinstance(blocks,list):raise RpcError(-32602,'prompt must be a content block array.')

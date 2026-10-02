@@ -67,6 +67,7 @@ class Worker:
         self.activation_gate = None
         self.activation = None
         self.parked = False
+        self.retiring = False
         self.parked_history_stamp = None
         self.parked_config_stamp = None
         self.config_inputs = ()
@@ -606,6 +607,9 @@ class Worker:
         """Serialize admission with parking and bind a per-work write token."""
 
         op = data.get("op")
+        if self.retiring:
+            publish({"op":"reply","id":data.get("id"),"error":"Native worker has committed retirement; no new work admitted"})
+            return
         memory_control = op == 'control' and data.get('operation') == 'memory.consolidate'
         naming_control = op == 'control' and data.get('operation') == 'session.naming'
         if op in {'send', 'retry', 'stop', 'resume', 'worker.message', 'worker.steer', 'worker.stop'}:
@@ -626,10 +630,12 @@ class Worker:
                     and not self.runtime.queued_inputs and self.runtime.inbox.empty()
                     and not self.runtime.generation
                     and not any(not row["task"].done() for row in self.controls.logins.values())
+                    and not (self.memory_task and not self.memory_task.done())
                     and not (self.naming and self.naming.pending and not self.naming.pending.done())
                     and not (loop and (loop.pending or loop._active_jobs())))
                 publish({"op": "reply", "id": data.get("id"), "result": {"retired": settled}})
                 if settled:
+                    self.retiring=True
                     self.shutdown.set()
             return
         if op not in {"send", "retry", "steer", "resume", "control", "worker.steer", "worker.stop", "worker.message", "approval"}:
@@ -637,6 +643,7 @@ class Worker:
             return
         try:
             async with self.command_lock:
+                if self.retiring:raise RuntimeError("Native retirement already committed; no new work admitted")
                 if self.ownership.yielding:
                     from amplifier_foundation.session import SessionBusyError
                     raise SessionBusyError(self.shared_handle.owner if self.shared_handle else None)

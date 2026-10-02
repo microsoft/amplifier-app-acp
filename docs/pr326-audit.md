@@ -50,3 +50,18 @@ only. A regression test covers stale cache-only aliases and explicit current
 registration. Upstream's published follow-up commit was still pending when this
 local correction was made; compare that final patch before claiming identical
 published-release provenance.
+
+## Exact published follow-up comparison
+
+Compared published PR327 / v0.20.47 commit
+`fc9db3e49a924f897849d1a45f7946804247f7d1` on 2026-10-02. Its
+`bundles.offered_profiles` authority change is semantically identical to local
+`5124967`: current settings registrations and explicit bundle additions admit
+profiles; stale registry cache does not. The retained cache is untouched.
+
+PR327's other application behavior is `updates.diagnostics`, the allowlisted
+`update_report.py` source/provenance report and a frontend support-export view.
+These have no native worker/session execution changes. They require the separate
+maintenance/update-generation owner described above and are not advertised by
+this ACP adapter. This comparison does not imply maintenance feature parity or
+installed deployment acceptance.
