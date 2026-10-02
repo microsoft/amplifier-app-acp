@@ -34,7 +34,8 @@ def visible(row):
 def content_updates(row,position):
     """Public transcript projection; hidden reasoning and system prompts stay private."""
     role=row.get('role');blocks=row.get('content','');updates=[];diagnostics=[]
-    meta={'amplifier.dev/history':{'position':position}}
+    voice=(row.get('metadata') or {}).get('amplifier_voice')
+    meta={'amplifier.dev/history':{'position':position,**({'via':'call','callId':voice['callId'],'itemId':voice['itemId'],'recordedOnly':True} if voice else {})}}
     if not visible(row):return updates,diagnostics
     if role=='tool':
         identity=row.get('tool_call_id')
@@ -118,8 +119,10 @@ def page(directory,*,cursor=None,limit=50,max_bytes=2_000_000):
         if not values:continue
         marker=(row.get('metadata') or {}).get('amplifier_input') or {}
         digest=hashlib.sha256((str(position)+':'+json.dumps(row,sort_keys=True,separators=(',',':'))).encode()).hexdigest()[:24]
-        if row.get('role')=='user' or current is None:
-            current={'id':marker.get('id') or 'native:'+digest,'updates':[],'state':'unknown'}
+        voice=(row.get('metadata') or {}).get('amplifier_voice')
+        if voice: digest=hashlib.sha256((voice['callId']+'\0'+voice['itemId']).encode()).hexdigest()[:24]
+        if row.get('role')=='user' or current is None or voice:
+            current={'id':marker.get('id') or 'native:'+digest,'updates':[],'state':'unknown',**({'recordedOnly':True} if voice else {})}
             groups.append(current)
         for value in values:
             value['_meta']['amplifier.dev/history'].update(turnId=current['id'],messageId='native:'+digest)

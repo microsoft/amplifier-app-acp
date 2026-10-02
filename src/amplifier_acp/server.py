@@ -455,7 +455,7 @@ class Server:
 NATIVE_CONTROLS=['configuration.inspect','configuration.exportResources','configuration.providers','configuration.providerModels',
     'configuration.providerTest','configuration.providerLogin','configuration.providerLoginStatus','configuration.providerLoginCancel','configuration.cancel','configuration.apply','configuration.toggle','catalog.inspect','usage.inspect',
     'context.clear','goals.get','goals.set','goals.clear','budget.get','budget.set','provider.reset','provider.select','tool.invoke',
-    'mode.list','mode.set','mode.clear','native.status','native.compact','history.snapshot','history.edit','bundle.preview','bundle.switch',
+    'voice.transcript.record','mode.list','mode.set','mode.clear','native.status','native.compact','history.snapshot','history.edit','bundle.preview','bundle.switch',
     'session.naming','schedule.submit','observation.submit','memory.consolidate','operations.submit','operations.cancel','operations.write',
     'kernels.create','kernels.execute','kernels.interrupt','kernels.reset','kernels.close','capacity.get','capacity.set','capacity.quota',
     'task.get','task.create','task.update','task.pause','task.resume','task.block','task.complete']

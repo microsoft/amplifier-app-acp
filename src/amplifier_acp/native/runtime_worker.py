@@ -771,6 +771,9 @@ class Worker:
                     from amplifier_acp.native.observation_input import admit
                     result = await admit(self.controls, self.runtime, arguments, self.activation,
                         authorize=lambda value: self.bridge("observation.admit", value))
+                elif data["operation"] == "voice.transcript.record":
+                    from amplifier_acp.native.voice_history import record
+                    result = await record(self.controls, arguments)
                 elif data["operation"] == "session.naming":
                     if not self.naming:
                         raise ValueError('Automatic naming is unavailable for this conversation.')
