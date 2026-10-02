@@ -276,13 +276,13 @@ class Session:
                 self.prompt=None
                 self.schedule_retirement()
 
-    async def scheduled(self,args):
+    async def settled_input(self,operation,args):
         """One admitted finite run shares ACP streaming and terminal settlement."""
-        if self.lock.locked():return {'accepted':False,'reason':'A turn is already active.'}
+        if self.lock.locked():return {'accepted':False,'executed':False,'reason':'A turn is already active.'}
         identity=args.get('inputId')
         if not isinstance(identity,str) or not identity or len(identity)>200:raise RpcError(-32602,'A bounded deterministic inputId is required.')
         if not isinstance(args.get('text'),str) or not args['text'].strip():raise RpcError(-32602,'Scheduled text is required.')
-        if args.get('kind') not in {'task','monitor'}:raise RpcError(-32602,'Scheduled kind must be task or monitor.')
+        if operation=='schedule.submit' and args.get('kind') not in {'task','monitor'}:raise RpcError(-32602,'Scheduled kind must be task or monitor.')
         async with self.lock:
             await self.start()
             previous=await self.worker.command('delivery',input_id=identity)
@@ -291,7 +291,7 @@ class Session:
             self.input_id=identity;self.cancelled=False;self.streamed=False;self.had_deltas=False;self.last_model_id=None;self.awaiting_children=False
             self.prompt=asyncio.get_running_loop().create_future()
             try:
-                result=await self.worker.control('schedule.submit',args)
+                result=await self.worker.control(operation,args)
                 if not result.get('accepted'):return result
                 return {**result,**await self.prompt}
             finally:
@@ -415,7 +415,7 @@ class Server:
             return {'protocolVersion':1,'agentInfo':{'name':'amplifier-acp','title':'Amplifier','version':__version__},
                 'agentCapabilities':{'loadSession':True,'sessionCapabilities':{'resume':{},'close':{}},
                     'promptCapabilities':{'image':True,'audio':False,'embeddedContext':True},
-                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True,'passiveInspect':True},'scheduledTurns':{'version':1,'completion':'settled'},'configurationClone':{'version':1},'lifecycle':{'version':1,'gracefulRetire':True},'relocation':{'version':1,'passiveInspection':True},**({'admin':{'version':1}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
+                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True,'passiveInspect':True},'scheduledTurns':{'version':1,'completion':'settled'},'questionTurns':{'version':1,'completion':'settled','active':False},'configurationClone':{'version':1},'lifecycle':{'version':1,'gracefulRetire':True},'relocation':{'version':1,'passiveInspection':True},**({'admin':{'version':1}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
         if not self.initialized:raise RpcError(-32600,'Initialize this connection first.')
         if method in {'_amplifier/relocation','_amplifier/relocation/reconcile'}:
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
@@ -516,7 +516,7 @@ class Server:
                 if session.lock.locked():raise RpcError(-32000,'Configuration snapshot requires an idle session.')
                 result=await session.worker.control(operation,{'bundle':session.report.get('bundle'),'historyCwd':session.cwd})
                 return result
-            if operation=='schedule.submit':return await session.scheduled(args)
+            if operation in {'schedule.submit','question.submit'}:return await session.settled_input(operation,args)
             if operation=='capabilities':
                 return {'version':1,'agentKind':'amplifier-core-foundation','report':session.report,'hostBridge':HOST in self.extensions,'hostCapabilities':self.host_info if HOST in self.extensions else {},
                     'controls':NATIVE_CONTROLS,'workerOperations':['worker.steer','worker.message','worker.stop']}
@@ -559,7 +559,7 @@ NATIVE_CONTROLS=['session.relocate','session.relocation.inspect','configuration.
     'configuration.providerTest','configuration.providerLogin','configuration.providerLoginStatus','configuration.providerLoginCancel','configuration.cancel','configuration.apply','configuration.toggle','catalog.inspect','usage.inspect',
     'context.clear','goals.get','goals.set','goals.clear','budget.get','budget.set','provider.reset','provider.select','tool.invoke',
     'voice.transcript.record','mode.list','mode.set','mode.clear','native.status','native.compact','history.snapshot','history.edit','bundle.preview','bundle.switch',
-    'session.naming','schedule.submit','observation.submit','memory.consolidate','operations.submit','operations.cancel','operations.write',
+    'session.naming','question.submit','schedule.submit','observation.submit','memory.consolidate','operations.submit','operations.cancel','operations.write',
     'kernels.create','kernels.execute','kernels.interrupt','kernels.reset','kernels.close','capacity.get','capacity.set','capacity.quota',
     'task.get','task.create','task.update','task.pause','task.resume','task.block','task.complete']
 

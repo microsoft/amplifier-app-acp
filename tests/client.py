@@ -13,6 +13,7 @@ class Client:
                 if 'id' in row:
                     self.requests.append(row)
                     result={'outcome':{'outcome':'selected','optionId':'deny'}} if row['method']=='session/request_permission' else {'allowed':True,'budgetRevision':0}
+                    if getattr(self,'response_handler',None):result=await self.response_handler(row)
                     await self.send({'jsonrpc':'2.0','id':row['id'],'result':result})
             elif row.get('id') in self.pending:self.pending[row['id']].set_result(row)
     async def send(self,row):self.process.stdin.write((json.dumps(row)+'\n').encode());await self.process.stdin.drain()

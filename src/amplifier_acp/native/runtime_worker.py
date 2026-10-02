@@ -416,6 +416,9 @@ class Worker:
             from amplifier_acp.native.host.naming import LiveSessionNaming
             completed=[identity for event in config.get('generations',[]) if event.get('event')=='generation.finished' for identity in event.get('input_ids',[]) if identity in {t['id'] for t in config.get('execution',{}).get('turns',[])}]
             self.naming=LiveSessionNaming(self.session.coordinator,self.home,publish,completed)
+            from amplifier_acp.native.input_provenance import Context as ProvenanceContext
+            self.input_provenance_path=self.home/'sessions'/config['id']/'input-provenance.sqlite3'
+            await self.session.coordinator.mount('context',ProvenanceContext(self.session.coordinator.get('context'),self.input_provenance_path))
             await self.ownership.register()
             self.execution = asyncio.create_task(self.session.execute(""))
             self.execution.add_done_callback(self.executed)
@@ -774,6 +777,10 @@ class Worker:
                 if data["operation"] == "schedule.submit":
                     from amplifier_acp.native.scheduled_input import admit
                     result = await admit(self.controls, self.runtime, arguments, self.activation)
+                elif data["operation"] == "question.submit":
+                    from amplifier_acp.native.question_input import admit
+                    authority=(lambda value:self.bridge("questions.delivery.admit",value)) if self.start_config.get("hostInfo",{}).get("features",{}).get("questions") else None
+                    result=await admit(self.controls,self.runtime,arguments,self.activation,authorize=authority,provenance_path=self.input_provenance_path)
                 elif data["operation"] == "observation.submit":
                     from amplifier_acp.native.observation_input import admit
                     result = await admit(self.controls, self.runtime, arguments, self.activation,

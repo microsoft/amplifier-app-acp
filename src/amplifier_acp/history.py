@@ -43,6 +43,8 @@ def provenance(row):
         if value is None and name=='createdAt':value=metadata.get('timestamp')
         if isinstance(value,str) and len(value)<=8192:result[name]=value
         elif name=='createdAt' and type(value) in (int,float):result[name]=value
+    if type(metadata.get('questionRevision')) is int:result['questionRevision']=metadata['questionRevision']
+    if isinstance(metadata.get('answerProvenance'),dict) and len(json.dumps(metadata['answerProvenance']).encode())<=8192:result['answerProvenance']=metadata['answerProvenance']
     native={key:value for key,value in marker.items() if key in {'id','kind','source','call_id'} and isinstance(value,str) and len(value)<=8192}
     if native:result['nativeInput']=native
     return result

@@ -181,3 +181,22 @@ identities. It always carries `authorization:'unverified-native-history'`;
 missing input origin stays unknown. Imported/native transcript roles never prove
 current human authorization; the host's exact admitted-message reader is the
 consent authority. No input is replayed to enrich missing metadata.
+
+`questionTurns:{version:1,completion:'settled',active:false}` advertises the
+host-admitted `question.submit` native operation. It uses the same ACP streaming
+collector and terminal settlement as scheduled turns. Active sessions return
+`{accepted:false,executed:false,reason}`; a second prompt collector is never made.
+The negotiated questions host feature must provide `questions.delivery.admit`
+with the submitted exact arguments. Its proof requires `admitted:true`, matching
+inputId/questionId/questionRevision and `answerHash` equal to SHA256 UTF-8 text.
+Missing/stale proof refuses before input execution. A successful response is
+`{accepted:true,inputId,stopReason}` only after settlement.
+
+The adapter reserves the input's provenance in a scoped indexed private ledger
+before admission. A transparent public context delegate places
+`inputOrigin:'question'`, questionId/revision and bounded answerProvenance on the
+canonical native input row. The reservation is not a replay queue: an uncertain
+reserved ID cannot execute again. Resume and history preserve this provenance;
+it never grants tool permission. Active steering or answering a dependency while
+another host turn remains active requires a distinct admitted-input attribution
+contract and is not claimed by this idle-only extension.
