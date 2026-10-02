@@ -28,7 +28,11 @@ def finish(controls, event):
     controls.persist(task_only=True)
 
 
-async def admit(controls, runtime, args, activation=None, authorize=None):
+async def admit(controls, runtime, args, activation=None, authorize=None, provenance_path=None):
+    for name in ('inputId','watchId','taskId'):
+        if not isinstance(args.get(name),str) or not 1<=len(args[name])<=200:raise ValueError('Bounded observation identities required')
+    if type(args.get('taskRevision')) is not int or args['taskRevision']<0:raise ValueError('Observation task revision required')
+    if not isinstance(args.get('outcome'),dict) or len(json.dumps(args['outcome'],allow_nan=False).encode())>65536:raise ValueError('Bounded typed observation outcome required')
     if authorize is None: return {'accepted': False, 'reason': 'Host observation admission authority is unavailable'}
     admission = await authorize(args)
     if not admission.get('admitted'): return {'accepted': False, 'reason': admission.get('reason', 'Observation authority changed')}
@@ -56,6 +60,9 @@ async def admit(controls, runtime, args, activation=None, authorize=None):
         'tools': tools, 'savedTools': dict(tools), 'loop': loop, 'maxIterations': loop.max_iterations, 'unregister': []}
     command = Input('service', json.dumps({'contract': 'amplifier.observation.v1', 'watchId': args['watchId'], 'result': args['outcome']}), source='unified-observation', id=args['inputId'], activation=activation)
     if len(command.text) > runtime.max_input_chars: return {'accepted': False, 'reason': 'The observation exceeds the runtime input bound'}
+    if provenance_path is not None:
+        from .input_provenance import reserve
+        reserve(provenance_path,args['inputId'],{'inputOrigin':'observation','observationId':args['watchId']})
     controls._observation_input = marker
     try:
         marker['unregister'].append(hooks.register('tool:pre', deny_tools, name='unified-observation-tools', priority=0))

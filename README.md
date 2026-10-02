@@ -200,3 +200,10 @@ reserved ID cannot execute again. Resume and history preserve this provenance;
 it never grants tool permission. Active steering or answering a dependency while
 another host turn remains active requires a distinct admitted-input attribution
 contract and is not claimed by this idle-only extension.
+
+`observationTurns:{version:1,completion:"settled",active:false}` admits one idle
+`observation.submit` through the same ACP stream. Args are deterministic `inputId`,
+`watchId`, `taskId`, `taskRevision` and a bounded typed `outcome` object (64 KiB).
+The existing host observation proof, task revision guard, finite one-iteration
+explanation and tool denial apply. A busy or changed authority is refused before
+execution; accepted observations settle with `stopReason`, never replay on retry.

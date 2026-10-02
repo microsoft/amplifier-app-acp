@@ -784,7 +784,7 @@ class Worker:
                 elif data["operation"] == "observation.submit":
                     from amplifier_acp.native.observation_input import admit
                     result = await admit(self.controls, self.runtime, arguments, self.activation,
-                        authorize=lambda value: self.bridge("observation.admit", value))
+                        authorize=lambda value: self.bridge("observation.admit", value),provenance_path=self.input_provenance_path)
                 elif data["operation"] == "voice.transcript.record":
                     from amplifier_acp.native.voice_history import record
                     result = await record(self.controls, arguments)
