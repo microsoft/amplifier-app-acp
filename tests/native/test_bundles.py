@@ -155,7 +155,7 @@ async def test_picker_lists_standalone_registrations_not_namespace_roots(tmp_pat
     }}))
     result=await manager.perform('bundles.list',{'workspace':str(tmp_path)})
     names={row['name'] for row in result['registeredBundles']}
-    assert names == {'anchors','foundation','anchors-amp-dev','my-root','work','anchors-work'}
+    assert names == {'anchors','foundation','my-root','work','anchors-work'}
     assert any(row['role']=='behavior' and row['uri']=='foundation:behaviors/addon' for row in result['bundles'])
 
 
@@ -190,3 +190,13 @@ async def test_composition_reorder_preserves_aliases_and_disabled_entries(tmp_pa
     with pytest.raises(ValueError,match='changed'):
         await manager.perform('bundles.reorder',{**args,'ids':[by_name['A'],by_name['B']],'expectedIds':[by_name['A'],by_name['B']]})
     assert manager.store.read(tmp_path)==saved
+
+
+def test_offered_profiles_never_promotes_historical_cache_aliases():
+    from types import SimpleNamespace
+    from amplifier_acp.native.bundles import offered_profiles
+    config=SimpleNamespace(registrations={'foundation':'current','anchors':'current','work':'current'},settings={})
+    cache={'amplifier-dev':{},'exp-delegation':{},'anchors-amp-dev':{}}
+    assert offered_profiles(config,cache)==['anchors','foundation','work']
+    config.registrations['amplifier-dev']='explicit-current'
+    assert 'amplifier-dev' in offered_profiles(config,cache)

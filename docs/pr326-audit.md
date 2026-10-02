@@ -41,3 +41,12 @@ shared-generation adoption. Fixture/native lifecycle checks and the separate
 host schedule test prove application/protocol behavior only; source-generation
 promotion, custom-profile preparation and installed deployment acceptance remain
 separate gates until that owner is implemented.
+
+Follow-up authority correction (identified upstream after PR326): historical
+registry entries for amplifier-dev/exp-delegation/anchors-amp-dev must not become
+offered executable profiles unless current settings register them. The adapter
+now derives the offered set from current registrations and explicit bundle.added
+only. A regression test covers stale cache-only aliases and explicit current
+registration. Upstream's published follow-up commit was still pending when this
+local correction was made; compare that final patch before claiming identical
+published-release provenance.

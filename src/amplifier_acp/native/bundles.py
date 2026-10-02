@@ -178,10 +178,9 @@ def sanitize_export(value, path=(), secrets=None):
 
 def offered_profiles(config, registry=None):
     """The picker and updater share one current, app-level profile authority."""
-    if registry is None:
-        path = config.registry_home / 'registry.json'
-        registry = json.loads(path.read_text()).get('bundles', {}) if path.exists() else {}
-    available = set(registry) | set(config.registrations)
+    # Cache inventory is historical evidence, not current alias authority.
+    # Runtime resolves roots through current settings/registrations only.
+    available = set(config.registrations)
     names = (STANDALONE_PROFILES & available) | set(config.settings.get('bundle', {}).get('added', {}))
     entries = BundleManager.entries(config.settings)
     disabled = {row.get('name') for row in entries
