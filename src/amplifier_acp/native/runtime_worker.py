@@ -618,7 +618,7 @@ class Worker:
 
         op = data.get("op")
         if self.retiring:
-            publish({"op":"reply","id":data.get("id"),"error":"Native worker has committed retirement; no new work admitted"})
+            publish({"op":"reply","id":data.get("id"),"error":"Native worker has committed retirement; no new work admitted","code":"worker_retired","executed":False})
             return
         memory_control = op == 'control' and data.get('operation') == 'memory.consolidate'
         naming_control = op == 'control' and data.get('operation') == 'session.naming'
@@ -653,7 +653,9 @@ class Worker:
             return
         try:
             async with self.command_lock:
-                if self.retiring:raise RuntimeError("Native retirement already committed; no new work admitted")
+                if self.retiring:
+                    publish({"op":"reply","id":data.get("id"),"error":"Native retirement already committed; no new work admitted","code":"worker_retired","executed":False})
+                    return
                 if self.ownership.yielding:
                     from amplifier_foundation.session import SessionBusyError
                     raise SessionBusyError(self.shared_handle.owner if self.shared_handle else None)

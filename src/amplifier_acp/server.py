@@ -28,7 +28,7 @@ class Session:
         from .steering import Receipts
         from .relocation import home
         self.steering=Receipts(home(server),identity);self.steering_lock=asyncio.Lock();self.generation_id=None
-        self.config_options=[];self.mcp_servers=[];self.idle_task=None;self.start_lock=asyncio.Lock();self.config_cancel=None;self.config_applying=False;self.retiring=False;self.retired=False;self.active_requests=0
+        self.config_options=[];self.mcp_servers=[];self.idle_task=None;self.start_lock=asyncio.Lock();self.config_cancel=None;self.config_applying=False;self.retiring=False;self.retired=False;self.active_requests=0;self.worker_retirement_pending=None
 
     async def start(self):
         async with self.start_lock:
@@ -75,11 +75,13 @@ class Session:
                 await asyncio.sleep(max(1,self.server.config.get("idleSeconds",60)))
                 if self.active_requests or self.start_lock.locked() or self.config_applying or self.prompt and not self.prompt.done():continue
                 try:
-                    result=await self.worker.command("retire")
+                    worker=self.worker;self.worker_retirement_pending=worker
+                    result=await worker.command("retire")
                     if result.get("retired"):
                         await self.worker.process.wait()
                         return
                 except NativeError:return
+                finally:self.worker_retirement_pending=None
         self.idle_task=asyncio.create_task(retire())
 
     async def bridge(self,operation,args):
@@ -296,22 +298,36 @@ class Session:
                 self.prompt=None
                 self.schedule_retirement()
 
-    async def settled_input(self,operation,args):
+    async def settled_input(self,operation,args,*,require_existing=False):
         """One admitted finite run shares ACP streaming and terminal settlement."""
         if self.lock.locked():return {'accepted':False,'executed':False,'reason':'A turn is already active.'}
         identity=args.get('inputId')
         if not isinstance(identity,str) or not identity or len(identity)>200:raise RpcError(-32602,'A bounded deterministic inputId is required.')
         if operation!='observation.submit' and (not isinstance(args.get('text'),str) or not args['text'].strip()):raise RpcError(-32602,'Input text is required.')
         if operation=='schedule.submit' and args.get('kind') not in {'task','monitor'}:raise RpcError(-32602,'Scheduled kind must be task or monitor.')
+        resident=self.worker if require_existing else None
+        def available():
+            return resident is not None and self.worker is resident and not resident.closed and resident.process and resident.process.returncode is None and not self.cancelled and not self.retiring and self.worker_retirement_pending is not resident
+        refused={'accepted':False,'executed':False,'reason':'The original native worker is unavailable or retiring; no runtime was started.'}
         async with self.lock:
-            await self.start()
-            previous=await self.worker.command('delivery',input_id=identity)
+            if require_existing:
+                if not available():return refused
+            else:await self.start()
+            worker=resident if require_existing else self.worker
+            try:previous=await worker.command('delivery',input_id=identity)
+            except NativeError as error:
+                if require_existing and error.data.get('executed') is False:return refused
+                raise
+            if require_existing and not available():return refused
             if previous.get('delivery')=='accepted':
                 raise RpcError(-32001,'Input was already admitted; inspect its history.',{'outcome':'already-admitted','commandId':identity,'replayed':False})
             self.input_id=identity;self.cancelled=False;self.streamed=False;self.had_deltas=False;self.last_model_id=None;self.awaiting_children=False
             self.prompt=asyncio.get_running_loop().create_future()
             try:
-                result=await self.worker.control(operation,args)
+                try:result=await worker.control(operation,args)
+                except NativeError as error:
+                    if require_existing and error.data.get('executed') is False:return refused
+                    raise
                 if not result.get('accepted'):return result
                 return {**result,**await self.prompt}
             finally:
@@ -544,6 +560,7 @@ class Server:
             if operation=='session.relocation.inspect':
                 from .relocation import state
                 return state(self,identity,session.cwd)
+            if operation in {'schedule.submit','question.submit','observation.submit'}:return await session.settled_input(operation,args,require_existing=require_existing)
             if operation=='steer':raise RpcError(-32601,'Unanchored root steering is unavailable over ACP; use negotiated steer.submit.')
             if operation=='steer.submit':
                 from .steering import submit
@@ -553,7 +570,6 @@ class Server:
                 if session.lock.locked():raise RpcError(-32000,'Configuration snapshot requires an idle session.')
                 result=await session.worker.control(operation,{'bundle':session.report.get('bundle'),'historyCwd':session.cwd})
                 return result
-            if operation in {'schedule.submit','question.submit','observation.submit'}:return await session.settled_input(operation,args)
             if operation=='capabilities':
                 return {'version':1,'agentKind':'amplifier-core-foundation','report':session.report,'hostBridge':HOST in self.extensions,'hostCapabilities':self.host_info if HOST in self.extensions else {},
                     'controls':NATIVE_CONTROLS,'workerOperations':['worker.steer','worker.message','worker.stop']}
