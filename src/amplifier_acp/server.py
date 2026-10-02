@@ -52,6 +52,9 @@ class Session:
         path.unlink()
 
     async def _start(self):
+        from .session_lifecycle import guard_start
+        fork_bundle=guard_start(self.server,self.identity,self.cwd)
+        if fork_bundle:self.bundle_override=fork_bundle
         if self.retiring or self.retired:raise RpcError(-32008,'Native session is retiring; this handle cannot accept new work.')
         if not self.config_applying:self.restore_configuration()
         if not self.relocating:
@@ -449,9 +452,9 @@ class Server:
             if len(json.dumps(self.host_info).encode())>32768:raise RpcError(-32602,'Host capability metadata exceeds 32 KiB.')
             self.extensions={key for key in (NATIVE,HOST) if isinstance(meta.get(key),dict) and meta[key].get('version')==1}
             return {'protocolVersion':1,'agentInfo':{'name':'amplifier-acp','title':'Amplifier','version':__version__},
-                'agentCapabilities':{'loadSession':True,'sessionCapabilities':{'resume':{},'close':{}},
+                'agentCapabilities':{'loadSession':True,'sessionCapabilities':{'resume':{},'close':{},'delete':{}},
                     'promptCapabilities':{'image':True,'audio':False,'embeddedContext':True},
-                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True,'passiveInspect':True},'scheduledTurns':{'version':1,'completion':'settled'},'questionTurns':{'version':1,'completion':'settled','active':False},'observationTurns':{'version':1,'completion':'settled','active':False},'configurationClone':{'version':1},'taskState':{'version':1,'passive':True},'activeSteering':{'version':1,'mode':'request_boundary','cancellable':False,'runtimeNegotiated':True},'lifecycle':{'version':1,'gracefulRetire':True},'relocation':{'version':1,'passiveInspection':True},**({'admin':{'version':1,**({'generations':{'version':1}} if self.config.get('adminGenerations') else {})}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
+                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True,'passiveInspect':True},'scheduledTurns':{'version':1,'completion':'settled'},'questionTurns':{'version':1,'completion':'settled','active':False},'observationTurns':{'version':1,'completion':'settled','active':False},'configurationClone':{'version':1},'taskState':{'version':1,'passive':True},'sessionLifecycle':{'version':1,'passive':True,'deletion':'preserve-history'},'activeSteering':{'version':1,'mode':'request_boundary','cancellable':False,'runtimeNegotiated':True},'lifecycle':{'version':1,'gracefulRetire':True},'relocation':{'version':1,'passiveInspection':True},**({'admin':{'version':1,**({'generations':{'version':1}} if self.config.get('adminGenerations') else {})}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
         if not self.initialized:raise RpcError(-32600,'Initialize this connection first.')
         if method in {'_amplifier/relocation','_amplifier/relocation/reconcile'}:
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
@@ -462,6 +465,28 @@ class Server:
             from .admin import Administration
             if not hasattr(self,'admin'):self.admin=Administration(self.config)
             return await self.admin.perform(params.get('cwd'),params.get('operation'),params.get('args',{}))
+        if method=='session/delete':
+            identity=params.get('sessionId');loaded=self.sessions.get(identity)
+            native_meta=(params.get('_meta') or {}).get(NATIVE,{}) if NATIVE in self.extensions else {}
+            cwd=loaded.cwd if loaded else native_meta.get('historyCwd')
+            if not cwd:raise RpcError(-32602,'Load this session or supply negotiated native historyCwd; deletion never scans global history.')
+            if loaded and (loaded.lock.locked() or loaded.config_cancel is not None or loaded.worker_retirement_pending):raise RpcError(-32000,'Finish native work before removal.',{'executed':False})
+            from .session_lifecycle import Lifecycle
+            owner=Lifecycle(self,identity,cwd);inspected=await asyncio.to_thread(owner.inspect)
+            if inspected['state']['deleted']:return {}
+            command=native_meta.get('commandId') or 'acp-delete:'+str(uuid.uuid4())
+            await asyncio.to_thread(owner.perform,'delete.standard',{'commandId':command,'expectedHistoryRevision':inspected['historyRevision']})
+            return {}
+        if method=='_amplifier/session':
+            if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
+            from .session_lifecycle import Lifecycle
+            operation=params.get('operation');loaded=self.sessions.get(params.get('sessionId'))
+            if operation in {'fork','export','delete','restore'} and loaded and (loaded.lock.locked() or loaded.config_cancel is not None or loaded.worker_retirement_pending):raise RpcError(-32000,'Native lifecycle mutation requires an idle, settled session.',{'executed':False})
+            owner=Lifecycle(self,params.get('sessionId'),params.get('cwd',''))
+            result=await asyncio.to_thread(owner.perform,operation,params.get('args',{}))
+            if operation=='fork' and result.get('creationConfirmed'):
+                await self.notify('_amplifier/event',{'sessionId':owner.identity,'event':{'type':'history.persisted','sessionId':result['sessionId'],'cwd':result['historyCwd'],'parentId':None,'metadataPath':str(self.directory(result['historyCwd'],result['sessionId'])/'metadata.json')}})
+            return result
         if method=='_amplifier/steering':
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
             cwd=Path(params.get('cwd',''))
@@ -498,7 +523,7 @@ class Server:
             return {'sessionId':identity,'configOptions':session.config_options,'_meta':{NATIVE:{'nativeSessionId':identity,'agentKind':'amplifier-core-foundation','creationConfirmed':True,'configurationHash':params['source']['configurationHash'],'historyCwd':session.cwd,'executionDirectory':session.execution_directory,'executionRevision':0}}}
         if method in {'session/new','session/load','session/resume'}:
             requested=Path(params.get('cwd','')).expanduser()
-            native_meta=(params.get('_meta') or {}).get(NATIVE,{}) if NATIVE in self.extensions else {}
+            native_meta=(params.get('_meta') or {}).get(NATIVE,{}) if NATIVE in self.extensions else {} if NATIVE in self.extensions else {}
             cwd=Path(native_meta.get('historyCwd') or requested).expanduser()
             if not cwd.is_absolute() or not cwd.is_dir() or not requested.is_absolute() or not requested.is_dir():raise RpcError(-32602,'cwd/historyCwd must be existing absolute directories.')
             from .mcp import validate_servers
