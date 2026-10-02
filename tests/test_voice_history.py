@@ -1,10 +1,10 @@
-import asyncio
+import asyncio,json,hashlib
 import pytest
 from client import Client
 from native_setup import configuration
 
 @pytest.mark.asyncio
-async def test_voice_record_idempotent_resume_and_busy(tmp_path):
+async def test_voice_record_idempotent_resume_and_busy(tmp_path,monkeypatch):
  config,cwd=configuration(tmp_path);client=await Client.launch(config)
  try:
   await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
@@ -25,4 +25,15 @@ async def test_voice_record_idempotent_resume_and_busy(tmp_path):
   snap=await control('history.snapshot');rows=[r for r in snap['result']['messages'] if r.get('metadata',{}).get('amplifier_voice')];assert rows[0]['content']=='spoken history plus'
   # Fork consumes native history and retains metadata without submitting its text.
   assert rows[0]['metadata']['amplifier_voice']['recordedOnly']
+  await client.request('session/close',{'sessionId':sid})
+  settings=json.loads(config.read_text());monkeypatch.setenv('AMPLIFIER_HOME',settings['home'])
+  from amplifier_acp.native.host.storage import SessionStore
+  from amplifier_acp.native.session_store import fork_session
+  store=SessionStore.for_app(settings['appHome'],cwd);transcript=store.directory(sid)/'transcript.jsonl';checksum=hashlib.sha256(transcript.read_bytes()).hexdigest()
+  fork_session(settings['appHome'],{'id':sid,'workspace':str(cwd),'status':'idle','messages':[]},'voice-fork')
+  forked=store.load('voice-fork')[0]
+  voices=[r for r in forked if r.get('metadata',{}).get('amplifier_voice')]
+  assert len(voices)==1 and voices[0]['content']=='spoken history plus'
+  assert voices[0]['metadata']['amplifier_voice']['recordedOnly']
+  assert hashlib.sha256(transcript.read_bytes()).hexdigest()==checksum
  finally:await client.close()
