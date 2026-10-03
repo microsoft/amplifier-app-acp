@@ -215,6 +215,7 @@ class Lifecycle:
             write(target_app/'history-fork.json',{**marker,'state':'committed','result':result});return result
         finally:target_handle.release()
     def prepare_export(self,args):
+        if type(args.get('minimal',False)) is not bool:raise ValueError('Export minimal flag must be a boolean')
         rows,metadata,revision=canonical(self.directory,args['expectedHistoryRevision']);rows=scope_rows(rows,args)
         public=[];omissions=[];attachments=0
         for position,row in rows:
@@ -235,7 +236,7 @@ class Lifecycle:
             body=('\n\n'.join('## '+row['role'].title()+'\n\n'+row['text']+(''.join('\n\n[Attachment reference: '+r.get('uri',r['type'])+'; payload omitted]' for r in row.get('attachments',[]))) for row in public)+'\n').encode();mime='text/markdown';extension='md'
         else:raise ValueError('Unsupported export format')
         if len(body)>MAX_HISTORY:raise ValueError('Export exceeds selected 64 MiB bound')
-        return body,{'filename':f'conversation-{self.identity[:20]}.{extension}','mimeType':mime,'summary':{'messageCount':len(public),'bytes':len(body),'attachmentCount':attachments,'artifactCount':0,'omissions':[{'code':'tool_receipts_and_private_reasoning_excluded'},{'code':'artifact_and_attachment_payloads_excluded'},*omissions[:100]]},'historyRevision':revision}
+        return body,{'filename':f'conversation-{self.identity[:20]}.{extension}','mimeType':mime,'summary':{'format':fmt,'scope':args.get('scope','all'),'minimal':args.get('minimal',False),'requestedBoundaries':{key:args[key] for key in ('fromMessageId','throughMessageId') if key in args},'resolvedBoundaries':{'fromMessageId':public[0]['id'] if public else None,'throughMessageId':public[-1]['id'] if public else None},'messageCount':len(public),'bytes':len(body),'attachmentCount':attachments,'artifactCount':0,'omissions':[{'code':'tool_receipts_and_private_reasoning_excluded'},{'code':'artifact_and_attachment_payloads_excluded'},*omissions[:100]]},'historyRevision':revision}
     def export(self,args,prepared):
         body,description=prepared;digest=hashlib.sha256(body).hexdigest();snapshot=fingerprint({'commandId':args['commandId'],'digest':digest,'sessionId':self.identity})
         directory=self.app/'exports';directory.mkdir(exist_ok=True,mode=0o700)

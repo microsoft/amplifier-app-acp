@@ -56,13 +56,19 @@ async def test_passive_frozen_export_tombstone_restore_and_receipt_without_worke
     try:
         inspected=(await action(client,sid,cwd,'inspect'))['result'];revision=inspected['historyRevision']
         exported=await action(client,sid,cwd,'export',{'commandId':'export1','expectedHistoryRevision':revision,'format':'markdown','scope':'all'});assert 'result' in exported,exported
-        snapshot=exported['result'];data=await action(client,sid,cwd,'export.read',{'snapshotId':snapshot['snapshotId'],'limit':16})
+        snapshot=exported['result'];assert snapshot['summary']['format']=='markdown' and snapshot['summary']['scope']=='all' and snapshot['summary']['minimal'] is False
+        assert snapshot['summary']['requestedBoundaries']=={} and snapshot['summary']['resolvedBoundaries']['fromMessageId'].startswith('native:')
+        data=await action(client,sid,cwd,'export.read',{'snapshotId':snapshot['snapshotId'],'limit':16})
         parts=[]
         while True:
             part=data['result'];parts.append(base64.b64decode(part['data']))
             if part['nextOffset'] is None:break
             data=await action(client,sid,cwd,'export.read',{'snapshotId':snapshot['snapshotId'],'offset':part['nextOffset'],'limit':16})
-        assert 'First visible message' in b''.join(parts).decode()
+        assert 'First visible message' in b''.join(parts).decode();assert part['summary']==snapshot['summary']
+        ranged=await action(client,sid,cwd,'export',{'commandId':'export-minimal','expectedHistoryRevision':revision,'format':'markdown','scope':'from','fromMessageId':'turn1','minimal':True})
+        assert ranged['result']['summary']['scope']=='from' and ranged['result']['summary']['minimal'] is True
+        assert ranged['result']['summary']['requestedBoundaries']=={'fromMessageId':'turn1'}
+        assert ranged['result']['summary']['resolvedBoundaries']['fromMessageId']==snapshot['summary']['resolvedBoundaries']['fromMessageId']
         preview=(await action(client,sid,cwd,'delete.preview'))['result'];assert preview['summary']['canonicalFilesDeleted']==0
         args={'commandId':'delete1','expectedHistoryRevision':revision,'confirmationToken':preview['confirmationToken']}
         deleted=(await action(client,sid,cwd,'delete',args))['result'];assert deleted['deleted'] and 'events.jsonl' in deleted['preserved']
