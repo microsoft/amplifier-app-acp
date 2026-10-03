@@ -167,6 +167,8 @@ async def test_worker_rejects_uncontrolled_naming_before_execute(tmp_path, monke
     monkeypatch.setattr('amplifier_acp.native.runtime_worker.publish', events.append)
     worker = Worker()
     worker.shared_store = SimpleNamespace()
+    from amplifier_foundation.session.shared_state import file_stamp
+    worker.shared_store_stamp = file_stamp
     worker.shared_handle = SimpleNamespace()
     worker.activation_gate = ActivationGate()
     await worker.start({'id': 'blocked', 'workspace': str(tmp_path)}, recover_bundle=False)
