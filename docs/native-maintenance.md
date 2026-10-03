@@ -202,7 +202,8 @@ credential reset, managed deletion and retention boundaries.
 ### Explicit native private stores
 
 `archivePlans.nativeStores` advertises `{version:1,parts:["native-import-records",
-"native-preference-receipts"],requiresRecoveryAdminLease:true}`. These additive
+"native-preference-receipts","native-maintenance-records",
+"native-retained-archives"],requiresRecoveryAdminLease:true}`. These additive
 parts use the existing create/prepare/capture wire. They are never silently added
 to a selected-session or configuration archive.
 
@@ -212,7 +213,7 @@ to a selected-session or configuration archive.
   The settings and last-write proof are in `shared-configuration`, which must be
   selected separately for their preservation.
 
-Both selections cover **all records in the configured native app home**, not only
+These import/preference selections cover **all records in the configured native app home**, not only
 the current workspace. This scope is explicit in the returned `ownerCoverage`.
 Prepare requires this connection's exact held recovery admin lease; service-stop
 and update leases grant no maintenance rights. An exclusive native writer gate
@@ -230,16 +231,57 @@ image hash/bytes and an opaque source revision. Manifest entries and artifact re
 retain existing pagination and 256 KiB chunk limits. No restore or execution is
 authorized by these images; uncertain receipts stay uncertain.
 
-`ownerCoverage` has `included` store rows and typed `omitted` owner rows, plus
-`completeNativeBackup:false` and `completeProductBackup:false`. Maintenance command
-receipts, retained archive artifacts/plans and reset originals remain an explicit
-`native-maintenance` omission in this version. Independent product stores,
-unselected histories/configuration, runtime generations and existing documented
-exclusions are still outside coverage. This is a selected native archive, not a
-full native or configured-product backup.
+`ownerCoverage` has `included` store rows, typed authoritative `omitted` rows,
+`authoritativeSelection`, and separate transient/derived exclusions. It always
+reports `completeNativeBackup:false` and `completeProductBackup:false`: canonical
+histories and session state cover explicit session IDs, workspace configuration
+covers explicit directories, and shared configuration is an independent selection.
+Runtime generation authority, workspace/module sources and independent product
+stores remain outside this contract. An aggregator must prove its complete desired
+authority set; an empty private-owner omission list is not proof of full backup.
+
+### Maintenance records and retained archive bodies
+
+`native-maintenance-records` includes the owner's receipt database, pre-existing
+preview records, plan databases and seals, retained reset originals, and artifact
+descriptions/manifests. `native-retained-archives` additionally includes prior
+complete/partial archive bodies and prepared historical plan images, and requires
+records to be selected. Omitted bodies are authoritative historical evidence, not
+rebuildable cache. They are explicitly listed as unselected when excluded. Neither
+selection enumerates arbitrary native homes, project histories or product stores.
+
+Both use the same exact recovery-admin lease and exclusive native gate. Database
+files become standalone SQLite backup images; records and optional payloads stream
+into private plan storage under byte, entry and 120-second preparation limits.
+The current plan is excluded before traversal. The source cutoff is recorded as
+`{capturedAt,phase:'before-current-plan-seal',excludedPlanId,prepareCommandId,
+currentPrepareReceipt:'running-is-uncertain-never-replay',artifactBodies}`.
+At that cutoff, the current prepare receipt is still running and no current capture
+artifact exists. Preserved running receipts are uncertain history, never executable
+work. New receipts or plans created afterward are outside the reviewed image;
+ongoing capture bookkeeping cannot invalidate its own snapshot. Original stores
+and prior archive bytes remain unchanged.
+
+The immutable prepared images are verified by the paged manifest during capture.
+This is deliberately different from the import/preference images, whose source
+revisions must still match review. Unknown entries in the maintenance owner's
+versioned roots fail explicitly instead of silently disappearing. Existing images
+and old archives may be large; optional inclusion fails its explicit byte budget
+rather than recursively expanding current output or loading payloads in memory.
+The cutoff excludes only this capture's plan, not previous uncertain evidence.
+
+These archives do not authorize restoration or automatic continuation. A future
+restore owner must validate original receipts, rebind filesystem-dependent plan
+seals against verified image hashes, and preserve uncertain states; extracting
+SQLite images into a running owner directory is unsupported.
 
 `test_private_store_snapshot.py` qualifies actual ACP subprocesses with impossible
 worker launchers: original upload and receipt fidelity, committed WAL inclusion,
 source-byte preservation, exact repeat/restart reads, missing stores, stale review,
 held lease authority, corrupted/foreign databases and unsafe paths. It makes no
 provider, credential, model-account or live-service calls.
+
+`test_maintenance_store_snapshot.py` adds actual Core/Foundation reset-original
+preservation, cutoff receipt truth, prior archive-byte fidelity, no self-inclusion,
+SQLite image integrity, explicit optional-body omissions, unknown/unsafe source
+refusal and exact failed-command inspection without replay.

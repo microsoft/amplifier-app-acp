@@ -13,7 +13,7 @@
   "properties": {
     "included": {
       "type": "array",
-      "maxItems": 2,
+      "maxItems": 4,
       "items": {
         "type": "object",
         "required": [
@@ -29,13 +29,16 @@
           "part": {
             "enum": [
               "native-import-records",
-              "native-preference-receipts"
+              "native-preference-receipts",
+              "native-maintenance-records",
+              "native-retained-archives"
             ]
           },
           "owner": {
             "enum": [
               "native-history-import",
-              "native-voice-preferences"
+              "native-voice-preferences",
+              "native-maintenance"
             ]
           },
           "sourceRevision": {
@@ -43,10 +46,16 @@
             "pattern": "^[a-f0-9]{64}$"
           },
           "scope": {
-            "const": "all-records-in-configured-native-app-home"
+            "enum": [
+              "all-records-in-configured-native-app-home",
+              "pre-existing-records-in-configured-native-app-home"
+            ]
           },
           "format": {
-            "const": "sqlite-backup-image"
+            "enum": [
+              "sqlite-backup-image",
+              "owner-snapshot-tree"
+            ]
           },
           "status": {
             "enum": [
@@ -76,6 +85,51 @@
                 "minimum": 0
               }
             }
+          },
+          "files": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "databaseImages": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cutoff": {
+            "type": "object",
+            "required": [
+              "capturedAt",
+              "phase",
+              "excludedPlanId",
+              "prepareCommandId",
+              "currentPrepareReceipt",
+              "artifactBodies"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "capturedAt": {
+                "type": "number"
+              },
+              "phase": {
+                "const": "before-current-plan-seal"
+              },
+              "excludedPlanId": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{32}$"
+              },
+              "prepareCommandId": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "currentPrepareReceipt": {
+                "const": "running-is-uncertain-never-replay"
+              },
+              "artifactBodies": {
+                "enum": [
+                  "included",
+                  "not-selected"
+                ]
+              }
+            }
           }
         },
         "allOf": [
@@ -84,6 +138,9 @@
               "properties": {
                 "status": {
                   "const": "included"
+                },
+                "format": {
+                  "const": "sqlite-backup-image"
                 }
               }
             },
@@ -94,14 +151,31 @@
                 "tables"
               ]
             }
+          },
+          {
+            "if": {
+              "properties": {
+                "format": {
+                  "const": "owner-snapshot-tree"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "bytes",
+                "files",
+                "databaseImages",
+                "cutoff"
+              ]
+            }
           }
         ]
       }
     },
     "omitted": {
       "type": "array",
-      "minItems": 1,
-      "maxItems": 3,
+      "minItems": 0,
+      "maxItems": 4,
       "items": {
         "type": "object",
         "required": [
@@ -121,7 +195,9 @@
           "part": {
             "enum": [
               "native-import-records",
-              "native-preference-receipts"
+              "native-preference-receipts",
+              "native-maintenance-records",
+              "native-retained-archives"
             ]
           },
           "reason": {
@@ -131,6 +207,9 @@
           },
           "preventsCompleteNativeCoverage": {
             "const": true
+          },
+          "classification": {
+            "const": "authoritative"
           }
         }
       }
@@ -140,6 +219,81 @@
     },
     "completeProductBackup": {
       "const": false
+    },
+    "authoritativeScope": {
+      "const": "explicit-selected-native-only"
+    },
+    "transientExclusions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10
+    },
+    "derivedExclusions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10
+    },
+    "authoritativeSelection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "canonicalHistory",
+        "sessionState",
+        "sharedConfiguration",
+        "workspaceConfiguration",
+        "privateStores",
+        "runtimeGenerationAuthority",
+        "workspaceAndModuleSources"
+      ],
+      "properties": {
+        "canonicalHistory": {
+          "enum": [
+            "explicit-session-ids-only",
+            "not-selected"
+          ]
+        },
+        "sessionState": {
+          "enum": [
+            "explicit-session-ids-only",
+            "not-selected"
+          ]
+        },
+        "sharedConfiguration": {
+          "enum": [
+            "selected",
+            "not-selected"
+          ]
+        },
+        "workspaceConfiguration": {
+          "enum": [
+            "explicit-workspaces-only",
+            "not-selected"
+          ]
+        },
+        "privateStores": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 4,
+          "items": {
+            "enum": [
+              "native-import-records",
+              "native-preference-receipts",
+              "native-maintenance-records",
+              "native-retained-archives"
+            ]
+          }
+        },
+        "runtimeGenerationAuthority": {
+          "const": "not-covered"
+        },
+        "workspaceAndModuleSources": {
+          "const": "not-covered"
+        }
+      }
     }
   }
 }

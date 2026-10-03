@@ -10,7 +10,7 @@ from .relocation import write
 from .session_lifecycle import regular
 
 OPERATIONS={'maintenance.archive.create','maintenance.archive.add','maintenance.archive.prepare','maintenance.archive.manifest'}
-PARTS={'session-history','session-state','shared-configuration','workspace-configuration','native-import-records','native-preference-receipts'}
+PARTS={'session-history','session-state','shared-configuration','workspace-configuration','native-import-records','native-preference-receipts','native-maintenance-records','native-retained-archives'}
 OMISSIONS=['unselected native and delegated histories','independent product and client stores','workspace files outside selected .amplifier configuration','module source, caches and runtime generations','external credential stores, environment variables and authentication sessions','Foundation live writer leases and transfer authority','unknown shared-home entries outside the documented native configuration roots']
 EXCLUSIONS=['transient .lock files and SQLite -shm files']
 
@@ -51,6 +51,7 @@ class ArchivePlans:
     def create(self,workspace,args):
         parts=args.get('parts')
         if not isinstance(parts,list) or not parts or len(set(parts))!=len(parts) or set(parts)-PARTS:raise ValueError('Choose explicit native archive parts')
+        if 'native-retained-archives' in parts and 'native-maintenance-records' not in parts:raise ValueError('Retained archive bodies require their maintenance records selection')
         if args.get('privateContentReviewed') is not True:raise ValueError('Private content review is required')
         include=args.get('includeCredentials',False)
         if type(include)is not bool or type(args.get('credentialsReviewed',False))is not bool:raise ValueError('Credential flags must be booleans')
@@ -87,7 +88,8 @@ class ArchivePlans:
                 for name in ('settings.yaml','settings.local.yaml','routing','routing.local','bundles'):
                     yield 'workspace-configuration/'+key+'/'+name,checked(Path(cwd)/'.amplifier'/name)
         for row in value.get('nativeStores',[]):
-            yield 'native-owned-stores/'+row['part']+'.sqlite3',checked(self.root/value['planId']/'native-stores'/(row['part']+'.sqlite3'))
+            name=row['part']+('.sqlite3' if row['format']=='sqlite-backup-image' else '')
+            yield 'native-owned-stores/'+name,checked(self.root/value['planId']/'native-stores'/name)
         if 'shared-configuration' in parts:
             for name in ('settings.yaml','routing','bundles',*(['keys.env'] if value['includeCredentials'] else [])):
                 yield 'shared-configuration/'+name,checked(self.owner.home/name)
@@ -131,15 +133,15 @@ class ArchivePlans:
             if any(p.startswith('session-') for p in value['parts']) and not counts.get('session'):raise ValueError('Explicit sessions required for native session content')
             if 'workspace-configuration' in value['parts'] and not counts.get('workspace'):raise ValueError('Explicit workspaces required for workspace configuration')
             if (set(value['parts'])&{'shared-configuration','workspace-configuration'} or counts.get('session',0)>32) and value['externalWriterPolicy']!='stopped':raise ValueError('Configuration trees or more than32 sessions require launcher-verified stopped external writers')
-            if set(value['parts'])&stores.STORES.keys():stores.require_admin(self.owner)
+            if set(value['parts'])&stores.PARTS:stores.require_admin(self.owner)
             value['phase']='building';self.save(db,value)
         # Persist building before filesystem inspection. Interrupted seal remains
         # an uncertain immutable plan; a new command must not restart its effects.
         with self.db(args['planId'],mutate=True) as db:
             value=self.meta(db,workspace);count=total=0
-            with Gate(self.owner.config,exclusive=bool(set(value['parts'])&stores.STORES.keys())):
-                if set(value['parts'])&stores.STORES.keys():
-                    value['nativeStores']=stores.prepare(self.owner,value['planId'],value['parts'],self.owner.ensure_open);self.save(db,value)
+            with Gate(self.owner.config,exclusive=bool(set(value['parts'])&stores.PARTS)):
+                if set(value['parts'])&stores.PARTS:
+                    value['nativeStores']=stores.prepare(self.owner,value['planId'],value['parts'],self.owner.ensure_open,args['commandId']);self.save(db,value)
                 for label,path in self.roots(db,value):
                     for row in self.walk(label,path,self.owner.ensure_open):
                         count+=1;total+=row.get('bytes',0)

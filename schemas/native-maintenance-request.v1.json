@@ -526,7 +526,9 @@
                   "shared-configuration",
                   "workspace-configuration",
                   "native-import-records",
-                  "native-preference-receipts"
+                  "native-preference-receipts",
+                  "native-maintenance-records",
+                  "native-retained-archives"
                 ]
               }
             },

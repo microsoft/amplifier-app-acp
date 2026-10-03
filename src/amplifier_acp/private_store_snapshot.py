@@ -9,9 +9,12 @@ STORES={
  'native-import-records':{'owner':'native-history-import','path':('history-imports','imports.sqlite3'),'tables':('commands','uploads')},
  'native-preference-receipts':{'owner':'native-voice-preferences','path':('voice-preferences','receipts.sqlite3'),'tables':('commands',)},
 }
+from .maintenance_store_snapshot import PARTS as MAINTENANCE_PARTS
+PARTS=set(STORES)|MAINTENANCE_PARTS
 
 def revision(path):
-    path=checked(path);wal=checked(Path(str(path)+'-wal'))
+    path=checked(path);wal=checked(Path(str(path)+'-wal'));journal=checked(Path(str(path)+'-journal'))
+    if journal.exists():raise ValueError('Native store has an unresolved rollback journal; inspect its owner before archiving')
     if not path.exists() and wal.exists():raise ValueError('Native store has an orphan WAL; inspect its owner before archiving')
     state={name:file_stamp(target) if target.exists() else None for name,target in [('database',path),('wal',wal)]}
     return hashlib.sha256(json.dumps(state,sort_keys=True,separators=(',',':')).encode()).hexdigest()
@@ -21,7 +24,35 @@ def require_admin(owner):
     if not fence or fence['purpose']!='recovery':raise ValueError('Native private-store snapshots require the exact held recovery administration lease')
     return {key:fence[key] for key in ('fenceId','commandId','leaseId','adminInstanceId')}
 
-def prepare(owner,plan,parts,check):
+def backup(path,image,remaining,bounded,tables=()):
+    """Bounded standalone SQLite image, without modifying its owned source."""
+    before=revision(path)
+    uri=path.as_uri()+'?mode=ro'+('&immutable=1' if not Path(str(path)+'-wal').exists() else '')
+    source=sqlite3.connect(uri,uri=True,timeout=0,isolation_level=None)
+    try:
+        source.set_progress_handler(lambda:(bounded(),0)[1],10000)
+        source.execute('PRAGMA query_only=ON');source.execute('PRAGMA trusted_schema=OFF')
+        for name in tables:
+            if source.execute('SELECT type FROM sqlite_master WHERE name=?',(name,)).fetchone()!=('table',):raise ValueError('Native private store schema is unavailable or unsupported')
+        page_size=source.execute('PRAGMA page_size').fetchone()[0]
+        target=sqlite3.connect(image,timeout=0,isolation_level=None);os.chmod(image,0o600)
+        try:
+            def progress(status,remaining_pages,total_pages):
+                bounded()
+                if total_pages*page_size>remaining:raise ValueError('Native private-store image exceeds remaining archive byte budget')
+            source.backup(target,pages=64,progress=progress,sleep=.01)
+            target.execute('PRAGMA journal_mode=DELETE');target.execute('PRAGMA synchronous=FULL');target.execute('PRAGMA trusted_schema=OFF')
+            target.set_progress_handler(lambda:(bounded(),0)[1],10000)
+            if target.execute('PRAGMA quick_check').fetchone()!=('ok',):raise ValueError('Native private-store image failed integrity validation')
+            counts={name:target.execute('SELECT count(*) FROM '+name).fetchone()[0] for name in tables}
+        finally:target.close()
+    finally:source.close()
+    bounded()
+    if revision(path)!=before:raise ValueError('Native private store changed during snapshot preparation')
+    with image.open('rb') as stream:os.fsync(stream.fileno())
+    return counts
+
+def prepare(owner,plan,parts,check,command_id):
     """Caller holds the exclusive native writer gate and the recovery admin lease."""
     authority=require_admin(owner);result=[];remaining=owner.maximum;deadline=time.monotonic()+120
     directory=checked(owner.root/'plans'/plan/'native-stores');directory.mkdir(mode=0o700,exist_ok=False)
@@ -35,28 +66,7 @@ def prepare(owner,plan,parts,check):
         if not path.exists():result.append(row);continue
         if file_stamp(path)[2]>remaining:raise ValueError('Native private store exceeds remaining archive byte budget')
         image=checked(directory/(part+'.sqlite3'))
-        # With both owner gates held, an absent WAL cannot acquire new writes.
-        # Immutable read avoids SQLite creating an empty WAL/SHM on dormant DBs.
-        uri=path.as_uri()+'?mode=ro'+('&immutable=1' if not Path(str(path)+'-wal').exists() else '')
-        source=sqlite3.connect(uri,uri=True,timeout=0,isolation_level=None)
-        try:
-            source.set_progress_handler(lambda:(bounded(),0)[1],10000)
-            source.execute('PRAGMA query_only=ON');source.execute('PRAGMA trusted_schema=OFF')
-            for name in definition['tables']:
-                if source.execute('SELECT type FROM sqlite_master WHERE name=?',(name,)).fetchone()!=('table',):raise ValueError('Native private store schema is unavailable or unsupported')
-            page_size=source.execute('PRAGMA page_size').fetchone()[0]
-            target=sqlite3.connect(image,timeout=0,isolation_level=None);os.chmod(image,0o600)
-            try:
-                def progress(status,remaining_pages,total_pages):
-                    bounded()
-                    if total_pages*page_size>remaining:raise ValueError('Native private-store image exceeds remaining archive byte budget')
-                source.backup(target,pages=64,progress=progress,sleep=.01)
-                target.execute('PRAGMA journal_mode=DELETE');target.execute('PRAGMA synchronous=FULL');target.execute('PRAGMA trusted_schema=OFF')
-                target.set_progress_handler(lambda:(bounded(),0)[1],10000)
-                if target.execute('PRAGMA quick_check').fetchone()!=('ok',):raise ValueError('Native private-store image failed integrity validation')
-                counts={name:target.execute('SELECT count(*) FROM '+name).fetchone()[0] for name in definition['tables']}
-            finally:target.close()
-        finally:source.close()
+        counts=backup(path,image,remaining,bounded,definition['tables'])
         bounded()
         if revision(path)!=before:raise ValueError('Native private store changed during snapshot preparation')
         size=file_stamp(image)[2]
@@ -66,6 +76,8 @@ def prepare(owner,plan,parts,check):
             while chunk:=stream.read(CHUNK):bounded();digest.update(chunk)
             os.fsync(stream.fileno())
         row.update(status='included',bytes=size,sha256=digest.hexdigest(),tables=counts);result.append(row)
+    from .maintenance_store_snapshot import prepare as maintenance_prepare
+    result.extend(maintenance_prepare(owner,plan,parts,directory,bounded,remaining,backup,command_id))
     fd=os.open(directory,os.O_RDONLY)
     try:os.fsync(fd)
     finally:os.close(fd)
@@ -74,11 +86,13 @@ def prepare(owner,plan,parts,check):
 def verify(owner,rows):
     if rows:require_admin(owner)
     for row in rows:
+        if row['part'] not in STORES:continue  # immutable pre-seal maintenance images
         definition=STORES[row['part']];path=checked(owner.app.joinpath(*definition['path']))
         if revision(path)!=row['sourceRevision']:raise ValueError('Native private-store source changed after review; prepare a fresh explicit archive')
 
 def coverage(parts,rows):
     selected=set(parts);included=[dict(row) for row in rows]
-    omitted=[{'owner':definition['owner'],'part':part,'reason':'not-selected','preventsCompleteNativeCoverage':True} for part,definition in STORES.items() if part not in selected]
-    omitted.append({'owner':'native-maintenance','reason':'maintenance commands, archive plans, retained artifacts and reset originals require a separate owner snapshot','preventsCompleteNativeCoverage':True})
-    return {'included':included,'omitted':omitted,'completeNativeBackup':False,'completeProductBackup':False}
+    omitted=[{'owner':definition['owner'],'part':part,'reason':'not-selected','classification':'authoritative','preventsCompleteNativeCoverage':True} for part,definition in STORES.items() if part not in selected]
+    for part in sorted(MAINTENANCE_PARTS-selected):
+        omitted.append({'owner':'native-maintenance','part':part,'reason':'not-selected; records include receipts/reset originals, archive bodies include prepared historical images and complete or partial artifacts','classification':'authoritative','preventsCompleteNativeCoverage':True})
+    return {'included':included,'omitted':omitted,'completeNativeBackup':False,'completeProductBackup':False,'authoritativeScope':'explicit-selected-native-only','authoritativeSelection':{'canonicalHistory':'explicit-session-ids-only' if 'session-history' in selected else 'not-selected','sessionState':'explicit-session-ids-only' if 'session-state' in selected else 'not-selected','sharedConfiguration':'selected' if 'shared-configuration' in selected else 'not-selected','workspaceConfiguration':'explicit-workspaces-only' if 'workspace-configuration' in selected else 'not-selected','privateStores':sorted(selected&PARTS),'runtimeGenerationAuthority':'not-covered','workspaceAndModuleSources':'not-covered'},'transientExclusions':['OS writer locks','SQLite WAL/SHM replaced by owner backup images'],'derivedExclusions':[]}

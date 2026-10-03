@@ -11,7 +11,7 @@ async def launch(tmp_path):
     config={'home':str(home),'appHome':str(tmp_path/'app'),'adminWorkspaceRoots':[str(cwd)],'adminMaintenance':True,'adminHistoryImport':True,'adminVoicePreferences':True,'workerCommand':['/impossible/private-store-worker'],'bundle':'fixture'}
     path=tmp_path/'agent.json';path.write_text(json.dumps(config));client=await Client.launch(path)
     init=await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
-    assert init['result']['agentCapabilities']['_meta']['amplifier.dev/native']['admin']['maintenance']['archivePlans']['nativeStores']['parts']==PARTS
+    assert init['result']['agentCapabilities']['_meta']['amplifier.dev/native']['admin']['maintenance']['archivePlans']['nativeStores']['parts']==PARTS+['native-maintenance-records','native-retained-archives']
     return client,cwd,config,path
 
 async def call(client,cwd,operation,args=None,auth=None,okay=True):
@@ -67,7 +67,7 @@ async def test_protocol_owner_images_preserve_original_uploads_receipts_and_wal(
         schema=json.loads((Path(__file__).resolve().parents[1]/'schemas/native-archive-owner-coverage.v1.json').read_text())
         jsonschema.Draft202012Validator(schema).validate(coverage)
         assert not coverage['completeNativeBackup'] and not coverage['completeProductBackup']
-        assert [row['owner'] for row in coverage['omitted']]==['native-maintenance']
+        assert {row['owner'] for row in coverage['omitted']}=={'native-maintenance'}
         assert {row['part'] for row in coverage['included']}==set(PARTS)
         page=await call(client,cwd,'maintenance.archive.manifest',{'previewHash':preview['previewHash'],'limit':1})
         assert page['nextCursor'] and len(page['items'])==1 and page['ownerCoverage']==coverage
@@ -133,20 +133,23 @@ async def test_private_store_prepare_requires_held_recovery_and_refuses_changed_
     finally:await client.close()
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('unsafe',['corrupt','symlink','oversized','foreign-schema','orphan-wal'])
+@pytest.mark.parametrize('unsafe',['corrupt','symlink','oversized','foreign-schema','orphan-wal','rollback-journal'])
 async def test_unsafe_private_stores_refuse_without_source_changes(tmp_path,unsafe):
     client,cwd,config,path=await launch(tmp_path)
     source=Path(config['appHome'])/'history-imports/imports.sqlite3';source.parent.mkdir(parents=True)
     external=tmp_path/'foreign';external.write_bytes(b'private preserve')
     if unsafe=='symlink':source.symlink_to(external)
     elif unsafe=='orphan-wal':Path(str(source)+'-wal').write_bytes(b'leftover')
+    elif unsafe=='rollback-journal':
+        with sqlite3.connect(source) as db:db.execute('CREATE TABLE commands(id)');db.execute('CREATE TABLE uploads(id)')
+        Path(str(source)+'-journal').write_bytes(b'unresolved rollback evidence')
     elif unsafe=='foreign-schema':
         with sqlite3.connect(source) as db:db.execute('CREATE TABLE foreign_data(value)')
     elif unsafe=='oversized':
         source.write_bytes(b'x'*16384);await client.close();config['maintenanceMaxBytes']=8192;path.write_text(json.dumps(config));client=await Client.launch(path)
         await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
     else:source.write_bytes(b'corrupt')
-    before={p:p.read_bytes() for p in [source,Path(str(source)+'-wal'),external] if p.exists()}
+    before={p:p.read_bytes() for p in [source,Path(str(source)+'-wal'),Path(str(source)+'-journal'),external] if p.exists()}
     try:
         auth=await hold(client,cwd);denied=await prepare(client,cwd,auth,parts=[PARTS[0]],okay=False)
         assert denied['data']['settled'] and denied['data']['canonicalFilesChanged']==0

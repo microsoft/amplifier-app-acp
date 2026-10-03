@@ -34,9 +34,12 @@ The explicit `native-import-records` and `native-preference-receipts` parts now
 capture owner-made SQLite images under the held administration and native writer
 gates. `test_private_store_snapshot.py` proves original upload/receipt bytes and
 committed WAL records survive without copying raw WAL files or changing canonical
-history. Native maintenance/archive receipts, plans, retained artifacts and reset
-originals remain a typed omission. This closes two selected-owner gaps; it does
-not establish full-native or full-product coverage or a restore workflow.
+history. Native maintenance receipts, plans, reset originals and optional retained archive
+bodies now have separate explicit parts with a pre-seal cutoff and self-exclusion.
+Unselected body payloads are authoritative omissions, not disposable cache. The
+coverage descriptor distinguishes selected canonical/configuration authority and
+transient exclusions; this does not establish full-native or full-product coverage
+or a restore workflow.
 
 ## Full configured-product snapshot seam
 
