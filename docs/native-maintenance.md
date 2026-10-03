@@ -397,3 +397,47 @@ transport closure cannot release writer exclusion while that thread is alive.
 Cancellation requests a bounded abort and joins the thread; uncertain receipts
 remain unknown. A completed operation still requires exact release/reconciliation
 by the product coordinator; a deadline is not permission to reopen host intake.
+
+### Passive full-artifact evidence for an independent aggregator
+
+`maintenance.artifact.inspect {artifactId,sha256}` is advertised by
+`admin.maintenance.archivePlans.fullNative.artifactInspect:{version:1}`. It is
+readable under held admin intake and starts no worker. It checks the exact native
+workspace/artifact identity, streams and verifies the complete TAR SHA, checks the
+first two format members, then verifies the exact SQLite manifest bytes. No
+payload body, native source path or output path is returned.
+
+The response is version1 with `artifactId,sha256,bytes,contentType,format,
+archiveVersion,previewHash`, `manifest:{path:'native-manifest.sqlite3',sha256,bytes,
+digestKind:'sha256-exact-native-manifest-sqlite3-bytes'}`, `authority:{scope,
+completeNativeBackup,completeProductBackup:false,declaredRootIds,
+authoritativeOmissions,excludedEntries,credentialsIncluded,externalWriters}` and
+`integrity:{artifactHashVerified:true,manifestHashVerified:true}`. The manifest
+digest identifies the exact file bytes; it is not a digest of reserialized JSON.
+
+`externalWriters` is sealed into newly prepared full-native archives:
+
+```json
+{"policy":"operator-attested-stopped","declaredBy":"trusted-launcher",
+ "nativeWriterGate":"exclusive-held-through-capture",
+ "nativeAdminGate":"exclusive-held-through-capture",
+ "cooperativeSessionLeasesHeld":false,
+ "noncooperatingWriters":"not-independently-observed",
+ "requiresOperatorVerification":true}
+```
+
+The native exclusive gates prove native-owned writer exclusion. They cannot
+prove that an old noncooperating CLI, shell or other external writer was stopped.
+A full-product aggregator must authenticate the separate operator verification
+and retain this assumption in its own manifest. `completeNativeBackup` describes
+native inventory completeness; it does not transform the external policy into an
+OS observation or prove complete product coverage. Older archives without this
+sealed evidence remain readable/restorable but cannot supply this attestation.
+
+A trusted offline adapter can stream `maintenance.artifact.read` chunks into its
+own private staging directory, verify the aggregate SHA and pair the staged file
+with this native evidence. There is no browser-selectable input/output path, no
+cross-owner private filesystem import and no artifact execution. Mutated archive
+bytes, incorrect manifest digests, unsupported versions and missing writer-policy
+evidence refuse. Inspection is joined and bounded by the configured full-operation
+deadline; transport loss never indicates that native work has stopped.

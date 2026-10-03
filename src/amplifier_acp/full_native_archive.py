@@ -9,6 +9,7 @@ from .private_store_snapshot import backup,require_admin
 PART='full-native-authority'
 FORMAT='amplifier-native-authority'
 VERSION=1
+WRITER_PROTECTION={'policy':'operator-attested-stopped','declaredBy':'trusted-launcher','nativeWriterGate':'exclusive-held-through-capture','nativeAdminGate':'exclusive-held-through-capture','cooperativeSessionLeasesHeld':False,'noncooperatingWriters':'not-independently-observed','requiresOperatorVerification':True}
 TRANSIENT_NAMES={'owner.lock','session.lock','generation-owner.lock','lifecycle.lock','.unified-migration.lock','.amplifier-acp-maintenance.lock','.amplifier-acp-admin-writers.lock','settings.yaml.lock','settings.local.yaml.lock','keys.env.lock','admin-settings.yaml.lock'}
 HOME_NAMES={'projects','sessions','settings.yaml','settings.local.yaml','config.yaml','routing','routing.local','bundles','agents','contexts','skills','memory','todos','cache','keys.env'}
 APP_NAMES={'sessions','runtime-reports','diagnostics','restore-receipts','updates','runtime','foundation','source-store','config','routing','bundles','history-imports','voice-preferences','permissions','maintenance','admin-settings.yaml'}
@@ -168,6 +169,7 @@ def prepare(owner,plan,parts,check,command_id,include_credentials):
         index.commit()
     finally:index.close()
     descriptor={'format':FORMAT,'version':VERSION,'roots':[{**row,'destination':row['id']} for row in selected],'sourceConfiguration':source_config(owner,selected),'cutoff':{'capturedAt':source_cut,'phase':'before-current-plan-seal','excludedPlanId':plan,'prepareCommandId':command_id,'unfinishedReceipts':'uncertain-never-replay'},'coverage':{'completeNativeBackup':incomplete==0,'completeProductBackup':False,'scope':'all-configured-native-authority-roots','authoritativeOmissions':incomplete,'excludedEntries':excluded,'credentialsIncluded':include_credentials,'workspaceFiles':'native-configuration-captured-workspace-content-external','workspaceRestoration':'staged-only-never-overwrite-existing-workspaces','externalDependencies':'source paths outside declared native roots remain external requirements'},'inventory':{'entries':count,'bytes':total,'knownNativeSessions':native_sessions}}
+    descriptor['writerProtection']=dict(WRITER_PROTECTION)
     from .relocation import write
     write(directory/'descriptor.json',descriptor)
     def sync(path):
@@ -245,3 +247,42 @@ def snapshot(plans,workspace,args,lease):
         while block:=stream.read(CHUNK):check();digest.update(block)
     result={'artifactId':artifact,'sha256':digest.hexdigest(),'bytes':file_stamp(target)[2],'contentType':'application/x-tar','workspace':workspace,'previewHash':lease['previewHash'],'coverage':'full-configured-native-authority','format':FORMAT,'version':VERSION,'manifest':{'fullNative':body['fullNative'],'inventory':body['inventory'],'previewHash':lease['previewHash']}}
     write(directory/'description.json',result);return result
+
+
+def inspect_artifact(owner,workspace,args):
+    """Verify immutable bytes and return evidence only, never a private path."""
+    import tarfile
+    from .maintenance import identity,token
+    from .native_restore import Restores,digest
+    from .session_lifecycle import regular
+    from .history_import import strict_json
+    artifact=identity(args.get('artifactId'));expected=token(args.get('sha256'))
+    directory=checked(owner.root/'artifacts'/artifact)
+    description=strict_json(regular(directory/'description.json',1024*1024))
+    if description.get('workspace')!=workspace or description.get('artifactId')!=artifact or description.get('sha256')!=expected or description.get('format')!=FORMAT or description.get('version')!=VERSION:raise ValueError('Exact full-native artifact authority required')
+    path=checked(directory/'snapshot.tar');before=file_stamp(path)
+    if before[2]!=description.get('bytes'):raise ValueError('Private native artifact size changed')
+    deadline=time.monotonic()+owner.full_operation_seconds()
+    def check():
+        owner.ensure_open()
+        if time.monotonic()>=deadline:raise ValueError('Native artifact inspection deadline exceeded')
+    if digest(path,check)!=expected:raise ValueError('Private native artifact hash changed')
+    with tarfile.open(path,'r|') as archive:
+        header,roots=Restores.header(archive);manifest=header.get('manifest',{})
+        if header['previewHash']!=description.get('previewHash'):raise ValueError('Native artifact preview identity changed')
+        member=archive.next()
+        if member is None or not member.isfile() or member.name!='native-manifest.sqlite3' or manifest.get('path')!=member.name or type(manifest.get('bytes'))is not int or not 1<=member.size<=256*1024*1024 or member.size!=manifest['bytes']:raise ValueError('Native artifact manifest is absent or unsupported')
+        expected_manifest=token(manifest.get('sha256'));actual=hashlib.sha256()
+        stream=archive.extractfile(member)
+        while block:=stream.read(CHUNK):check();actual.update(block)
+        if actual.hexdigest()!=expected_manifest:raise ValueError('Native artifact manifest hash changed')
+    if file_stamp(path)!=before:raise ValueError('Native artifact changed during inspection')
+    authority=header['nativeAuthority'];coverage=authority['coverage']
+    if authority.get('writerProtection')!=WRITER_PROTECTION:raise ValueError('Archive has no supported sealed writer-exclusion evidence; no policy inference is permitted')
+    for key in ('authoritativeOmissions','excludedEntries'):
+        if type(coverage.get(key))is not int or coverage[key]<0:raise ValueError('Unsupported native authority omission count')
+    if coverage['completeNativeBackup']!=(coverage['authoritativeOmissions']==0) or coverage.get('scope')!='all-configured-native-authority-roots':raise ValueError('Inconsistent native authority completeness')
+    return {'version':1,'artifactId':artifact,'sha256':expected,'bytes':before[2],'contentType':'application/x-tar','format':FORMAT,'archiveVersion':VERSION,'previewHash':header['previewHash'],
+      'manifest':{**manifest,'digestKind':'sha256-exact-native-manifest-sqlite3-bytes'},
+      'authority':{**{key:coverage[key] for key in ('scope','completeNativeBackup','completeProductBackup','authoritativeOmissions','excludedEntries','credentialsIncluded')},'declaredRootIds':sorted(roots),'externalWriters':dict(WRITER_PROTECTION)},
+      'integrity':{'artifactHashVerified':True,'manifestHashVerified':True}}

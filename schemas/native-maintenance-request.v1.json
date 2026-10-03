@@ -926,6 +926,43 @@
         }
       },
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "maintenance.artifact.inspect"
+        },
+        "args": {
+          "type": "object",
+          "required": [
+            "artifactId",
+            "sha256"
+          ],
+          "properties": {
+            "artifactId": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{32}$"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     }
   ]
 }
