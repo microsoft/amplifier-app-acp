@@ -21,8 +21,8 @@ def settings_paths(workspace, *, shared_home=None, session_id=None, global_only=
         "project": workspace / ".amplifier" / "settings.yaml",
         "local": workspace / ".amplifier" / "settings.local.yaml",
     }
-    from .managed_chats import metadata
-    if global_only or metadata(workspace):
+    from amplifier_acp.managed_session import runtime_scope
+    if global_only or runtime_scope(workspace,session_id):
         paths = {"global": paths["global"]}
     if session_id:
         paths["session"] = root / "projects" / project_slug(workspace) / "sessions" / validate_id(session_id) / "settings.yaml"
@@ -38,8 +38,8 @@ def read_settings(workspace, *, shared_home=None, session_id=None, global_only=F
 def routing_dirs(workspace, *, shared_home=None, global_only=False):
     root = Path(shared_home or amplifier_home()).expanduser().resolve()
     workspace = Path(workspace).expanduser().resolve()
-    from .managed_chats import metadata
-    return [root / "routing"] if global_only or metadata(workspace) else [workspace / ".amplifier" / "routing.local", workspace / ".amplifier" / "routing", root / "routing"]
+    from amplifier_acp.managed_session import runtime_scope
+    return [root / "routing"] if global_only or runtime_scope(workspace) else [workspace / ".amplifier" / "routing.local", workspace / ".amplifier" / "routing", root / "routing"]
 
 
 def overlay(base, patch):

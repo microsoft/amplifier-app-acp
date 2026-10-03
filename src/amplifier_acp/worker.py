@@ -37,6 +37,7 @@ class NativeWorker:
             env['AMPLIFIER_WEB_HOME'] = str(Path(self.config['appHome']).expanduser().resolve())
         if self.config.get('registryHome'):
             env['AMPLIFIER_ACP_REGISTRY_HOME'] = str(Path(self.config['registryHome']).expanduser().resolve())
+        env['AMPLIFIER_ACP_MANAGED_ROOTS']=json.dumps(self.config.get('managedSessionRoots',[]))
         env['AMPLIFIER_ACP_HOST_FEATURES']=json.dumps((host_info or {}).get('features',{}))
         from .native.updates import active_release
         app_home=Path(env.get('AMPLIFIER_WEB_HOME',Path.home()/'.amplifier-unified'))

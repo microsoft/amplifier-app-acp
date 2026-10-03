@@ -795,7 +795,7 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
             loop.root_provider = SelectedProvider(providers[identity], selection)
         selected = loop._select_provider(providers)
         effective = selection or next((row for row in choices if providers[row["id"]] is selected), None)
-        metadata = {**({key:saved[1][key] for key in ("fork","preserve_system") if key in saved[1]} if saved else {}),
+        metadata = {**({key:saved[1][key] for key in ("fork","preserve_system","location") if key in saved[1]} if saved else {}),
             "session_id": runtime.session_id, "parent_id": None,
             "bundle_name": bundle_identity, "working_dir": str(config.workspace),
             "created": (saved[1].get("created") if saved else None) or datetime.now(UTC).isoformat(),

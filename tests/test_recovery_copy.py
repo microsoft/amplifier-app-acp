@@ -50,6 +50,12 @@ async def test_actual_independent_descendant_owner_blocks_then_releases_without_
         assert process.stdout.readline().strip()=='held';target=str(uuid.uuid4());args={'commandId':'family','targetSessionId':target,'expectedHistoryRevision':revision,'mode':'recovery','descendants':hints}
         with pytest.raises(Exception,match='owned|busy|owner'):owner.perform('fork',args)
         assert not server.directory(str(cwd),target).exists() and owner.saved('family') is None
+        wire=await Client.launch(config);await initialize(wire)
+        try:
+            refused=await action(wire,sid,cwd,'fork',args)
+            assert refused['error']['data']=={'executed':False,'replayed':False,'reason':'native-descendant-owned'}
+            assert 'descendant' in refused['error']['message']
+        finally:await wire.close()
     finally:process.communicate('',timeout=10)
     copied=owner.perform('fork',args);assert copied['creationConfirmed']
     with pytest.raises(ValueError,match='cycle'):owner.perform('fork',{**args,'commandId':'wrong-parent','targetSessionId':str(uuid.uuid4()),'descendants':[{**hints[0],'parentSessionId':grandchild},hints[1]]})

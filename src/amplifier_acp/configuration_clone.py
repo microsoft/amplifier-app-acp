@@ -57,6 +57,8 @@ def prepare(server,params):
     cwd=Path(params.get('cwd','')).expanduser()
     if not cwd.is_absolute() or not cwd.is_dir():raise ValueError('cwd must be an existing absolute directory.')
     cwd=str(cwd.resolve())
+    from .managed_session import runtime_scope
+    if runtime_scope(cwd,config=server.config):raise ValueError('Managed configuration copies require a fresh owned target allocation')
     if source.get('sourceCwd')!=cwd:raise ValueError('Cloning across workspaces requires an explicit workspace owner.')
     digest=source.get('configurationHash','')
     if not isinstance(digest,str) or len(digest)!=64 or any(c not in '0123456789abcdef' for c in digest):raise ValueError('Invalid configuration hash.')

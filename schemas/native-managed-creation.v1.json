@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Native managed creation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "operation",
+    "sessionId",
+    "cwd",
+    "commandId",
+    "allocationHash"
+  ],
+  "properties": {
+    "operation": {
+      "enum": [
+        "create",
+        "receipt"
+      ]
+    },
+    "sessionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "cwd": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "commandId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "allocationHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 200
+    },
+    "bundle": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "bundleRevision": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instance",
+        "model"
+      ],
+      "properties": {
+        "instance": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "effort": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "receipt"
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "title"
+              ]
+            },
+            {
+              "required": [
+                "bundle"
+              ]
+            },
+            {
+              "required": [
+                "bundleRevision"
+              ]
+            },
+            {
+              "required": [
+                "selection"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

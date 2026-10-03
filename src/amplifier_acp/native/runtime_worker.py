@@ -328,6 +328,8 @@ class Worker:
             self.runtime = Runtime(session_id=config["id"], observer=self.observe, max_input_chars=200_000)
             self.telemetry = ExecutionEvents(config["id"], publish)
             workspace = Path(config.get("workspace") or config.get("workingDirectory") or os.getcwd()).expanduser().resolve(strict=True)
+            from amplifier_acp.managed_session import runtime_scope
+            managed_scope=runtime_scope(str(workspace),config["id"],{"managedSessionRoots":json.loads(os.environ.get("AMPLIFIER_ACP_MANAGED_ROOTS","[]"))})
             self.workspace = workspace
             self.start_config = dict(config)
             # Execution locking lives in the isolated runtime. The outer host
@@ -368,7 +370,7 @@ class Worker:
                 report_dir=report_directory, shared_handle=self.shared_handle,
                 shared_handle_getter=lambda: self.shared_handle,
                 write_guard=self.activation_gate.check_current, resolved_root=resolved_root,
-                execution_workspace=config.get("workingDirectory"), install_overrides=install_overrides)
+                execution_workspace=config.get("workingDirectory"), install_overrides=install_overrides,global_only=bool(managed_scope))
             if install_overrides is not None:
                 active_install_overrides(self.home, str(install_overrides))
             self.config_inputs = tuple(report.get("config_inputs", ()))

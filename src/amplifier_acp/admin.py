@@ -30,7 +30,9 @@ class Administration:
  def workspace(self,cwd):
   if not isinstance(cwd,str) or not Path(cwd).is_absolute():raise ValueError('Administration cwd must be absolute.')
   path=Path(cwd).resolve(strict=True)
-  if not path.is_dir() or not any(path==root or root in path.parents for root in self.roots):raise ValueError('Administration workspace is outside launcher-authorized roots.')
+  from .managed_session import runtime_scope
+  managed=runtime_scope(str(path),config=self.config)
+  if not path.is_dir() or not managed and not any(path==root or root in path.parents for root in self.roots):raise ValueError('Administration workspace is outside launcher-authorized roots.')
   return str(path)
  def initialize(self):
   if self.setup:return

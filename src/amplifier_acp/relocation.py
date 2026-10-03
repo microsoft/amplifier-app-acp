@@ -43,6 +43,8 @@ def passive(server,params,reconcile=False):
 
 async def relocate(session,args):
     server=session.server;identity=session.identity;history=session.cwd
+    from .managed_session import runtime_scope
+    if runtime_scope(history,identity,server.config):raise ValueError('Managed execution relocation requires an explicit allocation transition')
     command=args.get('commandId');expected=args.get('expectedExecutionRevision')
     if not isinstance(command,str) or not 1<=len(command)<=200 or type(expected) is not int or expected<0:raise ValueError('Stable commandId and native execution revision required')
     current=state(server,identity,history);prior=current.get('receipt');signature=fingerprint(args)

@@ -129,8 +129,10 @@ class Lifecycle:
         with self.receipts() as db:db.execute('INSERT OR REPLACE INTO receipts VALUES (?,?,?)',(command,signature,json.dumps(value)))
     @contextmanager
     def own(self):
-        from amplifier_foundation.session.shared_state import SharedSessionStore
-        handle=SharedSessionStore(self.cwd,self.identity).acquire(app='amplifier-acp-lifecycle',pid=os.getpid())
+        from amplifier_foundation.session.shared_state import SharedSessionStore,SessionBusyError
+        from .lifecycle_family import OwnershipBusy
+        try:handle=SharedSessionStore(self.cwd,self.identity).acquire(app='amplifier-acp-lifecycle',pid=os.getpid())
+        except SessionBusyError:raise OwnershipBusy() from None
         try:yield handle
         finally:handle.release()
     def inspect(self):
@@ -228,6 +230,8 @@ class Lifecycle:
         if args.get('confirmationToken')!=preview['confirmationToken'] or time.time()>preview['expiresAt'] or preview['historyRevision']!=inspected['historyRevision']:raise ValueError('Deletion preview expired or changed; review again')
         return preview
     def prepare_fork(self,args):
+        from .managed_session import runtime_scope
+        if runtime_scope(self.cwd,self.identity,self.server.config):raise ValueError('Managed history copies require a fresh owned target allocation')
         mode=args.get('mode','complete')
         if mode not in {'complete','recovery'}:raise ValueError('Choose complete history or readable recovery mode')
         if type(args.get('resetModel',False)) is not bool:raise ValueError('resetModel must be a boolean')

@@ -11,9 +11,15 @@ from .coordination import Store
 from .relocation import home
 MAX_FAMILY=100
 
+class OwnershipBusy(ValueError):
+    def __init__(self,descendant=False):
+        self.data={'executed':False,'replayed':False,'reason':'native-descendant-owned' if descendant else 'native-session-owned'}
+        super().__init__('A native descendant is owned by another active process; wait for that work to settle before copying.' if descendant else 'This native session is owned by another active process; wait for that work to settle before changing its lifecycle.')
+
+
 @contextmanager
 def own_descendants(owner,hints,check=None):
-    from amplifier_foundation.session.shared_state import SharedSessionStore
+    from amplifier_foundation.session.shared_state import SharedSessionStore,SessionBusyError
     from .native.session_files import validate_id
     from .session_lifecycle import record,guard_copy_source
     if not isinstance(hints,list) or len(hints)>MAX_FAMILY:raise ValueError('Selected family exceeds the 100-session ownership bound')
@@ -35,7 +41,9 @@ def own_descendants(owner,hints,check=None):
             for sid in ready:
                 row=known[sid]
                 if sid!=owner.identity:
-                    handle=SharedSessionStore(row['cwd'],sid).acquire(app='amplifier-acp-lifecycle-family');leases.callback(handle.release)
+                    try:handle=SharedSessionStore(row['cwd'],sid).acquire(app='amplifier-acp-lifecycle-family')
+                    except SessionBusyError:raise OwnershipBusy(descendant=True) from None
+                    leases.callback(handle.release)
                     metadata=record(owner.server.directory(row['cwd'],sid)/'metadata.json')
                     if metadata.get('session_id')!=sid or metadata.get('parent_id')!=row['parentSessionId']:raise ValueError('Native descendant relationship differs from indexed identity')
                     guard_copy_source(owner.server,sid)
