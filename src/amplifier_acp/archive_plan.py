@@ -92,7 +92,9 @@ class ArchivePlans:
         for kind,key,cwd in db.execute('SELECT kind,id,cwd FROM selections ORDER BY kind,id'):
             self.owner.admin.workspace(cwd)
             if kind=='session':
-                if 'session-history' in parts:yield 'history/'+key,checked(self.owner.home/'projects'/project_slug(cwd)/'sessions'/key)
+                if 'session-history' in parts:
+                    yield 'history/'+key,checked(self.owner.home/'projects'/project_slug(cwd)/'sessions'/key)
+                    if 'session-state' not in parts:yield 'history-revisions/'+key,checked(location(self.owner.app,key)/'history-revisions')
                 if 'session-state' in parts:yield 'state/'+key,checked(location(self.owner.app,key))
             elif 'workspace-configuration' in parts:
                 for name in ('settings.yaml','settings.local.yaml','routing','routing.local','bundles'):

@@ -304,3 +304,9 @@ Negotiated `bundleCommands` v1 adds native-owned exact receipts for bundle save,
 export, default selection and separate session activation. Receipt reads are
 passive and preserve an independent successful save when activation needs a model
 choice or has an unknown outcome. See [wire and outcome contract](docs/bundle-commands.md).
+
+Reviewed, history-preserving context clearing is an additive native capability:
+[contract and limitations](docs/context-clear.md). It keeps canonical history
+before-images while resetting active model context, and uses passive exact
+receipts after a lost reply. Archived viewing references never grant canonical
+fork/edit/export authority.

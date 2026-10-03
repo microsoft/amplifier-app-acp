@@ -117,9 +117,13 @@ async def run():
         await controls.perform('goals.set',{'condition':'finish fixture','maxTurns':3})
         assert coordinator.session_state['goal']['cap']==3
         await coordinator.get('context').add_message({'role':'user','content':'Clear this test'})
-        await controls.perform('context.clear')
-        assert not await coordinator.get('context').get_messages()
-        assert coordinator.session_state['goal'] is None
+        try:
+            await controls.perform('context.clear')
+            raise AssertionError('Unreviewed clear changed the context')
+        except ValueError as error:
+            assert error.data['executed'] is False
+        assert await coordinator.get('context').get_messages()
+        assert coordinator.session_state['goal']['condition'] == 'finish fixture'
         runtime.generation={'id':'active'}
         try:
             await controls.perform('context.clear')

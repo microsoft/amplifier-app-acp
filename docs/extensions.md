@@ -224,3 +224,13 @@ a replay. Runtime loss classifies unresolved live receipts unknown. Receipt
 queries use indexed dispositions, independent of prior-session receipt count.
 
 Optional voice metadata: native initialization advertises `admin.voice:{version:1,configuration:true,credentials:boolean}`. Sanitized `voice.configuration` also returns `credentialAccess:'enabled'|'disabled'` and `configurable:boolean`; disabled access reports unavailable with an explicit installation reason and null credential-presence fields without reading secrets. Enabled availability describes key presence, not account validation. The media owner must consume this metadata for passive status and resolve a credential only on explicit connect/preview.
+
+## Reviewed context clearing
+
+The additive `native.contextClear.version:1` contract is documented in
+[context-clear.md](context-clear.md). It preserves exact canonical before-images,
+clears the explicit goal, requires an active saved task to be paused, and exposes
+passive exact command receipts. Committed archived groups remain visible but
+have archive-qualified, viewing-only message references. Canonical mutation and
+export still apply only to active history. Clients must negotiate this marker;
+older unreviewed clearing is not history-preserving authority.

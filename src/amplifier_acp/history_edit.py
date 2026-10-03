@@ -38,7 +38,7 @@ async def revise(worker,args,publish):
     if file.exists() or fence.exists():raise ValueError('This native edit was already attempted or is unresolved; inspect its receipt, never replay')
     directory=sessions_dir(cwd)/identity
     try:
-        rows,_,revision=canonical(directory,args['expectedHistoryRevision'])
+        rows,_,revision=canonical(directory,args['expectedHistoryRevision'],app_home=app_home())
         target=bound(rows,args['targetMessageId'],user=True);position,original=rows[target]
         marker=(original.get('metadata') or {}).get('amplifier_input',{})
         if marker.get('kind','user')!='user':raise ValueError('Choose an original user input, not an injected steering correction')
@@ -47,14 +47,14 @@ async def revise(worker,args,publish):
     displayed=[]
     for index,(offset,row) in enumerate(rows):
         if row.get('role') not in {'user','assistant'} or not visible(row):continue
-        item={'id':message_id(row,offset),'role':row['role'],'text':text_content(row),'nativeIndex':index}
+        item={'id':message_id(row,offset,getattr(rows,'epoch',None)),'role':row['role'],'text':text_content(row),'nativeIndex':index}
         row_input=(row.get('metadata') or {}).get('amplifier_input',{})
         if row_input.get('kind')=='user' and row_input.get('id'):item['inputId']=row_input['id']
         displayed.append(item)
-    target_id=message_id(original,position);before_turn=marker.get('id') or target_id
+    target_id=message_id(original,position,getattr(rows,'epoch',None));before_turn=marker.get('id') or target_id
     retained_turn=None
     for offset,row in rows[:target]:
-        if row.get('role')=='user' and visible(row):retained_turn=(row.get('metadata') or {}).get('amplifier_input',{}).get('id') or message_id(row,offset)
+        if row.get('role')=='user' and visible(row):retained_turn=(row.get('metadata') or {}).get('amplifier_input',{}).get('id') or message_id(row,offset,getattr(rows,'epoch',None))
     record={'operationId':args['operationId'],'inputId':args['inputId'],'targetMessageId':args['targetMessageId'],'beforeMessageId':target_id,'beforeTurnId':before_turn,'retainedThroughTurnId':retained_turn,'previousRevision':revision,'historyCwd':cwd,'status':'preparing','requestHash':hashlib.sha256(json.dumps(args,sort_keys=True,separators=(',',':')).encode()).hexdigest(),'eventsPreserved':True,'replayed':False}
     write(file,record);write(fence,{'operationId':args['operationId'],'inputId':args['inputId']})
     from .native.history_revision import rewind,receipt_path
@@ -91,7 +91,8 @@ def before(server,params):
         from .managed_session import history_scope
         if not history_scope(cwd,identity,server.config):raise ValueError('Exact native history workspace required')
     directory=server.directory(cwd,identity)
-    rows,_,revision=canonical(directory,params.get('expectedRevision'))
+    from .relocation import home
+    rows,_,revision=canonical(directory,params.get('expectedRevision'),app_home=home(server))
     target=bound(rows,params.get('beforeTurnId'),user=True);offset=rows[target][0]
     if not offset:return {'updates':[],'turnGroups':[],'nextCursor':None,'revision':revision,'diagnostics':[]}
-    return history.page(directory,cursor=history._cursor(revision,offset),limit=params.get('limit',50),expected_revision=revision)
+    return history.page(directory,cursor=history._cursor(revision,offset),limit=params.get('limit',50),expected_revision=revision,app_home=home(server))

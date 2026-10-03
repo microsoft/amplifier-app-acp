@@ -1,0 +1,229 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsoft.github.io/amplifier-acp/schemas/context-clear.v1.json",
+  "description": "Negotiated native.contextClear v1. Wire operations use _amplifier/native selected-session scope. Maximum encoded public result/receipt: 16 KiB. Review revision binds canonical history and goal/task controls. Archived message references start archive:<archiveId>: and are viewing-only; group/admission IDs remain projection identities, never authority to mutate an archived segment.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "const": "context.clear.review"
+        },
+        "args": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "operation",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "const": "context.clear"
+        },
+        "args": {
+          "$ref": "#/$defs/applyArgs"
+        }
+      },
+      "required": [
+        "operation",
+        "args"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "applyArgs": {
+      "type": "object",
+      "properties": {
+        "commandId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[^\\u0000-\\u001f]+$"
+        },
+        "expectedHistoryRevision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "expectedControlRevision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "commandId",
+        "expectedHistoryRevision",
+        "expectedControlRevision"
+      ],
+      "additionalProperties": false
+    },
+    "reviewResult": {
+      "type": "object",
+      "properties": {
+        "historyRevision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "controlRevision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "canClear": {
+          "type": "boolean"
+        },
+        "goalPresent": {
+          "type": "boolean"
+        },
+        "goalAction": {
+          "const": "clear"
+        },
+        "task": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "status": {
+                  "type": "string",
+                  "maxLength": 32
+                }
+              },
+              "required": [
+                "id",
+                "revision",
+                "status"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "historyRevision",
+        "controlRevision",
+        "canClear",
+        "goalPresent",
+        "goalAction",
+        "task"
+      ],
+      "additionalProperties": false
+    },
+    "applyResult": {
+      "type": "object",
+      "properties": {
+        "cleared": {
+          "const": true
+        },
+        "historyPreserved": {
+          "const": true
+        },
+        "eventsPreserved": {
+          "const": true
+        },
+        "goalCleared": {
+          "type": "boolean"
+        },
+        "archiveId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "previousHistoryRevision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "historyRevision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "cleared",
+        "historyPreserved",
+        "eventsPreserved",
+        "goalCleared",
+        "archiveId",
+        "previousHistoryRevision",
+        "historyRevision"
+      ],
+      "additionalProperties": false
+    },
+    "refusalData": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "enum": [
+            "context-clear-command-required",
+            "context-clear-review-arguments",
+            "context-clear-reviewed-revisions-required",
+            "context-clear-invalid-revision",
+            "context-clear-command-conflict",
+            "context-clear-preflight-refused",
+            "context-clear-stale-review",
+            "native-checkpoint-required",
+            "context-clear-receipt-selectors",
+            "context-clear-history-workspace-required",
+            "context-clear-history-unavailable",
+            "context-clear-receipt-scope-mismatch"
+          ]
+        },
+        "executed": {
+          "const": false
+        },
+        "replayed": {
+          "const": false
+        }
+      },
+      "required": [
+        "reason",
+        "executed",
+        "replayed"
+      ],
+      "additionalProperties": false
+    },
+    "unknownData": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "enum": [
+            "context-clear-outcome-unknown",
+            "context-clear-unresolved-inspect-original-receipt"
+          ]
+        },
+        "outcome": {
+          "const": "unknown"
+        },
+        "replayed": {
+          "const": false
+        }
+      },
+      "required": [
+        "reason",
+        "outcome",
+        "replayed"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

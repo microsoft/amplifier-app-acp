@@ -66,6 +66,26 @@ class FixtureProvider:
             return ChatResponse(content=[TextBlock(text='Before permission tool.')],tool_calls=[ToolCall(id='permit-call',name='fixture_permit',arguments={})],finish_reason='tool_calls')
         return ChatResponse(content=[TextBlock(text='Native graph reply: '+str(prompt))],finish_reason='stop',usage=Usage(input_tokens=8,output_tokens=5,total_tokens=13))
 async def mount(coordinator,config=None):
+    if config and config.get('contextClearAudit'):
+        from pathlib import Path
+        from amplifier_acp.native import history_revision
+        original_copy=history_revision._copy_segment
+        def audit_copy(source,destination,**kwargs):
+            root=Path(config['contextClearAudit']);root.mkdir(exist_ok=True)
+            (root/source.name).write_bytes(source.read_bytes())
+            return original_copy(source,destination,**kwargs)
+        history_revision._copy_segment=audit_copy
+    if config and config.get('contextClearCrash'):
+        # Owned test-only crash points around actual native/Core checkpoints.
+        import os,signal
+        from amplifier_acp.native import history_revision
+        original_write=history_revision._write
+        def crash_write(path,value):
+            phase=config['contextClearCrash']
+            if phase=='canonical' and path.name=='context-head.json':os.kill(os.getpid(),signal.SIGKILL)
+            original_write(path,value)
+            if phase=='preserved' and path.name=='segment.json' or phase=='head' and path.name=='context-head.json':os.kill(os.getpid(),signal.SIGKILL)
+        history_revision._write=crash_write
     provider=FixtureProvider(config);provider.coordinator=coordinator
     await coordinator.mount('providers',provider,name='fixture')
     class Permit:

@@ -1,0 +1,210 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsoft.github.io/amplifier-acp/schemas/context-clear-receipt.v1.json",
+  "description": "Passive _amplifier/context/receipt. cwd is immutable native history workspace, not relocated execution cwd. Does not start a worker, change classification or replay effects. Unknown never includes a fabricated result.",
+  "type": "object",
+  "properties": {
+    "receipt": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "operation": {
+              "const": "context.clear"
+            },
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^[^\\u0000-\\u001f]+$"
+            },
+            "createdAt": {
+              "type": "number",
+              "minimum": 0
+            },
+            "status": {
+              "const": "succeeded"
+            },
+            "completedAt": {
+              "type": "number",
+              "minimum": 0
+            },
+            "result": {
+              "type": "object",
+              "properties": {
+                "cleared": {
+                  "const": true
+                },
+                "historyPreserved": {
+                  "const": true
+                },
+                "eventsPreserved": {
+                  "const": true
+                },
+                "goalCleared": {
+                  "type": "boolean"
+                },
+                "archiveId": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "previousHistoryRevision": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "historyRevision": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              },
+              "required": [
+                "cleared",
+                "historyPreserved",
+                "eventsPreserved",
+                "goalCleared",
+                "archiveId",
+                "previousHistoryRevision",
+                "historyRevision"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "version",
+            "operation",
+            "commandId",
+            "createdAt",
+            "status",
+            "completedAt",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "operation": {
+              "const": "context.clear"
+            },
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^[^\\u0000-\\u001f]+$"
+            },
+            "createdAt": {
+              "type": "number",
+              "minimum": 0
+            },
+            "status": {
+              "const": "refused"
+            },
+            "executed": {
+              "const": false
+            },
+            "reason": {
+              "enum": [
+                "context-clear-command-required",
+                "context-clear-review-arguments",
+                "context-clear-reviewed-revisions-required",
+                "context-clear-invalid-revision",
+                "context-clear-command-conflict",
+                "context-clear-preflight-refused",
+                "context-clear-stale-review",
+                "native-checkpoint-required",
+                "context-clear-receipt-selectors",
+                "context-clear-history-workspace-required",
+                "context-clear-history-unavailable",
+                "context-clear-receipt-scope-mismatch"
+              ]
+            }
+          },
+          "required": [
+            "version",
+            "operation",
+            "commandId",
+            "createdAt",
+            "status",
+            "executed",
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "operation": {
+              "const": "context.clear"
+            },
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^[^\\u0000-\\u001f]+$"
+            },
+            "createdAt": {
+              "type": "number",
+              "minimum": 0
+            },
+            "status": {
+              "const": "unknown"
+            }
+          },
+          "required": [
+            "version",
+            "operation",
+            "commandId",
+            "createdAt",
+            "status"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "required": [
+    "receipt"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "request": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "commandId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[^\\u0000-\\u001f]+$"
+        }
+      },
+      "required": [
+        "sessionId",
+        "cwd",
+        "commandId"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

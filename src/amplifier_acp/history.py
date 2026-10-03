@@ -103,7 +103,36 @@ def content_updates(row,position):
 def _cursor(revision,offset):
     return base64.urlsafe_b64encode(json.dumps({'revision':revision,'offset':offset},separators=(',',':')).encode()).decode().rstrip('=')
 
-def page(directory,*,cursor=None,limit=50,max_bytes=2_000_000,expected_revision=None):
+def message_id(row, position, epoch=None):
+    digest=hashlib.sha256((str(position)+':'+json.dumps(row,sort_keys=True,separators=(',',':'))).encode()).hexdigest()[:24]
+    voice=(row.get('metadata') or {}).get('amplifier_voice')
+    if voice:digest=hashlib.sha256((voice['callId']+'\0'+voice['itemId']).encode()).hexdigest()[:24]
+    return 'native:'+(epoch+':' if epoch else '')+digest
+
+
+class SegmentIntegrity:
+    """Verify only touched immutable chunks; portable across exact-byte restore."""
+    def __init__(self, directory, size, budget):
+        self.path=Path(directory)/'transcript.jsonl.sha256';self.size=size
+        self.budget=budget;self.used=0;self.blocks={};self.index_revision=stamp(self.path)[0]
+    def read(self, stream, offset, length):
+        result=[]
+        for number in range(offset//65536,(offset+length+65535)//65536):
+            if number not in self.blocks:
+                start=number*65536;amount=min(65536,self.size-start)
+                if self.used+amount>self.budget:raise HistoryError('History page contains oversized records; request fewer rows.')
+                stream.seek(start);block=stream.read(amount);self.used+=len(block)
+                with self.path.open('rb') as index:
+                    index.seek(number*32);expected=index.read(32)
+                if hashlib.sha256(block).digest()!=expected or stamp(self.path)[0]!=self.index_revision:
+                    raise HistoryError('Preserved context segment changed; originals retained.')
+                self.blocks[number]=block
+            block=self.blocks[number];start=number*65536
+            result.append(block[max(0,offset-start):min(len(block),offset+length-start)])
+        return b''.join(result)
+
+
+def _page(directory,*,cursor=None,limit=50,max_bytes=2_000_000,expected_revision=None,epoch=None,archive_id=None):
     if type(limit) is not int or not 1<=limit<=200:raise HistoryError('History turn limit must be an integer from 1 to 200.')
     path,diagnostics=source(Path(directory));revision,size=stamp(path);end=size
     if expected_revision is not None and revision!=expected_revision:raise HistoryError('Native history changed since inspection; request a fresh revision.')
@@ -116,11 +145,13 @@ def page(directory,*,cursor=None,limit=50,max_bytes=2_000_000,expected_revision=
             if type(end) is not int or not 0<=end<=size:raise ValueError()
         except HistoryError:raise
         except (ValueError,KeyError,TypeError):raise HistoryError('Invalid history cursor.')
+    integrity=SegmentIntegrity(directory,size,max_bytes) if archive_id else None
     rows=[];buffer=b'';offset=end;consumed=end;read_bytes=0;turns=0
     with path.open('rb') as stream:
         while turns<limit and (offset or buffer):
             if offset:
-                amount=min(offset,65536);offset-=amount;stream.seek(offset);chunk=stream.read(amount)
+                amount=min(offset,((offset-1)%65536)+1) if integrity else min(offset,65536)
+                offset-=amount;stream.seek(offset);chunk=integrity.read(stream,offset,amount) if integrity else stream.read(amount)
                 read_bytes+=len(chunk)
                 if read_bytes>max_bytes:raise HistoryError('History page contains oversized records; request fewer rows or inspect the native artifact explicitly.')
                 buffer=chunk+buffer
@@ -143,28 +174,93 @@ def page(directory,*,cursor=None,limit=50,max_bytes=2_000_000,expected_revision=
         values,issues=content_updates(row,position);diagnostics.extend(issues)
         if not values:continue
         marker=(row.get('metadata') or {}).get('amplifier_input') or {}
-        digest=hashlib.sha256((str(position)+':'+json.dumps(row,sort_keys=True,separators=(',',':'))).encode()).hexdigest()[:24]
+        identity=message_id(row,position,epoch)
         voice=(row.get('metadata') or {}).get('amplifier_voice')
-        if voice: digest=hashlib.sha256((voice['callId']+'\0'+voice['itemId']).encode()).hexdigest()[:24]
         if row.get('role')=='user' or current is None or voice:
-            current={'id':marker.get('id') or 'native:'+digest,'updates':[],'state':'unknown',**({'recordedOnly':True} if voice else {})}
+            current={'id':marker.get('id') or identity,'updates':[],'state':'unknown',**({'recordedOnly':True} if voice else {}),**({'archiveId':archive_id,'historicalOnly':True} if archive_id else {})}
             groups.append(current)
         for value in values:
-            value['_meta']['amplifier.dev/history'].update(turnId=current['id'],messageId='native:'+digest)
+            value['_meta']['amplifier.dev/history'].update(turnId=current['id'],messageId=('archive:'+archive_id+':' if archive_id else '')+identity,**({'archiveId':archive_id,'historicalOnly':True,'mutationAuthority':'none'} if archive_id else {}))
         current['updates'].extend(values);updates.extend(values)
     return {'updates':updates,'turnGroups':groups,'nextCursor':_cursor(revision,consumed) if consumed>0 else None,'revision':revision,'diagnostics':diagnostics}
 
-def forward(directory):
+def page(directory,*,cursor=None,limit=50,max_bytes=2_000_000,expected_revision=None,app_home=None,history_cwd=None):
+    if app_home is None:
+        return _page(directory,cursor=cursor,limit=limit,max_bytes=max_bytes,expected_revision=expected_revision)
+    from .native.history_revision import context_head,segment,_directory,_read
+    directory=Path(directory);path,_=source(directory);revision,_=stamp(path)
+    head=context_head(app_home,directory.name,history_cwd);archive=None;inner=cursor
+    if expected_revision is not None and revision!=expected_revision:raise HistoryError('Native history changed since inspection.')
+    if cursor:
+        if not isinstance(cursor,str) or len(cursor)>2048:raise HistoryError('Invalid history cursor.')
+        try:value=json.loads(base64.urlsafe_b64decode(cursor+'='*(-len(cursor)%4)))
+        except (ValueError,TypeError):raise HistoryError('Invalid history cursor.')
+        if value.get('kind')=='context-history':
+            if value.get('revision')!=revision or value.get('head')!=head or value.get('session')!=directory.name:raise HistoryError('History changed; discard this cursor.')
+            archive=value.get('archive');inner=value.get('cursor')
+    def continuation(selected,selected_cursor):
+        value={'kind':'context-history','revision':revision,'head':head,'session':directory.name,'archive':selected,'cursor':selected_cursor}
+        return base64.urlsafe_b64encode(json.dumps(value,separators=(',',':')).encode()).decode().rstrip('=')
+    # At most one nonempty segment per page; empty segments are traversed with
+    # a fixed budget, not a scan of all selected history on every read.
+    for _ in range(32):
+        selected=directory;epoch=head;previous=head
+        if archive:
+            selected,descriptor=segment(app_home,directory.name,archive)
+            receipt=_read(_directory(app_home,directory.name)/('context-'+archive+'.json'))
+            if receipt.get('status')!='succeeded':raise HistoryError('Context clear is unresolved; preserved originals require exact receipt inspection.')
+            epoch=descriptor['sourceEpoch'];previous=descriptor['previousArchive']
+        result=_page(selected,cursor=inner,limit=limit,max_bytes=max_bytes,epoch=epoch,archive_id=archive)
+        next_cursor=(continuation(archive,result['nextCursor']) if result['nextCursor'] else continuation(previous,None) if previous else None)
+        result.update(revision=revision,nextCursor=next_cursor)
+        if stamp(path)[0]!=revision or context_head(app_home,directory.name,history_cwd)!=head:raise HistoryError('History changed during read.')
+        if result['turnGroups'] or not next_cursor:return result
+        archive=previous;inner=None
+    return {'updates':[],'turnGroups':[],'revision':revision,'nextCursor':continuation(archive,inner),'diagnostics':[{'code':'empty_segment_page_bound'}]}
+
+
+def _forward(directory,*,epoch=None,archive_id=None):
     path,diagnostics=source(Path(directory));revision,_=stamp(path)
+    current=None
+    integrity=SegmentIntegrity(directory,path.stat().st_size,48_065_536) if archive_id else None
     with path.open('rb') as stream:
         while True:
             position=stream.tell();raw=stream.readline(48_000_001)
             if not raw:break
             if len(raw)>48_000_000:raise HistoryError('Native history record exceeds the ACP transport limit.')
+            if integrity:
+                end=stream.tell();integrity.read(stream,position,len(raw));stream.seek(end)
+                integrity.blocks={number:block for number,block in integrity.blocks.items() if (number+1)*65536>end}
+                integrity.used=sum(map(len,integrity.blocks.values()))
             try:row=json.loads(raw)
             except ValueError:raise HistoryError('Native transcript is malformed; history was preserved.')
             if not isinstance(row,dict):raise HistoryError('Native transcript record is malformed.')
             values,issues=content_updates(row,position)
             if issues:raise HistoryError('Native history contains content without an ACP mapping: '+json.dumps(issues))
-            for update in values:yield update
+            if values:
+                marker=(row.get('metadata') or {}).get('amplifier_input') or {}
+                identity=message_id(row,position,epoch)
+                if row.get('role')=='user' or current is None or (row.get('metadata') or {}).get('amplifier_voice'):
+                    current=marker.get('id') or identity
+                for update in values:
+                    update['_meta']['amplifier.dev/history'].update(turnId=current,messageId=('archive:'+archive_id+':' if archive_id else '')+identity,**({'archiveId':archive_id,'historicalOnly':True,'mutationAuthority':'none'} if archive_id else {}))
+                    yield update
     if stamp(path)[0]!=revision:raise HistoryError('Native history changed during replay; resubscribe to obtain a consistent view.')
+
+
+def forward(directory,*,app_home=None,history_cwd=None):
+    if app_home is None:
+        yield from _forward(directory)
+        return
+    from .native.history_revision import context_head,segment,_directory,_read
+    directory=Path(directory);head=context_head(app_home,directory.name,history_cwd);archive=head;chain=[]
+    while archive:
+        if len(chain)>=10000 or archive in chain:raise HistoryError('History segment chain exceeds replay bound or is corrupt; use bounded paging.')
+        selected,descriptor=segment(app_home,directory.name,archive)
+        if _read(_directory(app_home,directory.name)/('context-'+archive+'.json')).get('status')!='succeeded':raise HistoryError('Context clear is unresolved; inspect its exact receipt.')
+        chain.append(archive);archive=descriptor['previousArchive']
+    for archive in reversed(chain):
+        selected,descriptor=segment(app_home,directory.name,archive)
+        yield from _forward(selected,epoch=descriptor['sourceEpoch'],archive_id=archive)
+    yield from _forward(directory,epoch=head)
+    if context_head(app_home,directory.name,history_cwd)!=head:raise HistoryError('History changed during replay.')

@@ -56,6 +56,13 @@
           },
           "recordedOnly": {
             "type": "boolean"
+          },
+          "archiveId": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "historicalOnly": {
+            "const": true
           }
         },
         "required": [

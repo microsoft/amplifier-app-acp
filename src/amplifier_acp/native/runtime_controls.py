@@ -399,12 +399,9 @@ class RuntimeControls:
             result.update(messages=len(messages), userTurns=sum(row.get("role")=="user" for row in messages),
                           contextCharacters=sum(len(str(row.get("content", ""))) for row in messages))
             return result
-        if operation == "context.clear":
-            self.require_idle()
-            await self.coordinator.get("context").clear()
-            self.coordinator.session_state["goal"] = None
-            await self.checkpoint()
-            return {"cleared":True}
+        if operation in {"context.clear.review", "context.clear"}:
+            from .history_revision import review_clear, clear_context
+            return review_clear(self, args) if operation.endswith(".review") else await clear_context(self, args)
         if operation.startswith("mode."):
             return await self.mode(operation, args)
         if operation in {"goals.get", "goals.set", "goals.clear"}:

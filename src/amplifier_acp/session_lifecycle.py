@@ -36,6 +36,8 @@ def lifecycle_state(server,identity,cwd):
 def guard_copy_source(server,identity):
     """Copy only a coherent settled authority image; never finish its journals."""
     app=location(home(server),identity)
+    from .native.history_revision import guard_context_clear
+    guard_context_clear(home(server), identity)
     for name in ('history-edit-pending.json','maintenance-reset-pending.json'):
         if (app/name).exists():raise ValueError('Canonical native history or configuration is unresolved; source preserved')
     for name in ('history-fork.json','history-import.json'):
@@ -57,18 +59,24 @@ def guard_start(server,identity,cwd):
     if imported and imported.get('state')!='committed':raise ValueError('History import creation is unresolved; inspect its original receipt. No work replayed.')
     return imported.get('bundle') if imported else fork.get('bundle') if fork else None
 
-def message_id(row,position):
-    digest=hashlib.sha256((str(position)+':'+json.dumps(row,sort_keys=True,separators=(',',':'))).encode()).hexdigest()[:24]
-    voice=(row.get('metadata') or {}).get('amplifier_voice')
-    if voice:digest=hashlib.sha256((voice['callId']+'\0'+voice['itemId']).encode()).hexdigest()[:24]
-    return 'native:'+digest
+def message_id(row,position,epoch=None):
+    return history.message_id(row,position,epoch)
 
-def canonical(directory,expected):
+class HistoryRows(list):
+    def __init__(self, values=(), epoch=None):
+        super().__init__(values);self.epoch=epoch
+    def __getitem__(self, key):
+        value=super().__getitem__(key)
+        return HistoryRows(value,self.epoch) if isinstance(key,slice) else value
+
+def canonical(directory,expected,*,app_home=None):
     path,diagnostics=history.source(directory);revision,size=history.stamp(path)
     if diagnostics:raise ValueError('Recovered backup is not a complete current lifecycle snapshot; repair the source first')
     if revision!=expected:raise ValueError('Native history changed; inspect a fresh revision')
     if size>MAX_HISTORY:raise ValueError('Selected native history exceeds the 64 MiB lifecycle bound; files preserved')
-    raw=regular(path,MAX_HISTORY);rows=[];offset=0
+    from .native.history_revision import context_head
+    epoch=context_head(app_home,directory.name) if app_home is not None else None
+    raw=regular(path,MAX_HISTORY);rows=HistoryRows(epoch=epoch);offset=0
     for line in raw.splitlines(keepends=True):
         row=json.loads(line)
         if not isinstance(row,dict) or not isinstance(row.get('role'),str):raise ValueError('Malformed native history; files preserved')
@@ -78,7 +86,9 @@ def canonical(directory,expected):
     return rows,metadata,revision
 
 def bound(rows,identity,*,user=False):
-    matches=[i for i,(position,row) in enumerate(rows) if message_id(row,position)==identity or (row.get('metadata') or {}).get('amplifier_input',{}).get('id')==identity]
+    if isinstance(identity,str) and identity.startswith('archive:'):
+        raise ValueError('Archived context is viewing-only; canonical fork/edit/export cannot target it')
+    matches=[i for i,(position,row) in enumerate(rows) if message_id(row,position,getattr(rows,"epoch",None))==identity or (row.get('metadata') or {}).get('amplifier_input',{}).get('id')==identity]
     if len(matches)!=1:raise ValueError('The selected native message boundary is unavailable or ambiguous')
     index=matches[0]
     if not history.visible(rows[index][1]) or user and rows[index][1].get('role')!='user':raise ValueError('Choose a visible native user message boundary')
@@ -264,7 +274,7 @@ class Lifecycle:
         managed=copy_target(self.server,self.identity,self.cwd,target,args.get('managedTarget'))
         destination=self.server.directory(managed['workspace'] if managed else self.cwd,target);target_app=location(home(self.server),target)
         if destination.exists() or target_app.exists():raise ValueError('Fork target already exists; inspect original creation receipt, never replay')
-        rows,metadata,revision=canonical(self.directory,args['expectedHistoryRevision'])
+        rows,metadata,revision=canonical(self.directory,args['expectedHistoryRevision'],app_home=home(self.server))
         if metadata.get('session_id')!=self.identity:raise ValueError('Canonical source metadata identity is unavailable or different')
         selected=scope_rows(rows,args,fork=True)
         from .native.session_store import complete_tool_exchanges
@@ -330,7 +340,7 @@ class Lifecycle:
         finally:target_handle.release()
     def prepare_export(self,args):
         if type(args.get('minimal',False)) is not bool:raise ValueError('Export minimal flag must be a boolean')
-        rows,metadata,revision=canonical(self.directory,args['expectedHistoryRevision']);rows=scope_rows(rows,args)
+        rows,metadata,revision=canonical(self.directory,args['expectedHistoryRevision'],app_home=home(self.server));rows=scope_rows(rows,args)
         public=[];omissions=[];attachments=0
         for position,row in rows:
             updates,issues=history.content_updates(row,position);omissions.extend(issues)
@@ -343,7 +353,7 @@ class Lifecycle:
                 if block['type']=='text':texts.append(block['text'])
                 else:
                     attachments+=1;refs.append({'type':block['type'],**({'uri':block['uri']} if 'uri' in block else {}),'omittedPayload':True})
-            public.append({'id':message_id(row,position),'role':row['role'],'text':'\n'.join(texts),**({'attachments':refs} if refs else {}),**({} if args.get('minimal') else {'provenance':history.provenance(row)})})
+            public.append({'id':message_id(row,position,getattr(rows,'epoch',None)),'role':row['role'],'text':'\n'.join(texts),**({'attachments':refs} if refs else {}),**({} if args.get('minimal') else {'provenance':history.provenance(row)})})
         fmt=args.get('format','json')
         if fmt=='json':body=json.dumps({'sessionId':self.identity,'historyRevision':revision,'messages':public},ensure_ascii=False,indent=2).encode();mime='application/json';extension='json'
         elif fmt=='markdown':

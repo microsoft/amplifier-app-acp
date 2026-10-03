@@ -464,6 +464,8 @@ class Worker:
             from amplifier_acp.native.module_failures import ConfiguredModuleError
             if isinstance(exc, ConfiguredModuleError):
                 error.update(code="module_load_failed", moduleFailures=exc.failures)
+            from .history_revision import ContextClearError
+            if isinstance(exc, ContextClearError): error.update(exc.data)
             if type(exc).__name__ == "SessionBusyError":
                 error.update(code="session_busy", owner=getattr(exc, "owner", None))
             publish(error)
@@ -683,6 +685,8 @@ class Worker:
                 # waits for this lock, so also cancel after acquiring it.
                 if op in {'send', 'retry', 'resume', 'worker.message', 'worker.steer', 'worker.stop'} and self.memory_task and not self.memory_task.done():
                     self.memory_task.cancel()
+                from .history_revision import guard_context_clear
+                guard_context_clear(self.home, self.session.session_id)
                 await self.acquire_for_mutation()
                 token = self.bind_activation()
                 detached_cancel = memory_control or naming_control or op == "control" and (data.get("operation", "").startswith(("operations.", "kernels.")))
@@ -715,6 +719,8 @@ class Worker:
             reply = {"op": "reply", "id": data.get("id"),
                      "error": f"{type(exc).__name__}: {exc}"}
             from amplifier_acp.native.runtime import RuntimeStartupError
+            from .history_revision import ContextClearError
+            if isinstance(exc, ContextClearError): reply.update(exc.data)
             preparation_failed = isinstance(exc, RuntimeStartupError)
             if preparation_failed:
                 from amplifier_acp.native.worker_diagnostics import diagnostic_reference
@@ -908,7 +914,8 @@ class Worker:
             from .runtime_controls import ConfigurationConflict
             from .task_continuity import TaskRefusal
             from ..bundle_commands import BundlePreflightRefusal
-            detail=exc.configuration_conflict if isinstance(exc,ConfigurationConflict) else exc.data if isinstance(exc,(TaskRefusal,BundlePreflightRefusal)) else {}
+            from .history_revision import ContextClearError
+            detail=exc.configuration_conflict if isinstance(exc,ConfigurationConflict) else exc.data if isinstance(exc,(TaskRefusal,BundlePreflightRefusal,ContextClearError)) else {}
             publish({"op": "reply", "id": identity, "error": f"{type(exc).__name__}: {exc}",**detail})
 
     async def read(self):
