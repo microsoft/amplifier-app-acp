@@ -105,3 +105,39 @@ message/input ID. It never starts a worker. The revision must still match at
 edit admission. The resulting proof's `retainedThroughTurnId` is null for an empty
 prefix, otherwise the last retained canonical turn ID. Clients can capture this
 page before the edit and replace their displayed prefix only after commit proof.
+
+## Guarded readable recovery and configured bundle fork
+
+The optional `sessionLifecycle.recoveryCopy.version: 1` supports `fork` with
+`mode: "recovery"`. It creates an independent root with readable public history
+and labeled tool-result references, removing prior native tool calls, image and
+private-provider payloads, and system/developer instructions. Source history,
+events, safety-stop evidence and unknown delivery receipts are unchanged. The
+copy does not start a worker, deliver an input or grant old operational authority.
+A new explicit input is required to continue. Corrupt or incomplete canonical
+history and pending native rewrites refuse; this is not a repair operation.
+
+`bundleFork.version: 1` accepts only a key from trusted launcher `forkBundles`
+(`{publicId: configuredRootReference}`). `inspect.forkBundles` returns bounded
+`{id,name,revision}` choices. A fork selecting `bundle` must supply the exact
+`bundleRevision`; old module plans/toggles are discarded, instructions rebuild
+from the selected root at the next explicit execution. The model pin is retained
+unless `resetModel: true`. This does not copy tasks, goals, approvals or jobs and
+does not assert that an unmounted bundle/provider graph is ready to execute.
+
+`descendantGuard.version: 1` accepts up to 100 selected catalog facts in
+`descendants: [{sessionId,cwd,parentSessionId}]`. The native adapter verifies actual
+metadata identity and parent links, includes its persisted worker relationships,
+and holds Foundation writer ownership for the known family through the copy.
+An independently owned historical child or grandchild refuses even when saved
+metadata says idle. Child transcripts/events are not read. Missing identity,
+cycles, conflicting parents or limits refuse before effect. The caller must supply
+complete, fresh bounded indexed facts; this does not establish that undiscovered
+or noncooperating external writers are absent. Host admission locks and native
+ownership are both required; an index snapshot alone is never an idle proof.
+
+`inspect.failure` is optional bounded recorded native failure guidance, with
+`current`, category, summary, guidance, native generation/input identity and time.
+It contains no arbitrary provider exception payload. Starting a newer generation
+marks an older failure non-current; it is retained as evidence. Older sources
+without a recorded descriptor report no inferred diagnosis.
