@@ -36,9 +36,10 @@ async def query(request):
                  base_path=bundle.base_path,source_base_paths=bundle.source_base_paths)
     snapshot=is_snapshot(bundle)
     source_resolver=prepare_source_resolver(probe,config,snapshot,getattr(bundle,'_host_components',None))
-    await probe.prepare(strict=True,install_deps=os.environ.get('AMPLIFIER_RUNTIME_IMMUTABLE')!='1',
+    prepared=await probe.prepare(strict=True,install_deps=os.environ.get('AMPLIFIER_RUNTIME_IMMUTABLE')!='1',
         cache_dir=config.registry_home/'cache',
         source_resolver=source_resolver)
+    source_resolver.restore_declarations(prepared)
     rows=[]
     for row in providers:
         if row.get('enabled') is False:continue

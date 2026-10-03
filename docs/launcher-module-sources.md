@@ -29,7 +29,15 @@ An exact module override takes precedence in Foundation's public `source_resolve
 for normal roots, snapshots, preparation and remounts. Explicit overrides are also
 materialized into in-memory source-less declarations before preparation, because
 Foundation invokes this resolver only for declarations containing a source. The
-on-disk declaration stays unchanged. The same choice reaches
+on-disk declaration stays unchanged. After activation, only the source fields
+inserted by this preparation are restored to their exact prior presence/value in
+the Bundle and prepared mount plan, before Core/configurator state is created.
+The resolver retains the actual selected module path. Thus effective configuration,
+configuration clones and history forks cannot turn the temporary launcher source
+into a user-owned source declaration. Explicit source fields (including intentional
+configuration edits) are preserved. Removing the launcher map for a fresh lifetime
+restores the original source-selection policy. Existing explicitly saved source
+paths are not inferred to be disposable overrides or rewritten retroactively. The same choice reaches
 the prepared resolver for lazily resolved child modules; no repository-wide or
 sibling-module override is inferred. Foundation's cache key resolves the actual
 selected source; we do not bind a different commit beneath a claimed `@main`
@@ -79,3 +87,9 @@ The effective-source regression checks cover both models and the schema metadata
 shortcut, changes during discovery, mounted/admin key equality, unchanged default
 policy, and declared/source-less providers in actual fresh Core/Foundation workers
 and isolated defaults probes. These checks do not use authentication or inference.
+
+The persistence regression captures real effective configuration, creates a
+separate-process configuration clone, removes the operator override, and resumes
+both identities in fresh actual Core/Foundation workers. They return to installed
+provider source selection; no candidate path appears in the cloned declaration.
+No prompt, model request, authentication or network is involved.

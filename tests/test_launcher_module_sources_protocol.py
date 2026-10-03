@@ -1,5 +1,5 @@
 """Actual fresh ACP/Core/Foundation selected-source proof, no provider requests."""
-import importlib.util,json,os,shutil,sys
+import importlib.util,json,os,shutil,sys,uuid
 from pathlib import Path
 import pytest
 from client import Client
@@ -38,6 +38,7 @@ runpy.run_module('amplifier_acp.native.runtime_worker',run_name='__main__')
 ''')
     values['workerCommand']=[sys.executable,str(guard)]
     sid=None
+    clone_id=None
     paths=[]
     for n in range(2):
         selected=tmp_path/('sealed-source-'+str(n));selected.mkdir()
@@ -70,5 +71,45 @@ runpy.run_module('amplifier_acp.native.runtime_worker',run_name='__main__')
             assert Path(fixture['implementations'][0]['loadedFrom']).is_relative_to(Path(__file__).parent/'fixtures/provider')
             assert not audit.exists() and not (tmp_path/'absent-tokens.json').exists()
             assert settings.read_bytes()==original_settings and bundle.read_bytes()==original_bundle
+            if not declared_source:
+                inspected_plan=await client.request('_amplifier/native',{'sessionId':sid,'operation':'configuration.inspect','args':{}})
+                declared=next(row for row in inspected_plan['result']['plan']['providers'] if row['module']=='provider-openai-chatgpt')
+                assert 'source' not in declared,declared
+                captured=await client.request('_amplifier/native',{'sessionId':sid,'operation':'configuration.snapshot','args':{}})
+                assert 'result' in captured,captured
+                snapshot=captured['result']
+                effective=tmp_path/'app/sessions'/sid/'effective-configuration.json'
+                original_plan=json.loads(effective.read_text())
+                assert 'source' not in next(row for row in original_plan['providers'] if row['module']=='provider-openai-chatgpt')
+                if n==1:
+                    clone_id=str(uuid.uuid4());clone=await Client.launch(config)
+                    try:
+                        await clone.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
+                        made=await clone.request('_amplifier/session/new',{'sessionId':clone_id,'cwd':str(cwd),'source':snapshot,'mcpServers':[],'commandId':'source-less-clone'})
+                        assert 'result' in made,made
+                        clone_plan=json.loads((tmp_path/'app/sessions'/clone_id/'configuration.json').read_text())
+                        assert 'source' not in next(row for row in clone_plan['providers'] if row['module']=='provider-openai-chatgpt')
+                    finally:await clone.close()
         finally:await client.close()
     assert paths[0]!=paths[1] # no prepared/resolver/cache alias to prior selected code
+    if not declared_source:
+        # Removing an operator override must recover ordinary installed source
+        # selection for both the original and the independently cloned session.
+        values.pop('moduleSources');config.write_text(json.dumps(values))
+        installed_root=Path(importlib.util.find_spec('amplifier_module_provider_openai_chatgpt').origin).parent
+        for identity in (sid,clone_id):
+            resumed=await Client.launch(config)
+            try:
+                await resumed.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
+                response=await resumed.request('session/resume',{'sessionId':identity,'cwd':str(cwd),'mcpServers':[]})
+                assert 'result' in response,response
+                providers=await resumed.request('_amplifier/native',{'sessionId':identity,'operation':'configuration.providers','args':{}})
+                assert 'result' in providers,providers
+                actual=await resumed.request('_amplifier/runtime',{'sessionId':identity,'cwd':str(cwd),'surface':'mounted','refresh':True,'limit':100})
+                assert 'result' in actual,actual
+                assert actual['result']['moduleSourceOverrides']['configuredOverrides']==0
+                row=next(row for row in actual['result']['items'] if row['kind']=='providers' and row['id']=='unavailable-chatgpt')
+                assert Path(row['implementations'][0]['loadedFrom']).is_relative_to(installed_root),row
+                assert not audit.exists() and not (tmp_path/'absent-tokens.json').exists()
+                assert settings.read_bytes()==original_settings and bundle.read_bytes()==original_bundle
+            finally:await resumed.close()

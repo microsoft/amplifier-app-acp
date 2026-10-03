@@ -105,4 +105,25 @@ def test_missing_sources_materialize_only_explicit_overrides_before_prepare():
     assert next(row for row in rows if row['module']=='provider-unlisted')=={'module':'provider-unlisted'}
     assert next(row for row in rows if row['module']=='tool-unlisted')['source']=='kept'
     assert resolve('provider-test','/candidate/provider')=='/candidate/provider'
-    assert list(config.source_resolutions.values())==[{'module':'provider-test','originalSource':None,'effectiveSource':'/candidate/provider','authority':'trusted-launcher','override':True}]
+    assert list(config.source_resolutions.values())==[{'module':module,'originalSource':None,'effectiveSource':source,'authority':'trusted-launcher','override':True} for module,source in config.launcher_module_sources.items()]
+
+
+def test_preparation_restores_only_inserted_sources_and_preserves_explicit_edits():
+    import copy
+    from amplifier_foundation import Bundle
+    from amplifier_acp.native.host.session import prepare_source_resolver
+    config=SimpleNamespace(module_sources={},launcher_module_sources={'provider-test':'/candidate/provider'},source_resolutions={},source_resolution_truncated=False)
+    bundle=Bundle.from_dict({'bundle':{'name':'source-authority'},'providers':[
+        {'module':'provider-test','id':'absent'},
+        {'module':'provider-test','id':'null','source':None},
+        {'module':'provider-test','id':'explicit-same','source':'/candidate/provider'},
+        {'module':'provider-test','id':'explicit-other','source':'git+https://example.invalid/provider@main'}],
+        'agents':{'child':{'providers':[{'module':'provider-test'}]}}})
+    original=copy.deepcopy(bundle.to_mount_plan())
+    resolver=prepare_source_resolver(bundle,config,True,HostComponents())
+    prepared=SimpleNamespace(mount_plan=bundle.to_mount_plan())
+    resolver.restore_declarations(prepared)
+    assert prepared.mount_plan==original and bundle.to_mount_plan()==original
+    assert resolver('provider-test',None)=='/candidate/provider'
+    origins={row['originalSource'] for row in config.source_resolutions.values()}
+    assert origins=={None,'/candidate/provider','git+https://example.invalid/provider@main'}

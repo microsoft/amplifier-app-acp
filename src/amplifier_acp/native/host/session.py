@@ -526,30 +526,73 @@ def module_source(config, snapshot, module, source, components=None):
     return original
 
 
-def prepare_source_resolver(bundle, config, snapshot, components=None):
-    """Expose explicit overrides to Foundation even for source-less declarations.
-
-    Foundation calls source_resolver only for rows with source. Keep the original
-    selection for provenance and leave unlisted declarations unchanged.
-    """
-    overrides = getattr(config, 'launcher_module_sources', {})
-    missing = set()
-    if overrides:
-        from .components import declarations
+class PreparationSourceResolver:
+    """Activate launcher sources without promoting them into saved declarations."""
+    def __init__(self, bundle, config, snapshot, components=None):
+        self.bundle, self.config, self.snapshot, self.components = bundle, config, snapshot, components
+        self.overrides = getattr(config, 'launcher_module_sources', {})
+        self.originals = []
+        self.missing = set()
+        if not self.overrides:
+            return
         plan = bundle.to_mount_plan()
-        for row in declarations(plan):
+        def declarations(node, path=()):
+            for section in ('providers', 'tools', 'hooks'):
+                for index, row in enumerate(node.get(section, [])):
+                    yield (*path, section, index), row
+            for key, row in node.get('session', {}).items():
+                if isinstance(row, dict) and 'module' in row:
+                    yield (*path, 'session', key), row
+            for index, row in enumerate(node.get('spawn', {}).get('tools', [])):
+                yield (*path, 'spawn', 'tools', index), row
+            for key, agent in node.get('agents', {}).items():
+                if isinstance(agent, dict):
+                    yield from declarations(agent, (*path, 'agents', key))
+        for path, row in declarations(plan):
             module = row['module']
-            if module in overrides and not row.get('source'):
-                missing.add(module)
-                row['source'] = overrides[module]
-        if missing:
-            for key in ('providers', 'tools', 'hooks', 'session', 'spawn', 'agents'):
-                if key in plan:
-                    setattr(bundle, key, plan[key])
-    def resolve(module, source):
-        original = None if module in missing and source == overrides[module] else source
-        return module_source(config, snapshot, module, original, components)
-    return resolve
+            if module in self.overrides:
+                # Preserve all original declarations, including another instance
+                # of this module whose explicit source equals the override.
+                module_source(config, snapshot, module, row.get('source'), components)
+            if module in self.overrides and not row.get('source'):
+                self.originals.append((path, module, 'source' in row, row.get('source')))
+                self.missing.add(module)
+                row['source'] = self.overrides[module]
+        if self.originals:
+            self._replace_bundle_plan(plan)
+
+    def _replace_bundle_plan(self, plan):
+        for key in ('providers', 'tools', 'hooks', 'session', 'spawn', 'agents'):
+            if key in plan:
+                setattr(self.bundle, key, plan[key])
+
+    def __call__(self, module, source):
+        original = None if module in self.missing and source == self.overrides[module] else source
+        return module_source(self.config, self.snapshot, module, original, self.components)
+
+    def restore_declarations(self, prepared=None):
+        # Foundation activation/resolver paths keep their actual selected source.
+        # Only source fields inserted here are removed/restored before creating
+        # Core/configurator state that can be persisted, exported, cloned or forked.
+        if not self.originals:
+            return
+        plan = self.bundle.to_mount_plan()
+        for target in (plan, *([prepared.mount_plan] if prepared is not None else [])):
+            for path, module, present, original in self.originals:
+                row = target
+                for key in path:
+                    row = row[key]
+                if row.get('module') != module or row.get('source') != self.overrides[module]:
+                    raise RuntimeError('Prepared module declarations changed during source activation.')
+                if present:
+                    row['source'] = original
+                else:
+                    row.pop('source', None)
+        self._replace_bundle_plan(plan)
+
+
+def prepare_source_resolver(bundle, config, snapshot, components=None):
+    return PreparationSourceResolver(bundle, config, snapshot, components)
 
 
 async def load_configured_bundle(registry, config, reference):
@@ -746,6 +789,7 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
         cache_dir=config.registry_home / "cache",
         source_resolver=source_resolver,
         progress_callback=progress)
+    source_resolver.restore_declarations(prepared)
     if getattr(prepared, "resolver", None) is not None:
         prepared.resolver = ComponentResolver(prepared.resolver, components, config.launcher_module_sources)
     await materialize_bundle_providers(loaded, prepared)
@@ -936,8 +980,10 @@ async def prepare_dependencies(workspace, *, bundle=None, install_overrides=None
     from .config import configure_skill_cache
     configure_skill_cache(loaded, config.registry_home)
     source_resolver = prepare_source_resolver(loaded, config, snapshot, components)
-    return await loaded.prepare(strict=True, refresh_dependencies=True,
+    prepared = await loaded.prepare(strict=True, refresh_dependencies=True,
         **({"dependency_batch": dependency_batch} if dependency_batch is not None else {}),
         **({'install_overrides': Path(install_overrides)} if install_overrides is not None else {}),
         cache_dir=config.registry_home / 'cache',
         source_resolver=source_resolver)
+    source_resolver.restore_declarations(prepared)
+    return prepared
