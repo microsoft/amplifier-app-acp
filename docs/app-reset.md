@@ -30,6 +30,21 @@ unknown writes remain unknown and cannot be replayed or followed by a new reset.
 Undo restores exact original bytes only after a fresh review and full-file CAS.
 External noncooperating filesystem writes cannot be frozen by advisory locks.
 
+Review preparation and prepared-review inspection take shared native-home
+admission and the same exclusive per-settings-file lock used by Foundation's
+settings writer. They can coexist with unrelated passive metadata reads; they
+cannot read across a cooperating settings mutation. They write only private
+review/revision records, not app settings. Preparation still requires its exact
+recovery admin lease. Apply and restore retain exclusive native-home admission
+and recheck the review against current settings under the file lock.
+
+File-lock acquisition contention returns structured
+`{reason:'native-app-reset-settings-busy',executed:false,replayed:false}` before
+effects. This classification applies only to acquisition, not errors after work
+begins. An admitted command refused for contention retains that exact refused
+receipt; its identity is not automatically retried when the lock becomes free.
+Exact command receipt inspection remains available without taking either lock.
+
 No global credential-reset authority is added. The product recovery owner must
 still authenticate explicit account-level reset and retain its all-owner hold
 until exact owner receipts prove conclusive completion. This operation does not

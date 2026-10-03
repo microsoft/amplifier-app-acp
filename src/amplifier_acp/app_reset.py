@@ -1,7 +1,7 @@
 """Reviewed app-local bundle default reset. Shared settings and auth are never touched."""
 from __future__ import annotations
 import base64,hashlib,json,os,time,uuid
-from filelock import FileLock
+from filelock import FileLock,Timeout
 from .maintenance_gate import Gate,checked
 from .session_lifecycle import regular
 
@@ -15,8 +15,8 @@ FIELDS={
  'maintenance.appReset.inspect':{'commandId','preparedId','reviewHash'},
 }
 
-def refused(message):
-    error=ValueError(message);error.data={'executed':False,'reason':'native-app-reset-refused','replayed':False};raise error
+def refused(message,reason='native-app-reset-refused'):
+    error=ValueError(message);error.data={'executed':False,'reason':reason,'replayed':False};raise error
 
 def digest(value):return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':')).encode()).hexdigest()
 
@@ -121,8 +121,21 @@ class AppReset:
             from .private_store_snapshot import require_admin
             try:require_admin(self.owner)
             except ValueError:refused('App reset requires the exact held recovery administration lease')
+        # Reviews read this one settings file and change only owner-private
+        # review metadata. The exact Foundation file lock serializes that read
+        # with settings writers; unrelated passive metadata can retain its shared
+        # home gate. Apply/restore still exclude every participating home writer.
         # Join real file work inside Maintenance.run. Never borrow a stale lease.
-        with Gate(self.owner.config,exclusive=True),FileLock(str(self.path)+'.lock',timeout=0):
-            if operation.endswith('.inspect'):return self.inspect(workspace,args)
-            if operation.endswith('.prepare'):return self.prepare(workspace,args)
-            return self.mutate(workspace,args,operation.endswith('.restore'))
+        review=operation.endswith(('.inspect','.prepare'))
+        with Gate(self.owner.config,exclusive=not review):
+            lock=FileLock(str(self.path)+'.lock',timeout=0)
+            try:lock.acquire()
+            except Timeout:
+                # Only acquisition failed, before any review/reset effect. Do
+                # not turn a timeout raised by admitted work into no-effect proof.
+                refused('App settings are busy; no reset work was started or replayed.','native-app-reset-settings-busy')
+            try:
+                if operation.endswith('.inspect'):return self.inspect(workspace,args)
+                if operation.endswith('.prepare'):return self.prepare(workspace,args)
+                return self.mutate(workspace,args,operation.endswith('.restore'))
+            finally:lock.release()

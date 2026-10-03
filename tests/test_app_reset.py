@@ -1,6 +1,7 @@
 import asyncio,json,sqlite3,os
 from pathlib import Path
 import pytest
+from filelock import Timeout
 from client import Client
 
 CONTEXT={'fenceId':'app-reset-fence','commandId':'app-reset-hold','purpose':'recovery','instanceId':'test-instance','dataScope':'private-test'}
@@ -63,7 +64,8 @@ async def test_stale_review_expiry_changed_undo_and_cross_process_exact_receipts
     finally:await restarted.close()
 
 @pytest.mark.asyncio
-async def test_expired_review_and_unknown_after_file_commit_never_replay(tmp_path,monkeypatch):
+@pytest.mark.parametrize('lost_error',[OSError,Timeout])
+async def test_expired_review_and_unknown_after_file_commit_never_replay(tmp_path,monkeypatch,lost_error):
     from amplifier_acp.admin import Administration
     from amplifier_acp.app_reset import digest
     # Real owner and OS gates, with a bounded injected disk-acknowledgement fault.
@@ -81,10 +83,10 @@ async def test_expired_review_and_unknown_after_file_commit_never_replay(tmp_pat
         review=await request('prepare',{'commandId':'fresh','parts':['native.app-bundle-default'],'privateContentReviewed':True})
         from amplifier_acp.native import shared_settings
         original=shared_settings.atomic_write
-        def lost(*args,**kwargs):original(*args,**kwargs);raise OSError('fixture acknowledgement loss after file replacement')
+        def lost(*args,**kwargs):original(*args,**kwargs);raise lost_error('fixture acknowledgement loss after file replacement')
         monkeypatch.setattr(shared_settings,'atomic_write',lost)
         args={'commandId':'uncertain','preparedId':review['preparedId'],'reviewHash':review['reviewHash']}
-        with pytest.raises(OSError):await request('apply',args)
+        with pytest.raises(lost_error):await request('apply',args)
         current=path.read_bytes();assert b'active' not in current
         inspected=await request('inspect',{'commandId':'uncertain'});assert inspected['receipt']['state']=='unknown'
         same=await request('apply',args);assert same['receipt']['state']=='unknown' and path.read_bytes()==current
