@@ -102,7 +102,10 @@ class Lifecycle:
     def __init__(self,server,identity,cwd):
         self.server=server;self.identity=identity
         path=Path(cwd)
-        if not path.is_absolute() or not path.is_dir():raise ValueError('Existing absolute history workspace required')
+        if not path.is_absolute():raise ValueError('Absolute history workspace required')
+        if not path.is_dir():
+            from .managed_session import history_scope
+            if not history_scope(str(path),identity,server.config):raise ValueError('Existing absolute history workspace required')
         self.cwd=str(path.resolve());self.directory=server.directory(self.cwd,identity)
         self.app=location(home(server),identity)
         if not self.directory.is_dir():raise ValueError('Native session does not exist in this history workspace')
@@ -131,18 +134,35 @@ class Lifecycle:
     def own(self):
         from amplifier_foundation.session.shared_state import SharedSessionStore,SessionBusyError
         from .lifecycle_family import OwnershipBusy
-        try:handle=SharedSessionStore(self.cwd,self.identity).acquire(app='amplifier-acp-lifecycle',pid=os.getpid())
+        store=SharedSessionStore(self.cwd,self.identity) if not (self.app/'managed-files-fence.json').exists() else self.historical_store(self.identity,self.cwd)
+        try:handle=store.acquire(app='amplifier-acp-lifecycle',pid=os.getpid())
         except SessionBusyError:raise OwnershipBusy() from None
         try:yield handle
         finally:handle.release()
+    def historical_store(self,identity,cwd):
+        from .managed_disposal import historical_store
+        return historical_store(self.server.config,identity,cwd,source_identity=self.identity)
+    def inspected_location(self):
+        pending=self.app/'managed-files-fence.json'
+        if pending.exists():
+            from .managed_session import history_scope
+            if not history_scope(self.cwd,self.identity,self.server.config):raise ValueError('Managed historical authority is unavailable')
+            location=record(self.app/'execution-location.json')
+            if location.get('sessionId')!=self.identity or location.get('historyCwd')!=self.cwd:raise ValueError('Managed historical location differs')
+            return {**location,'blocked':False,'executionAvailable':False,'managedFiles':record(pending)['state']}
+        return state(self.server,self.identity,self.cwd)
     def inspect(self):
         from .lifecycle_failure import read as failure
         result=history.inspect(self.directory);metadata=record(self.directory/'metadata.json')
         fields=('session_id','parent_id','name','name_source','description','created','created_at','updated_at','bundle','bundle_name','status','turn_count','fork','recovery')
         selected={key:metadata[key] for key in fields if key in metadata}
         if len(json.dumps(selected).encode())>32768:raise ValueError('Native metadata inspection exceeds its bound')
-        return {'sessionId':self.identity,'historyRevision':result['revision'],'metadata':selected,'diagnostics':result['diagnostics'],'location':state(self.server,self.identity,self.cwd),'state':lifecycle_state(self.server,self.identity,self.cwd),'preserved':PRESERVED,'failure':failure(self.server,self.identity),'forkBundles':[{'id':key,'name':key,'revision':fingerprint([key,value])} for key,value in self.fork_bundles().items()]}
+        return {'sessionId':self.identity,'historyRevision':result['revision'],'metadata':selected,'diagnostics':result['diagnostics'],'location':self.inspected_location(),'state':lifecycle_state(self.server,self.identity,self.cwd),'preserved':PRESERVED,'failure':failure(self.server,self.identity),'forkBundles':[{'id':key,'name':key,'revision':fingerprint([key,value])} for key,value in self.fork_bundles().items()]}
     def perform(self,operation,args):
+        if operation.startswith('managedFiles.'):
+            from .managed_disposal import perform
+            return perform(self,operation,args)
+        if operation=='restore' and (self.app/'managed-files-fence.json').exists():raise ValueError('Removed managed files cannot be restored by changing discovery; create an independent recovery copy')
         if operation.startswith('legacyCopy.'):
             from .retired_copy import perform
             return perform(self,operation,args)

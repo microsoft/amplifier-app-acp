@@ -27,7 +27,8 @@ def own_descendants(owner,hints,check=None):
     def add(value):
         if not isinstance(value,dict) or set(value)!={'sessionId','cwd','parentSessionId'}:raise ValueError('Exact native descendant identity required')
         sid=validate_id(value['sessionId']);parent=validate_id(value['parentSessionId']);cwd=Path(value['cwd'])
-        if not cwd.is_absolute() or not cwd.is_dir() or str(cwd.resolve())!=str(cwd):raise ValueError('Canonical existing descendant history workspace required')
+        if not cwd.is_absolute() or str(cwd.resolve())!=str(cwd):raise ValueError('Canonical descendant history workspace required')
+        if not cwd.is_dir():owner.historical_store(sid,str(cwd))
         checked={'sessionId':sid,'cwd':str(cwd),'parentSessionId':parent}
         if sid in known and known[sid]!=checked:raise ValueError('Conflicting or cyclic selected family identity')
         known[sid]=checked
@@ -41,7 +42,8 @@ def own_descendants(owner,hints,check=None):
             for sid in ready:
                 row=known[sid]
                 if sid!=owner.identity:
-                    try:handle=SharedSessionStore(row['cwd'],sid).acquire(app='amplifier-acp-lifecycle-family')
+                    store=SharedSessionStore(row['cwd'],sid) if Path(row['cwd']).is_dir() else owner.historical_store(sid,row['cwd'])
+                    try:handle=store.acquire(app='amplifier-acp-lifecycle-family')
                     except SessionBusyError:raise OwnershipBusy(descendant=True) from None
                     leases.callback(handle.release)
                     metadata=record(owner.server.directory(row['cwd'],sid)/'metadata.json')

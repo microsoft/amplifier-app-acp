@@ -86,7 +86,10 @@ async def revise(worker,args,publish):
 def before(server,params):
     from . import history
     cwd=params.get('cwd','');identity=params.get('sessionId')
-    if not Path(cwd).is_absolute() or not Path(cwd).is_dir():raise ValueError('Exact native history workspace required')
+    if not Path(cwd).is_absolute():raise ValueError('Exact native history workspace required')
+    if not Path(cwd).is_dir():
+        from .managed_session import history_scope
+        if not history_scope(cwd,identity,server.config):raise ValueError('Exact native history workspace required')
     directory=server.directory(cwd,identity)
     rows,_,revision=canonical(directory,params.get('expectedRevision'))
     target=bound(rows,params.get('beforeTurnId'),user=True);offset=rows[target][0]

@@ -32,7 +32,10 @@
         "legacyCopy.inventory",
         "legacyCopy.preview",
         "legacyCopy.purge",
-        "legacyCopy.receipt"
+        "legacyCopy.receipt",
+        "managedFiles.preview",
+        "managedFiles.dispose",
+        "managedFiles.receipt"
       ]
     },
     "args": {

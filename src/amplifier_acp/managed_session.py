@@ -54,12 +54,20 @@ def proof_path(identity,config=None):return checked(app_home(config)/'sessions'/
 def proof(identity,cwd,config=None):
     path=proof_path(identity,config)
     if not path.exists():return None
+    if path.with_name('managed-files-fence.json').exists():raise Refused('Managed files disposal is fenced; historical reads never permit runtime reactivation')
     value=read(path)
     if value.get('status')!='completed':raise Refused('Managed creation is unresolved; inspect its original receipt, never replay')
     selected=marker(cwd,identity,config)
     if value.get('directoryIdentity')!=directory_identity(cwd):raise Refused('Managed allocation directory identity changed')
     if value.get('marker')!=selected or value.get('request',{}).get('cwd')!=str(cwd) or value.get('result',{}).get('location')!=location(selected):raise Refused('Managed creation differs from its native authoritative record')
     return value
+
+def history_scope(cwd,identity,config):
+    path=proof_path(identity,config)
+    if path.with_name('managed-files-fence.json').exists():
+        from .managed_disposal import historical_proof
+        return historical_proof(config,identity,str(cwd))
+    return runtime_scope(cwd,identity,config)
 
 def runtime_scope(cwd,identity=None,config=None):
     cwd=Path(cwd).resolve()
@@ -103,7 +111,7 @@ def selection(value):
 
 def copy_target(server,source_id,source_cwd,target_id,value):
     """A copied managed session always needs a new independently owned allocation."""
-    source=runtime_scope(source_cwd,source_id,server.config)
+    source=history_scope(source_cwd,source_id,server.config)
     if not source:
         if value is not None:raise Refused('Managed targets are reserved for a proved managed source')
         return None
