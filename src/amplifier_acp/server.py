@@ -27,6 +27,8 @@ class Session:
         self.streamed=False; self.had_deltas=False; self.last_model_id=None; self.awaiting_children=False; self.tools=set(); self.lock=asyncio.Lock();self.report={}
         from .steering import Receipts
         from .relocation import home
+        from .coordination import Store
+        self.coordination=Store(home(server),identity);self.coordination_lock=asyncio.Lock()
         self.steering=Receipts(home(server),identity);self.steering_lock=asyncio.Lock();self.generation_id=None
         self.config_options=[];self.mcp_servers=[];self.idle_task=None;self.start_lock=asyncio.Lock();self.config_cancel=None;self.config_applying=False;self.retiring=False;self.retired=False;self.active_requests=0;self.worker_retirement_pending=None
 
@@ -65,6 +67,7 @@ class Session:
         if self.worker and (self.worker.closed or self.cancelled):await self.worker.close()
         if self.worker and self.worker.process.returncode is None:return
         config={**self.server.config,'executionDirectory':self.execution_directory,**({'cloneBundle':self.bundle_override} if self.bundle_override else {})}
+        self.coordination.lost()
         self.worker=NativeWorker(self.identity,self.cwd,config,self.observe,self.bridge)
         self.report=await self.worker.start(self.server.host_info if HOST in self.server.extensions else None,self.mcp_servers)
         self.cancelled=False
@@ -119,6 +122,8 @@ class Session:
 
     async def observe(self,row):
         kind=row.get('type')
+        if self.coordination.observe(row) and NATIVE in self.server.extensions:
+            await self.server.notify('_amplifier/event',{'sessionId':self.identity,'event':{'type':'workers.changed'}})
         root=row.get('sessionId') or row.get('session_id') or self.identity
         is_root=root==self.identity
         if is_root and kind=='generation.started':
@@ -286,6 +291,9 @@ class Session:
             command_id=command.get('commandId') if NATIVE in self.server.extensions else None
             if command_id is not None and (not isinstance(command_id,str) or not command_id or len(command_id)>128):
                 raise RpcError(-32602,'commandId must contain 1 to 128 characters.')
+            provenance=(meta or {}).get('amplifier.dev/input') if NATIVE in self.server.extensions else None
+            if provenance is not None and (not isinstance(provenance,dict) or set(provenance)!={'inputOrigin'} or provenance.get('inputOrigin')!='coordination'):
+                raise RpcError(-32602,'Prompt provenance supports only the negotiated coordination origin marker; it grants no human authority.')
             self.input_id=command_id or str(uuid.uuid4())
             if command_id:
                 previous=await self.worker.command('delivery',input_id=command_id)
@@ -294,7 +302,7 @@ class Session:
             self.cancelled=False;self.streamed=False;self.had_deltas=False;self.last_model_id=None;self.awaiting_children=False
             self.prompt=asyncio.get_running_loop().create_future()
             try:
-                await self.worker.command('send',text=value,input_id=self.input_id,attachments=attachments)
+                await self.worker.command('send',text=value,input_id=self.input_id,attachments=attachments,**({'input_provenance':provenance} if provenance is not None else {}))
                 return await self.prompt
             finally:
                 if self.prompt and not self.prompt.done():self.prompt.cancel()
@@ -458,7 +466,7 @@ class Server:
             return {'protocolVersion':1,'agentInfo':{'name':'amplifier-acp','title':'Amplifier','version':__version__},
                 'agentCapabilities':{'loadSession':True,'sessionCapabilities':{'resume':{},'close':{},'delete':{}},
                     'promptCapabilities':{'image':True,'audio':False,'embeddedContext':True},
-                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True,'passiveInspect':True},'scheduledTurns':{'version':1,'completion':'settled'},'questionTurns':{'version':1,'completion':'settled','active':False},'observationTurns':{'version':1,'completion':'settled','active':False},'configurationClone':{'version':1},'taskState':{'version':1,'passive':True},'historyEdits':{'version':1,'completion':'settled','active':False},'sessionLifecycle':{'version':1,'passive':True,'deletion':'preserve-history'},'activeSteering':{'version':1,'mode':'request_boundary','cancellable':False,'runtimeNegotiated':True},'lifecycle':{'version':1,'gracefulRetire':True},'relocation':{'version':1,'passiveInspection':True},**({'transfer':{'version':1,'passiveInspection':True}} if self.config.get('transferAuthorityDirectory') and self.config.get('transferWorkspaceRoots') else {}),**({'admin':{'version':1,**({'generations':{'version':1}} if self.config.get('adminGenerations') else {})}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
+                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True,'passiveInspect':True},'scheduledTurns':{'version':1,'completion':'settled'},'questionTurns':{'version':1,'completion':'settled','active':False},'observationTurns':{'version':1,'completion':'settled','active':False},'configurationClone':{'version':1},'taskState':{'version':1,'passive':True},'workers':{'version':1,'passiveInspection':True,'residentControls':True},'historyEdits':{'version':1,'completion':'settled','active':False},'sessionLifecycle':{'version':1,'passive':True,'deletion':'preserve-history'},'activeSteering':{'version':1,'mode':'request_boundary','cancellable':False,'runtimeNegotiated':True},'lifecycle':{'version':1,'gracefulRetire':True},'relocation':{'version':1,'passiveInspection':True},**({'transfer':{'version':1,'passiveInspection':True}} if self.config.get('transferAuthorityDirectory') and self.config.get('transferWorkspaceRoots') else {}),**({'admin':{'version':1,**({'generations':{'version':1}} if self.config.get('adminGenerations') else {})}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
         if not self.initialized:raise RpcError(-32600,'Initialize this connection first.')
         if method in {'_amplifier/relocation','_amplifier/relocation/reconcile'}:
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
@@ -521,6 +529,10 @@ class Server:
             from .steering import Receipts
             from .relocation import home
             return {'receipt':Receipts(home(self),params['sessionId']).read(params.get('inputId'))}
+        if method=='_amplifier/workers':
+            if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
+            from .coordination import inspect
+            return inspect(self,params)
         if method=='_amplifier/task/inspect':
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
             from .passive_task import inspect
@@ -616,6 +628,13 @@ class Server:
             if operation=='steer.submit':
                 from .steering import submit
                 return await submit(session,args)
+            if operation=='workers.inspect':
+                from .coordination import inspect
+                return inspect(self,{**args,'sessionId':identity,'cwd':session.cwd})
+            if operation in {'worker.followup','worker.interrupt'}:
+                from .coordination import submit
+                return await submit(session,operation,args)
+            if operation in {'worker.steer','worker.message','worker.stop'}:raise RpcError(-32601,'Use durable resident worker.followup or worker.interrupt; unanchored child steering is unavailable.')
             await session.start()
             if operation=='configuration.snapshot':
                 if session.lock.locked():raise RpcError(-32000,'Configuration snapshot requires an idle session.')
@@ -623,9 +642,7 @@ class Server:
                 return result
             if operation=='capabilities':
                 return {'version':1,'agentKind':'amplifier-core-foundation','report':session.report,'hostBridge':HOST in self.extensions,'hostCapabilities':self.host_info if HOST in self.extensions else {},
-                    'controls':NATIVE_CONTROLS,'workerOperations':['worker.steer','worker.message','worker.stop']}
-            if operation in {'worker.steer','worker.message','worker.stop'}:
-                return await session.worker.command(operation,**args)
+                    'controls':NATIVE_CONTROLS,'workerOperations':['worker.followup','worker.interrupt']}
             if operation not in NATIVE_CONTROLS:raise RpcError(-32601,'Unknown native operation.')
             if operation=='configuration.cancel':
                 if session.config_applying:raise RpcError(-32000,'Configuration changes are already applying.')

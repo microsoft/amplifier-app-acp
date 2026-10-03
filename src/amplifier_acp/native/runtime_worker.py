@@ -778,6 +778,12 @@ class Worker:
                 text = await prepare_input(self.session.coordinator, data['text'], data.get('reply_context'), max_chars=self.runtime.max_input_chars)
                 self.context_bindings[data['input_id']] = data.get('context_binding', {'clientId': None, 'targets': []})
                 self.context_bindings = dict(list(self.context_bindings.items())[-64:])
+                provenance = data.get('input_provenance')
+                if provenance is not None:
+                    if provenance != {'inputOrigin': 'coordination'}:
+                        raise ValueError('Unrecognized prompt provenance')
+                    from amplifier_acp.native.input_provenance import reserve
+                    reserve(self.input_provenance_path, data['input_id'], provenance)
                 input_id = await self.runtime.submit(Input(
                     "user", text, id=data["input_id"],
                     attachments=tuple(data.get("attachments", [])),
@@ -844,7 +850,9 @@ class Worker:
             elif op in {"worker.steer", "worker.stop", "worker.message"}:
                 children = self.session.coordinator.get_capability("live.children")
                 wid = data["worker_id"]
-                if children and wid in children.rows:
+                if data.get('expected_run_id') is not None and (not children or wid not in children.rows or children.rows[wid].get('runId')!=data['expected_run_id']):
+                    result={'accepted':False,'executed':False,'reason':'Original worker lifetime changed before admission'}
+                elif children and wid in children.rows:
                     result = await children.control(wid, "steer" if op == "worker.steer" else "message" if op == "worker.message" else "cancel", data.get("text", ""), input_id=data.get("input_id"))
                 elif op == "worker.stop":
                     from amplifier_module_loop_live.runtime import Input

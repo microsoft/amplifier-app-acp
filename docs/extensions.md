@@ -25,8 +25,9 @@ observations, memory, kernels, history editing and generic tool invocation.
 `server.NATIVE_CONTROLS` is the exact allowlist; unknown operations fail.
 
 Root steering uses the anchored `steer.submit` contract below; unanchored `steer`
-is refused. Worker controls use
-`{worker_id,text?,input_id?}`. No execution occurs merely to list these names;
+is refused. Worker controls now use the resident-only durable contracts in
+`docs/coordination.md`; legacy direct worker.message/worker.stop and unanchored
+child steering are refused. No execution occurs merely to list these names;
 calling the capability report mounts only the explicitly selected session.
 
 Optional `session/prompt._meta["amplifier.dev/command"]` contains

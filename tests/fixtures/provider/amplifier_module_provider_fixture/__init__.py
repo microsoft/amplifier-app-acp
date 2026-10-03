@@ -46,6 +46,9 @@ class FixtureProvider:
             context.add_message=paused_add
         prompt=next((m.content for m in reversed(request.messages) if m.role=='user'),'')
         if isinstance(prompt,list):prompt=' '.join(getattr(b,'text','') for b in prompt)
+        if self.config.get('coordinationFixture') and 'spawn-persistent' in str(prompt) and not getattr(self,'coordinationSpawned',False):
+            self.coordinationSpawned=True
+            return ChatResponse(content=[TextBlock(text='Starting persistent fixture worker.')],tool_calls=[ToolCall(id='delegate-fixture',name='delegate',arguments={'agent':'fixture-child','instruction':'child-initial','persistent':True})],finish_reason='tool_calls')
         if 'steering-late' in str(prompt):
             checkpoint=self.coordinator.get_capability('live.checkpoint')
             async def paused_checkpoint(*args,**kwargs):
@@ -74,3 +77,11 @@ async def mount(coordinator,config=None):
             await gate(config,'tool')
             return ToolResult(success=True,output={'released':True})
     if config and config.get('gateDirectory'):await coordinator.mount('tools',Wait(),name='fixture_wait')
+
+    if config and config.get('coordinationFixture'):
+        class Delegate:
+            name='delegate';description='Run the actual native child fixture';input_schema={'type':'object','properties':{'agent':{'type':'string'},'instruction':{'type':'string'}},'required':['agent','instruction']}
+            async def execute(self,args):
+                result=await coordinator.get_capability('live.children').spawn(args['agent'],args['instruction'],coordinator.get_capability('live.children').sessions[coordinator.session_id])
+                return ToolResult(success=True,output=result)
+        await coordinator.mount('tools',Delegate(),name='delegate')
