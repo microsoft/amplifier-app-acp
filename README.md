@@ -274,3 +274,14 @@ Native maintenance also supports [cold source inspection and reviewed derived
 cache clearing](docs/cache-maintenance.md). It never treats unknown use as
 permission to delete source directories; only exact, reconstructible bytecode in
 an owned cache can qualify for a fenced clear operation.
+
+### Reproducible optional portability installation
+
+`uv sync --frozen --extra portability --no-editable --no-dev` installs the
+standalone adapter plus the optional portability libraries. Until those libraries
+are available from the package registry, the development source declarations use
+`microsoft/amplifier-portability` main and Foundation's `libraries/worktrees` main.
+The lock records exact resolved Git commits for qualification and rollback; the
+source policy remains moving main. No editable sibling checkout is required.
+Refresh all Foundation distributions together when updating their shared Git
+source (`amplifier-foundation`, hooks-session-naming, and tool-delegate).

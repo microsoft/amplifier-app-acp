@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-portability = ["amplifier-portability>=0.1.0"]
+portability = ["amplifier-portability>=0.1.0", "amplifier-worktrees>=0.1.0"]
 
 [project.scripts]
 amplifier-acp = "amplifier_acp.server:main"
@@ -30,6 +30,8 @@ amplifier-acp = "amplifier_acp.server:main"
 no-build-package = ["amplifier-core"]
 
 [tool.uv.sources]
+amplifier-portability = { git = "https://github.com/microsoft/amplifier-portability", rev = "main" }
+amplifier-worktrees = { git = "https://github.com/microsoft/amplifier-foundation", rev = "main", subdirectory = "libraries/worktrees" }
 amplifier-foundation = { git = "https://github.com/microsoft/amplifier-foundation", rev = "main" }
 amplifier-module-loop-live = { git = "https://github.com/microsoft/amplifier-module-loop-live", rev = "main" }
 amplifier-module-hooks-session-naming = { git = "https://github.com/microsoft/amplifier-foundation", rev = "main", subdirectory = "modules/hooks-session-naming" }
