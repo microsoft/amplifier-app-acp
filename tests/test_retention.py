@@ -43,3 +43,17 @@ async def test_retention_refuses_unknown_canonical_journal_and_live_native_owner
     (owner.app/'history-edit-pending.json').write_text('{}')
     with pytest.raises(ValueError,match='unresolved'):owner.perform('retention.hide',{**args,'commandId':'unknown-edit'})
     assert owner.saved('unknown-edit') is None
+
+@pytest.mark.asyncio
+async def test_recent_child_and_exact_unknown_steering_block_parent_cleanup(tmp_path):
+    client,sid,cwd,config=await prepared(tmp_path);await prompt(client,sid,'root history','one');await client.close()
+    server=Server(json.loads(config.read_text()),None);owner=Lifecycle(server,sid,str(cwd));cutoff=time.time()-86400;age(owner,cutoff-86400)
+    child=str(uuid.uuid4());directory=server.directory(str(cwd),child);directory.mkdir();(directory/'metadata.json').write_text(json.dumps({'session_id':child,'parent_id':sid}));(directory/'transcript.jsonl').write_text('child body must not be read\n')
+    args={'commandId':'parent-hide','expectedHistoryRevision':owner.inspect()['historyRevision'],'modifiedBefore':cutoff,'descendants':[{'sessionId':child,'cwd':str(cwd),'parentSessionId':sid}]}
+    with pytest.raises(ValueError,match='newer'):owner.perform('retention.hide',args)
+    assert owner.saved('parent-hide') is None
+    from amplifier_acp.relocation import home
+    from amplifier_acp.steering import Receipts
+    age(Lifecycle(server,child,str(cwd)),cutoff-86400);receipts=Receipts(home(server),child);receipts.reserve({'inputId':'unconfirmed','activeInputId':'old','text':'do not replay'},'generation');receipts.update('unconfirmed',{'disposition':'unknown'})
+    with pytest.raises(ValueError,match='steering'):owner.perform('retention.hide',args)
+    assert owner.saved('parent-hide') is None and receipts.read('unconfirmed')['disposition']=='unknown'

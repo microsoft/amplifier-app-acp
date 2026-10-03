@@ -12,7 +12,7 @@ from .relocation import home
 MAX_FAMILY=100
 
 @contextmanager
-def own_descendants(owner,hints):
+def own_descendants(owner,hints,check=None):
     from amplifier_foundation.session.shared_state import SharedSessionStore
     from .native.session_files import validate_id
     from .session_lifecycle import record,guard_copy_source
@@ -39,6 +39,7 @@ def own_descendants(owner,hints):
                     metadata=record(owner.server.directory(row['cwd'],sid)/'metadata.json')
                     if metadata.get('session_id')!=sid or metadata.get('parent_id')!=row['parentSessionId']:raise ValueError('Native descendant relationship differs from indexed identity')
                     guard_copy_source(owner.server,sid)
+                if check is not None:check(sid,row['cwd'])
                 visited.add(sid)
                 with Store(home(owner.server),sid).db() as db:
                     workers=db.execute("SELECT body FROM workers WHERE json_extract(body,'$.kind')='session' LIMIT ?",(MAX_FAMILY+1,)).fetchall() if db else []

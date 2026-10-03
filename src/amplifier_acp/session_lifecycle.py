@@ -159,7 +159,7 @@ class Lifecycle:
                 return {**previous.get('result',{}),'receipt':previous,'replayed':False}
             from .lifecycle_family import own_descendants
             from contextlib import nullcontext
-            with self.own(), (own_descendants(self,args.get('descendants',[])) if operation in {'fork','retention.hide'} else nullcontext()) as family:
+            with self.own(), (own_descendants(self,args.get('descendants',[]),check=(lambda sid,cwd:Lifecycle(self.server,sid,cwd).validate_retention(args,None)) if operation=='retention.hide' else None) if operation in {'fork','retention.hide'} else nullcontext()) as family:
                 inspected=self.inspect()
                 if inspected['location']['blocked']:raise ValueError('Resolve native execution relocation before lifecycle changes')
                 if args.get('expectedHistoryRevision')!=inspected['historyRevision']:raise ValueError('Native history changed; review a fresh revision')
@@ -187,6 +187,13 @@ class Lifecycle:
         cutoff=args.get('modifiedBefore')
         if type(cutoff) not in (int,float) or not math.isfinite(cutoff) or not 0<cutoff<time.time():raise ValueError('Explicit past retention cutoff required')
         guard_copy_source(self.server,self.identity)
+        # Pending command evidence is authoritative; stale worker status alone is not.
+        from .steering import Receipts
+        from .coordination import Store
+        with Receipts(home(self.server),self.identity).db() as db:
+            if db and db.execute("SELECT 1 FROM receipts WHERE json_extract(body,'$.disposition') IN ('reserved','queued','held','unknown') LIMIT 1").fetchone():raise ValueError('Native steering intent is pending or unresolved')
+        with Store(home(self.server),self.identity).db() as db:
+            if db and db.execute("SELECT 1 FROM commands WHERE json_extract(body,'$.disposition') IN ('reserved','unknown') LIMIT 1").fetchone():raise ValueError('Native worker command is unresolved')
         metadata=record(self.directory/'metadata.json')
         if metadata.get('session_id')!=self.identity:raise ValueError('Canonical source metadata identity is unavailable or different')
         latest=0
