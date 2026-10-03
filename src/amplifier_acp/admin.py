@@ -9,8 +9,9 @@ from .generations import OPERATIONS as GENERATION_OPERATIONS
 from .maintenance import OPERATIONS as MAINTENANCE_OPERATIONS
 from .history_import import OPERATIONS as HISTORY_IMPORT_OPERATIONS
 from .voice_preferences import OPERATIONS as VOICE_PREFERENCE_OPERATIONS
+from .permissions import OPERATIONS as PERMISSION_OPERATIONS
 
-OPERATIONS=GENERATION_OPERATIONS | MAINTENANCE_OPERATIONS | HISTORY_IMPORT_OPERATIONS | VOICE_PREFERENCE_OPERATIONS | {
+OPERATIONS=GENERATION_OPERATIONS | MAINTENANCE_OPERATIONS | HISTORY_IMPORT_OPERATIONS | VOICE_PREFERENCE_OPERATIONS | PERMISSION_OPERATIONS | {
  'voice.configuration','voice.credential','voice.configure',
  'providers.list','providers.schema','providers.models','providers.test','providers.testMessage','providers.credentials',
  'providers.save','providers.remove','providers.move','providers.reorder','providers.finishSetup','providers.login','providers.loginStatus','providers.loginCancel',
@@ -51,6 +52,7 @@ class Administration:
   # Validate all request authority before imports, files, probes or network effects.
   workspace=self.workspace(cwd)
   if operation not in OPERATIONS:raise ValueError('Unknown native administration operation.')
+  if operation in PERMISSION_OPERATIONS and self.config.get('adminPermissions') is not True:raise ValueError('File-access changes require explicit trusted launcher enablement.')
   if operation in VOICE_PREFERENCE_OPERATIONS and self.config.get('adminVoicePreferences') is not True:raise ValueError('Voice preference changes require explicit trusted launcher enablement.')
   if operation in HISTORY_IMPORT_OPERATIONS and self.config.get('adminHistoryImport') is not True:raise ValueError('History import requires explicit trusted launcher enablement.')
   if operation in MAINTENANCE_OPERATIONS and self.config.get('adminMaintenance') is not True:raise ValueError('Native private maintenance requires explicit trusted launcher enablement.')
@@ -76,6 +78,12 @@ class Administration:
    raise
   finally:self.effects.discard(task);self.requests.discard(request);self.lifecycle.leave(ticket)
  async def execute(self,workspace,operation,args):
+  if operation in PERMISSION_OPERATIONS:
+   from .permissions import Permissions
+   from .maintenance_gate import Gate
+   owner=Permissions(self.config)
+   if operation in {'permissions.get','permissions.receipt'}:return owner.perform(workspace,operation,args)
+   with Gate(self.config):return owner.perform(workspace,operation,args)
   if operation in VOICE_PREFERENCE_OPERATIONS:
    from .voice_preferences import VoicePreferences
    from .maintenance_gate import Gate
