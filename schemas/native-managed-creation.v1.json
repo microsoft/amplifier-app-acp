@@ -40,6 +40,51 @@
       "additionalProperties": false,
       "required": [
         "operation",
+        "instance"
+      ],
+      "properties": {
+        "operation": {
+          "const": "models"
+        },
+        "bundle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "bundleRevision": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "instance": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "cursor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      },
+      "dependentRequired": {
+        "bundle": [
+          "bundleRevision"
+        ],
+        "bundleRevision": [
+          "bundle"
+        ]
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation",
         "sessionId",
         "cwd"
       ],
