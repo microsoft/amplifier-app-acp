@@ -26,6 +26,12 @@ async def query(request):
     # as a native mount without constructing a conversation, hooks or tools.
     from amplifier_foundation import Bundle
     providers=[dict(row) for row in bundle.providers if row.get('enabled') is not False]
+    instance=request.get('modelInstance')
+    if instance is not None:
+        providers=[row for row in providers if (row.get('instance_id') or row.get('id') or row['module'].removeprefix('provider-'))==instance]
+        if len(providers)!=1:
+            from .managed_models import CatalogUnavailable
+            raise CatalogUnavailable('provider-instance-unavailable')
     probe=Bundle(name='draft-provider-defaults',providers=providers,
                  base_path=bundle.base_path,source_base_paths=bundle.source_base_paths)
     snapshot=is_snapshot(bundle)
@@ -42,6 +48,9 @@ async def query(request):
         values=materialize_provider_config(row.get('config',{}),schema)
         provider=construct_provider(cls,values)
         try:
+            if instance is not None:
+                from .managed_models import discover
+                return await discover(provider,instance,row['module'])
             info=provider.get_info()
             if inspect.isawaitable(info):info=await info
             info=public(info)
@@ -60,6 +69,8 @@ def main():
     output=os.fdopen(os.dup(sys.stdout.fileno()),'w')
     os.dup2(sys.stderr.fileno(),sys.stdout.fileno());sys.stdout=sys.stderr
     try:result=asyncio.run(query(json.loads(sys.stdin.read())))
-    except Exception as exc:result={'error':type(exc).__name__}
+    except Exception as exc:
+        from .managed_models import CatalogUnavailable
+        result={'error':type(exc).__name__,'reason':exc.reason if isinstance(exc,CatalogUnavailable) else 'provider-discovery-failed'}
     output.write(json.dumps(result)+'\n');output.flush()
 if __name__=='__main__':main()

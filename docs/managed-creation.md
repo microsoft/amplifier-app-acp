@@ -90,3 +90,36 @@ external host owner roots as `included:false, requiredForManagedActivation:true`
 It is not native-owned omission: native app session proof/control files are captured,
 while product backup must independently hold/capture the host ledger and managed
 files. `completeProductBackup` remains false for a native-only archive.
+
+### Selected bundle model discovery
+
+`managedCreation.models` v1 advertises explicit passive model discovery. Call
+`_amplifier/managed` with `operation: "models"`, the same exact configured
+`bundle`/`bundleRevision` used for draft defaults, `instance`, optional `limit`
+(1–100; default 50), and optional opaque `cursor`. An omitted bundle uses only
+the launcher default. A caller cannot supply a native bundle path or workspace.
+
+The response carries `instance`, `module`, `modelsSupported`, `models`, `total`,
+`limit`, `revision`, optional `nextCursor`, exact `bundleSelection`,
+`globalOnly: true`, `configurationScope: "global-and-session"`, and
+`runtimeStarted: false`. It prepares only the selected provider source through
+Foundation and calls its public `list_models` method. This can perform provider
+metadata network I/O or dependency preparation; it never starts Core, tools,
+hooks, a conversation, inference, or a managed allocation. Provider exceptions
+are reduced to bounded reason codes without their private diagnostic text.
+
+The provider's complete response must fit 1,000 models and 512 KiB. Oversized or
+invalid responses fail explicitly; pages never silently truncate the catalog.
+Cursors bind the selected alias/instance and the complete sanitized catalog
+revision. Every explicitly requested page re-discovers that one provider; a
+changed result rejects the old cursor. No background polling or global model
+cache is introduced. `modelsSupported: false` distinguishes an absent public
+method from a supported empty list. Public model fields are retained; arbitrary
+vendor/config fields and credential defaults are excluded. A provider may itself
+return a static or fallback catalog; discovery does not prove model readiness.
+
+Compatibility review used the current local `amplifier/docs/MODULES.md` provider
+inventory and Core `ModelInfo`/`list_models` contract. This is an adapter change,
+with no provider implementation changes: sync and async public methods and
+Pydantic/dict model rows are supported. Actual validation uses the offline public
+fixture, not authenticated calls to every listed/community provider.

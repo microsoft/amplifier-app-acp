@@ -16,12 +16,16 @@ class FixtureProvider:
     def __init__(self,config=None):self.config=config or {}
     def get_info(self):return ProviderInfo(id='fixture',display_name='Offline fixture',defaults={'model':'fixture-model','max_tokens':4096},capabilities=['tools','completion:single_attempt:v2'])
     async def close(self):pass
-    async def list_models(self):return [{'id':'fixture-model'}]
+    async def list_models(self):
+        if self.config.get('modelDiscoveryError'):raise RuntimeError('fixture private detail must not be returned')
+        return self.config.get('fixtureModels',[{'id':'fixture-model'}])
     async def login(self,print_fn=None):
         if print_fn:print_fn('Offline fixture sign-in')
         await asyncio.sleep(60)
         return True
     async def complete(self,request,**kwargs):
+        if self.config.get("selectedModelAudit"):
+            with Path(self.config["selectedModelAudit"]).open("a") as output:output.write(str(request.model)+"\n")
         if (kwargs.get('request_options') or {}).get('single_attempt'):
             import hashlib,json
             prompt=[{'role':'user','content':[{'type':'input_text','text':'Reply with OK.'}]}]

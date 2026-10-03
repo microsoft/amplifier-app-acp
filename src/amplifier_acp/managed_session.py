@@ -241,6 +241,9 @@ def perform(server,params):
     finally:handle.release()
 
 async def dispatch(server,params):
+    if params.get('operation')=='models':
+        from .native.managed_models import resolve
+        return await resolve(server.config,params)
     if params.get('operation')=='defaults':
         if set(params)-{'operation','bundle','bundleRevision'}:raise Refused('Managed defaults accepts only a configured alias and revision')
         selected=bundle(server.config,params)
