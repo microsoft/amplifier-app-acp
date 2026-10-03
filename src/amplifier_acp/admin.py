@@ -19,6 +19,8 @@ OPERATIONS=GENERATION_OPERATIONS | MAINTENANCE_OPERATIONS | {
 class Administration:
  def __init__(self,config):
   self.config=config;self.lock=asyncio.Lock();self.setup=None;self.bundles=None;self.registry=None;self.background_gates={}
+  from .admin_lifecycle import AdminLifecycle
+  self.lifecycle=AdminLifecycle(self);self.effects=set();self.requests=set()
   self.roots=[Path(p).expanduser().resolve(strict=True) for p in config.get('adminWorkspaceRoots',[])]
   if not self.roots or not all(p.is_dir() for p in self.roots):raise ValueError('Administration requires existing launcher workspace roots.')
  def workspace(self,cwd):
@@ -42,7 +44,7 @@ class Administration:
   from .native.shared_settings import read_yaml
   settings=read_yaml(self.home/'admin-settings.yaml').get('bundle',{})
   return settings.get('active') if 'active' in settings else self.config.get('bundle')
- async def perform(self,cwd,operation,args):
+ async def perform(self,cwd,operation,args,*,fence=None):
   # Validate all request authority before imports, files, probes or network effects.
   workspace=self.workspace(cwd)
   if operation not in OPERATIONS:raise ValueError('Unknown native administration operation.')
@@ -56,6 +58,19 @@ class Administration:
   if settings_dir.exists() and not settings_dir.resolve().is_relative_to(Path(workspace)):
    raise ValueError('Workspace settings escape the authorized workspace.')
   if len(json.dumps(args).encode())>512*1024:raise ValueError('Administration request exceeds size limit.')
+  ticket=self.lifecycle.enter(operation,fence);request=asyncio.current_task();self.requests.add(request)
+  task=asyncio.create_task(self.execute(workspace,operation,args));self.effects.add(task)
+  try:return await asyncio.shield(task)
+  except asyncio.CancelledError:
+   # Cancellation cannot free the writer gate while a thread/subprocess keeps
+   # changing files. Join the owner effect before the request disappears.
+   while not task.done():
+    try:await asyncio.shield(task)
+    except asyncio.CancelledError:continue
+    except BaseException:break
+   raise
+  finally:self.effects.discard(task);self.requests.discard(request);self.lifecycle.leave(ticket)
+ async def execute(self,workspace,operation,args):
   if operation in MAINTENANCE_OPERATIONS:
    if not hasattr(self,'maintenance'):self.maintenance=__import__('amplifier_acp.maintenance',fromlist=['Maintenance']).Maintenance(self)
    return await self.maintenance.perform(workspace,operation,args)
@@ -68,10 +83,13 @@ class Administration:
     for row in getattr(self.setup,'logins',{}).values():
      task=row.get('task')
      if task is not None and not task.done() and task not in self.background_gates:
-      self.background_gates[task]=Gate(self.config)
+      from .admin_lifecycle import AdminGate
+      self.background_gates[task]=[Gate(self.config),AdminGate(self.config)]
       def release(done):
        gate=self.background_gates.pop(done,None)
-       if gate:gate.release()
+       if gate:
+        from .maintenance import release_all
+        release_all(gate)
       task.add_done_callback(release)
  async def authorized(self,workspace,operation,args):
   if operation in GENERATION_OPERATIONS:
@@ -115,5 +133,11 @@ class Administration:
    if len(json.dumps(result).encode())>768*1024:raise ValueError('Native administration result exceeds bounded representation limit.')
    return result
  async def close(self):
+  self.lifecycle.closing=True
+  if self.requests:await asyncio.gather(*list(self.requests),return_exceptions=True)
   if hasattr(self,'maintenance'):await self.maintenance.close()
   if self.setup:await self.setup.close()
+  from .maintenance import release_all
+  for gates in list(self.background_gates.values()):release_all(gates)
+  self.background_gates.clear()
+  self.lifecycle.close()

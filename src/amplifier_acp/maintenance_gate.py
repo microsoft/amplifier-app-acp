@@ -26,11 +26,12 @@ class Gate:
     deletion or guessed PID liveness is needed. POSIX is required, as it is for
     Foundation's selected-session writer ownership.
     """
-    def __init__(self,config=None,*,exclusive=False):
+    def __init__(self,config=None,*,exclusive=False,filename='.amplifier-acp-maintenance.lock'):
         try:import fcntl
         except ImportError:raise ValueError('Native maintenance writer fencing requires POSIX flock') from None
         directory=checked(native_home(config));directory.mkdir(parents=True,exist_ok=True,mode=0o700)
-        path=checked(directory/'.amplifier-acp-maintenance.lock')
+        if filename not in {'.amplifier-acp-maintenance.lock','.amplifier-acp-admin-writers.lock'}:raise ValueError('Unknown native writer gate')
+        path=checked(directory/filename)
         fd=os.open(path,os.O_RDWR|os.O_CREAT|getattr(os,'O_NOFOLLOW',0),0o600)
         try:
             os.set_inheritable(fd,False)

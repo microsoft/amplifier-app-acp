@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsoft.github.io/amplifier-app-acp/schemas/native-admin-lifecycle-request.v1.json",
+  "title": "Private configured native administration lifecycle",
+  "description": "_amplifier/admin/lifecycle on a launcher-authorized private admin connection. A held intake lease is not browser authorization or a release proof.",
+  "type": "object",
+  "required": ["cwd", "operation", "args"],
+  "properties": {
+    "cwd": {"type": "string", "minLength": 1},
+    "operation": {"enum": ["inspect", "acquire", "release"]},
+    "args": {"type": "object"}
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {"if": {"properties": {"operation": {"const": "inspect"}}}, "then": {"properties": {"args": {"maxProperties": 0}}}},
+    {"if": {"properties": {"operation": {"const": "acquire"}}}, "then": {"properties": {"args": {"type": "object", "required": ["fenceId", "commandId", "purpose", "instanceId", "dataScope"], "properties": {"fenceId": {"$ref": "#/$defs/token"}, "commandId": {"$ref": "#/$defs/token"}, "purpose": {"enum": ["recovery", "distribution-update"]}, "instanceId": {"$ref": "#/$defs/token"}, "dataScope": {"$ref": "#/$defs/token"}}, "additionalProperties": false}}}},
+    {"if": {"properties": {"operation": {"const": "release"}}}, "then": {"properties": {"args": {"type": "object", "required": ["fenceId", "commandId", "leaseId", "outcome"], "properties": {"fenceId": {"$ref": "#/$defs/token"}, "commandId": {"$ref": "#/$defs/token"}, "leaseId": {"$ref": "#/$defs/token"}, "outcome": {"enum": ["unchanged", "ready", "unknown"]}, "proof": {"type": "object"}}, "additionalProperties": false}}}}
+  ],
+  "$defs": {"token": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\u0000-\\u001f]+$"}}
+}

@@ -10,7 +10,7 @@ async def test_admin_scoped_configuration_without_execution(tmp_path):
  client=await Client.launch(config)
  try:
   init=await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
-  assert init['result']['agentCapabilities']['_meta']['amplifier.dev/native']['admin']=={'version':1}
+  assert init['result']['agentCapabilities']['_meta']['amplifier.dev/native']['admin']['version']==1
   async def admin(op,args={},cwd=workspace):
    response=await client.request('_amplifier/admin',{'cwd':str(cwd),'operation':op,'args':args});assert 'result' in response,response;return response['result']
   denied=await client.request('_amplifier/admin',{'cwd':str(outside),'operation':'modules.save','args':{'section':'tools','module':'tool-test','config':{}}})
