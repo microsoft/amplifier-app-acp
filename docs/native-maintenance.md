@@ -385,3 +385,15 @@ and after receipt persistence, verifying retained fences, no-repeat unknowns and
 exact conclusive reconciliation. Malformed TAR/version/schema/path/digest cases
 refuse before a destination is created. These tests use only owned offline data;
 product aggregation, UI restoration and real-account acceptance are separate.
+
+### Full-archive operation lifetime
+
+`ttlSeconds` remains an idle acquisition lease (1–300 seconds). Full-native
+source verification and a snapshot admitted before that lease expires use the
+trusted `maintenanceFullTimeoutSeconds` operation budget (default600, max7200).
+An expired idle lease cannot start or repeat a snapshot. The maintenance lock
+is held until the file thread has actually finished: expiry, cancellation and
+transport closure cannot release writer exclusion while that thread is alive.
+Cancellation requests a bounded abort and joins the thread; uncertain receipts
+remain unknown. A completed operation still requires exact release/reconciliation
+by the product coordinator; a deadline is not permission to reopen host intake.

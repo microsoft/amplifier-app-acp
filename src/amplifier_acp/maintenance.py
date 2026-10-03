@@ -200,6 +200,21 @@ class Maintenance:
             raise ValueError('Native maintenance lease is absent, expired or released; no execution replay is permitted')
         return row
 
+    def begin_snapshot(self,lease_id):
+        # Idle leases remain short. Once a full archive has been admitted while
+        # still valid, its joined operation owns the gate for the explicit full
+        # operation budget. The expiry coroutine waits on self.lock, so neither
+        # deadline nor caller cancellation releases a running file thread.
+        row=self.valid(lease_id)
+        if 'fullNative' in row['body']:
+            seconds=self.full_operation_seconds()
+            row['deadline']=time.monotonic()+seconds;row['expiresAt']=time.time()+seconds
+
+    def full_operation_seconds(self):
+        seconds=self.config.get('maintenanceFullTimeoutSeconds',600)
+        if type(seconds)is not int or not 1<=seconds<=7200:raise ValueError('Full native operation deadline must be1–7200seconds')
+        return seconds
+
     def lease_view(self):
         row=self.lease
         if row is None:return {'active':False}
@@ -445,7 +460,9 @@ class Maintenance:
                     result=await self.run(getattr(self.archives(),method),workspace,args)
                 elif operation=='maintenance.restore.apply':result=await self.run(self.restores().apply,workspace,args)
                 elif operation=='maintenance.restore.reconcile':result=await self.run(self.restores().reconcile,workspace,args)
-                elif operation=='maintenance.snapshot':result=await self.run(self.snapshot,workspace,args)
+                elif operation=='maintenance.snapshot':
+                    self.begin_snapshot(args.get('leaseId'))
+                    result=await self.run(self.snapshot,workspace,args)
                 elif operation=='maintenance.reset.reconcile':result=await self.run(self.reconcile_reset,workspace,args)
                 else:result=await self.run(self.reset,workspace,args,operation=='maintenance.reset.restore')
                 receipt={**receipt,'state':'succeeded','result':result,'settledAt':time.time()}
