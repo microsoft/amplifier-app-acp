@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsoft.github.io/amplifier-app-acp/native-voice-preferences.v1.json",
+  "title": "Launcher-authorized shared voice preferences v1",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "voice.preferences.update"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "commandId",
+            "expectedRevision",
+            "patch"
+          ],
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "expectedRevision": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "patch": {
+              "type": "object",
+              "additionalProperties": false,
+              "minProperties": 1,
+              "properties": {
+                "preferredModel": {
+                  "enum": [
+                    "gpt-live-1",
+                    "gpt-realtime-2.1"
+                  ]
+                },
+                "fallbackModel": {
+                  "enum": [
+                    "gpt-live-1",
+                    "gpt-realtime-2.1"
+                  ],
+                  "description": "Saved preference only; current transport does not automatically switch."
+                },
+                "voice": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "interruptions": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "voice.preferences.receipt"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "commandId"
+          ],
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        }
+      }
+    }
+  ]
+}

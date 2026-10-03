@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio,os,uuid
 from .maintenance_gate import Gate,MaintenanceBusy
 
-READS={'history.import.receipt','maintenance.archive.manifest','voice.configuration','maintenance.receipt','maintenance.artifact.read','maintenance.lease','generations.receipt','generations.inspect','generations.current'}
+READS={'voice.preferences.receipt','history.import.receipt','maintenance.archive.manifest','voice.configuration','maintenance.receipt','maintenance.artifact.read','maintenance.lease','generations.receipt','generations.inspect','generations.current'}
 CONTEXT={'fenceId','commandId','purpose','instanceId','dataScope'}
 
 class AdminFenced(ValueError):

@@ -3,7 +3,7 @@ import os
 from .host.config import _load_keys
 PRIVATE_KEY='AMPLIFIER_VOICE_API_KEY'
 
-def perform(setup,workspace,operation,args):
+def perform(setup,workspace,operation,args,*,preferences_access=False):
     _load_keys(setup.store.shared_home/'keys.env')
     if operation=='voice.configure':
         if set(args)-{'source','apiKey'} or args.get('source') not in {'environment','private'}:raise ValueError('Choose environment or private voice credentials.')
@@ -20,16 +20,17 @@ def perform(setup,workspace,operation,args):
         if source not in {'environment','private'}:raise ValueError('Invalid saved voice credential source; settings were preserved.')
         key=os.environ.get(PRIVATE_KEY if source=='private' else 'OPENAI_API_KEY')
         return {'apiKey':key or None,'source':source,'available':bool(key)}
-    return configuration(setup.store,workspace,credential_access=True)
+    return configuration(setup.store,workspace,credential_access=True,preferences_access=preferences_access)
 
 
-def configuration(store,workspace,*,credential_access):
+def configuration(store,workspace,*,credential_access,preferences_access=False):
     """Passive settings metadata; unavailable authorization never inspects secrets."""
     settings=store.read(workspace)
     voice=settings.get('voice',{})
     source=voice.get('credential_source','environment')
     if source not in {'environment','private'}:raise ValueError('Invalid saved voice credential source; settings were preserved.')
-    result={'preferredModel':voice.get('preferred_model','gpt-live-1'),'voice':voice.get('voice','marin'),'interruptions':voice.get('interruptions',True),'source':source,'credentialAccess':'enabled' if credential_access else 'disabled','configurable':credential_access}
+    from ..voice_preferences import projection
+    result={**projection(settings,preferences_access),'source':source,'credentialAccess':'enabled' if credential_access else 'disabled','configurable':credential_access}
     if not credential_access:
         return {**result,'available':False,'environmentAvailable':None,'privateKeyAvailable':None,'reason':'Voice credential access is disabled for this installation.'}
     _load_keys(store.shared_home/'keys.env')

@@ -8,8 +8,9 @@ from pathlib import Path
 from .generations import OPERATIONS as GENERATION_OPERATIONS
 from .maintenance import OPERATIONS as MAINTENANCE_OPERATIONS
 from .history_import import OPERATIONS as HISTORY_IMPORT_OPERATIONS
+from .voice_preferences import OPERATIONS as VOICE_PREFERENCE_OPERATIONS
 
-OPERATIONS=GENERATION_OPERATIONS | MAINTENANCE_OPERATIONS | HISTORY_IMPORT_OPERATIONS | {
+OPERATIONS=GENERATION_OPERATIONS | MAINTENANCE_OPERATIONS | HISTORY_IMPORT_OPERATIONS | VOICE_PREFERENCE_OPERATIONS | {
  'voice.configuration','voice.credential','voice.configure',
  'providers.list','providers.schema','providers.models','providers.test','providers.testMessage','providers.credentials',
  'providers.save','providers.remove','providers.move','providers.reorder','providers.finishSetup','providers.login','providers.loginStatus','providers.loginCancel',
@@ -50,6 +51,7 @@ class Administration:
   # Validate all request authority before imports, files, probes or network effects.
   workspace=self.workspace(cwd)
   if operation not in OPERATIONS:raise ValueError('Unknown native administration operation.')
+  if operation in VOICE_PREFERENCE_OPERATIONS and self.config.get('adminVoicePreferences') is not True:raise ValueError('Voice preference changes require explicit trusted launcher enablement.')
   if operation in HISTORY_IMPORT_OPERATIONS and self.config.get('adminHistoryImport') is not True:raise ValueError('History import requires explicit trusted launcher enablement.')
   if operation in MAINTENANCE_OPERATIONS and self.config.get('adminMaintenance') is not True:raise ValueError('Native private maintenance requires explicit trusted launcher enablement.')
   if operation in GENERATION_OPERATIONS and self.config.get('adminGenerations') is not True:raise ValueError('Native generation maintenance requires explicit trusted launcher enablement.')
@@ -74,6 +76,12 @@ class Administration:
    raise
   finally:self.effects.discard(task);self.requests.discard(request);self.lifecycle.leave(ticket)
  async def execute(self,workspace,operation,args):
+  if operation in VOICE_PREFERENCE_OPERATIONS:
+   from .voice_preferences import VoicePreferences
+   from .maintenance_gate import Gate
+   owner=VoicePreferences(self.config)
+   if operation=='voice.preferences.receipt':return owner.perform(workspace,operation,args)
+   with Gate(self.config):return owner.perform(workspace,operation,args)
   if operation in HISTORY_IMPORT_OPERATIONS:
    from .history_import import HistoryImport
    from .maintenance_gate import Gate
@@ -88,7 +96,7 @@ class Administration:
    # Exact passive read: no setup/provider initialization and no writer-gate
    # reentry while this owner's coordinator holds a native snapshot lease.
    store=SettingsStore(self.config.get('appHome') or '.',shared_home=native_home(self.config))
-   return configuration(store,workspace,credential_access=self.config.get('adminVoiceCredentials') is True)
+   return configuration(store,workspace,credential_access=self.config.get('adminVoiceCredentials') is True,preferences_access=self.config.get('adminVoicePreferences') is True)
   if operation in MAINTENANCE_OPERATIONS:
    if not hasattr(self,'maintenance'):self.maintenance=__import__('amplifier_acp.maintenance',fromlist=['Maintenance']).Maintenance(self)
    return await self.maintenance.perform(workspace,operation,args)
@@ -122,7 +130,7 @@ class Administration:
    self.initialize();values={**args,'workspace':workspace}
    if operation.startswith('voice.'):
     from .native.voice_admin import perform
-    result=perform(self.setup,workspace,operation,args)
+    result=perform(self.setup,workspace,operation,args,preferences_access=self.config.get('adminVoicePreferences') is True)
    elif operation.startswith(('providers.','routing.')):
     result=await self.setup.perform(operation,values)
     if operation=='providers.loginStatus':result.update(providers=self.setup.provider_rows(workspace),providersWorkspace=workspace)

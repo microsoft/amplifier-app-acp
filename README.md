@@ -264,3 +264,8 @@ Archives use private opaque IDs and bounded chunk reads, with exact inclusion an
 omission manifests. Nothing discovers all histories, resets canonical messages,
 or deletes generations. See [native maintenance](docs/native-maintenance.md) and
 [its private request schema](schemas/native-maintenance-request.v1.json).
+
+Optional launcher-authorized [shared voice preferences](docs/voice-preferences.md)
+provide locked compare-and-set updates and exact receipts without credential
+access. [History import](docs/history-import.md) creates reviewed inert native
+histories through bounded chunks; cleanup remains a separate product authority.
