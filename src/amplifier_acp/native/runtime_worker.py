@@ -70,6 +70,7 @@ class Worker:
         self.home = None
         self.shared_store = None
         self.shared_handle = None
+        self.maintenance_gate = None
         self.activation_gate = None
         self.activation = None
         self.parked = False
@@ -308,6 +309,8 @@ class Worker:
             else:
                 from runtime_bootstrap import bootstrap_app_package
             bootstrap_app_package()
+            from amplifier_acp.maintenance_gate import Gate
+            if self.maintenance_gate is None:self.maintenance_gate=Gate()
             from amplifier_acp.native.host.config import app_home
             from amplifier_acp.native.worker_diagnostics import StartupCapture
             startup_capture = StartupCapture()
@@ -923,21 +926,25 @@ class Worker:
                     task.cancel()
             await asyncio.gather(*(t for t in [read, self.start_task, self.execution, *self.tasks] if t), return_exceptions=True)
             try:
-                await self.checkpoint_terminal_outcome()
+                try:
+                    await self.checkpoint_terminal_outcome()
+                finally:
+                    if self.ownership.registration:
+                        await self.ownership.registration.close()
+                    if self.controls:
+                        from amplifier_acp.native.observation_input import finish
+                        finish(self.controls, {'type': 'generation.detached'})
+                        await self.controls.close()
+                    if self.session:
+                        await self.session.cleanup()
+                    if self.shared_handle is not None:
+                        try:
+                            await asyncio.to_thread(self.shared_handle.release)
+                        finally:
+                            self.shared_handle = None
             finally:
-                if self.ownership.registration:
-                    await self.ownership.registration.close()
-                if self.controls:
-                    from amplifier_acp.native.observation_input import finish
-                    finish(self.controls, {'type': 'generation.detached'})
-                    await self.controls.close()
-                if self.session:
-                    await self.session.cleanup()
-                if self.shared_handle is not None:
-                    try:
-                        await asyncio.to_thread(self.shared_handle.release)
-                    finally:
-                        self.shared_handle = None
+                if self.maintenance_gate is not None:
+                    self.maintenance_gate.release();self.maintenance_gate=None
 
 
 if __name__ == "__main__":

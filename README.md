@@ -254,3 +254,13 @@ native session's immutable history workspace and reads only its bounded persiste
 control record. Missing state is distinct from corrupt, oversized or changed
 state. This is saved task authority, not proof that a runtime is currently active;
 execution still rechecks live task revision and host admission.
+
+### Private scoped recovery
+
+Trusted launchers may enable `adminMaintenance:true` for selected native snapshots
+and reversible configuration reset. The coordinator must prove quiescence and
+explicitly review private content; old noncooperative CLI writers are unsupported.
+Archives use private opaque IDs and bounded chunk reads, with exact inclusion and
+omission manifests. Nothing discovers all histories, resets canonical messages,
+or deletes generations. See [native maintenance](docs/native-maintenance.md) and
+[its private request schema](schemas/native-maintenance-request.v1.json).

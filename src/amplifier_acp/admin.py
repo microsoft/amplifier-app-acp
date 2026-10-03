@@ -6,8 +6,9 @@ import os
 from pathlib import Path
 
 from .generations import OPERATIONS as GENERATION_OPERATIONS
+from .maintenance import OPERATIONS as MAINTENANCE_OPERATIONS
 
-OPERATIONS=GENERATION_OPERATIONS | {
+OPERATIONS=GENERATION_OPERATIONS | MAINTENANCE_OPERATIONS | {
  'voice.configuration','voice.credential','voice.configure',
  'providers.list','providers.schema','providers.models','providers.test','providers.testMessage','providers.credentials',
  'providers.save','providers.remove','providers.move','providers.reorder','providers.finishSetup','providers.login','providers.loginStatus','providers.loginCancel',
@@ -17,7 +18,7 @@ OPERATIONS=GENERATION_OPERATIONS | {
 
 class Administration:
  def __init__(self,config):
-  self.config=config;self.lock=asyncio.Lock();self.setup=None;self.bundles=None;self.registry=None
+  self.config=config;self.lock=asyncio.Lock();self.setup=None;self.bundles=None;self.registry=None;self.background_gates={}
   self.roots=[Path(p).expanduser().resolve(strict=True) for p in config.get('adminWorkspaceRoots',[])]
   if not self.roots or not all(p.is_dir() for p in self.roots):raise ValueError('Administration requires existing launcher workspace roots.')
  def workspace(self,cwd):
@@ -45,15 +46,34 @@ class Administration:
   # Validate all request authority before imports, files, probes or network effects.
   workspace=self.workspace(cwd)
   if operation not in OPERATIONS:raise ValueError('Unknown native administration operation.')
+  if operation in MAINTENANCE_OPERATIONS and self.config.get('adminMaintenance') is not True:raise ValueError('Native private maintenance requires explicit trusted launcher enablement.')
   if operation in GENERATION_OPERATIONS and self.config.get('adminGenerations') is not True:raise ValueError('Native generation maintenance requires explicit trusted launcher enablement.')
   if operation in {'voice.credential','voice.configure'} and self.config.get('adminVoiceCredentials') is not True:raise ValueError('Voice credentials require explicit trusted launcher enablement.')
   if not isinstance(args,dict):raise ValueError('Administration args must be an object.')
-  if any(key in args for key in ('home','appHome','cwd','sessionId','session_id')):raise ValueError('Native homes and session identity are launcher-owned.')
+  if any(key in args for key in ('home','appHome','sessionId','session_id')) or 'cwd' in args and operation!='maintenance.reset.preview':raise ValueError('Native homes and session identity are launcher-owned.')
   if args.get('workspace') and self.workspace(args['workspace'])!=workspace:raise ValueError('Workspace selector disagrees with authorized cwd.')
   settings_dir=Path(workspace)/'.amplifier'
   if settings_dir.exists() and not settings_dir.resolve().is_relative_to(Path(workspace)):
    raise ValueError('Workspace settings escape the authorized workspace.')
   if len(json.dumps(args).encode())>512*1024:raise ValueError('Administration request exceeds size limit.')
+  if operation in MAINTENANCE_OPERATIONS:
+   if not hasattr(self,'maintenance'):self.maintenance=__import__('amplifier_acp.maintenance',fromlist=['Maintenance']).Maintenance(self)
+   return await self.maintenance.perform(workspace,operation,args)
+  from .maintenance_gate import Gate
+  with Gate(self.config):
+   try:return await self.authorized(workspace,operation,args)
+   finally:
+    # Interactive sign-in outlives its initial request and can later commit
+    # settings. Retain it even if its initial presentation callback failed.
+    for row in getattr(self.setup,'logins',{}).values():
+     task=row.get('task')
+     if task is not None and not task.done() and task not in self.background_gates:
+      self.background_gates[task]=Gate(self.config)
+      def release(done):
+       gate=self.background_gates.pop(done,None)
+       if gate:gate.release()
+      task.add_done_callback(release)
+ async def authorized(self,workspace,operation,args):
   if operation in GENERATION_OPERATIONS:
    self.initialize()
    from .generations import Generations
@@ -95,4 +115,5 @@ class Administration:
    if len(json.dumps(result).encode())>768*1024:raise ValueError('Native administration result exceeds bounded representation limit.')
    return result
  async def close(self):
+  if hasattr(self,'maintenance'):await self.maintenance.close()
   if self.setup:await self.setup.close()

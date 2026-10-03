@@ -24,7 +24,7 @@ replacement implementation is imported.
 | Active worker currency | `generations.current` reports selected qualified receipts/policy; resident-only `runtime.inspect` reports actual interpreter, installed provenance and mounted root origins. Host inventory/aggregate adoption remains a public callback; absence is explicit. |
 | Distribution self-update / feature installation | Not implemented or advertised here. Requires installed-distribution owner, qualified release manifest, restart/adoption receipts and genuine lifecycle authority. |
 | Automatic background checking/install preferences, included/other application tiers | Not yet implemented in the optional product capability. Explicit native commands work. |
-| Full private backup / selective reset / destructive cleanup | Not implemented in this owner; original behavior remains a parity gap. |
+| Native private snapshot / selected reset | Explicit selected histories/state + limited native settings, exclusive native-home gate and Foundation writer leases, private streamed artifacts, retained configuration originals and exact undo. Aggregate product snapshot/restore and destructive cleanup remain separate gaps. |
 | Environment repair | `generations.repair.preview` binds exact qualified receipts; `generations.repair` reconstructs a separate interpreter, checks provenance and read-only profile mounts, preserving original files and unknown work. Actual 98-distribution current graph passed without a model prompt or promotion. Missing/changed source inputs remain an explicit refusal. |
 | Rollback to an unqualified legacy baseline | Unsupported; qualified-generation rollback remains available. |
 | Retention / reclamation | Existing worker generation leases remain; no automated generation deletion in this owner. |
@@ -58,6 +58,9 @@ interpreter path, native home, or workspace authority from browser arguments.
   retirement already refuses owned background work. Generation reclamation needs
   an authoritative live/configuration reference index and explicit preservation
   of uncertain references. No automatic deletion or global settings scan is added.
-- Selective reset/destructive cleanup remains an explicit parity gap. Implementing
-  it requires cross-owner quiescence and retained originals; catalog hiding or
-  deleting one owner's database must not be labeled a full reset.
+- [Selected native maintenance](native-maintenance.md) now implements a writer-fenced
+  scoped archive and reversible noncanonical configuration reset. The product owns
+  intake fencing, all other stores, approval and archive presentation. Whole-archive
+  restore, unknown partial-reset automatic recovery, broad/destructive reset and
+  generation reclamation remain explicit gaps; no partial native snapshot is a
+  full-product backup.

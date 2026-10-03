@@ -36,6 +36,8 @@ def lifecycle_state(server,identity,cwd):
 def guard_start(server,identity,cwd):
     value=lifecycle_state(server,identity,cwd)
     if value['deleted']:raise ValueError('This native session was removed from discovery; restore it before continuing. Its history is preserved.')
+    maintenance=location(home(server),identity)/'maintenance-reset-pending.json'
+    if maintenance.exists():raise ValueError('Native configuration reset outcome is unresolved; inspect its exact maintenance receipt and retained originals before execution.')
     pending=location(home(server),identity)/'history-edit-pending.json'
     if pending.exists():raise ValueError('Native history edit outcome is unresolved; inspect its receipt before execution. No input replayed.')
     path=location(home(server),identity)/'history-fork.json'

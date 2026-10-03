@@ -491,6 +491,14 @@ class Server:
             await self.notify('session/update',{'sessionId':session.identity,'update':update})
 
     async def dispatch(self,method,params):
+        if method=='initialize' or method=='_amplifier/admin' or not self.initialized:
+            return await self._dispatch(method,params)
+        if method.startswith('_amplifier/') and NATIVE not in self.extensions:
+            raise RpcError(-32601,'Native extension was not negotiated.')
+        from .maintenance_gate import Gate
+        with Gate(self.config):return await self._dispatch(method,params)
+
+    async def _dispatch(self,method,params):
         if method=='initialize':
             if self.initialized:raise RpcError(-32600,'Connection already initialized.')
             self.initialized=True
@@ -507,7 +515,7 @@ class Server:
             return {'protocolVersion':1,'agentInfo':{'name':'amplifier-acp','title':'Amplifier','version':__version__},
                 'agentCapabilities':{'loadSession':True,'sessionCapabilities':{'resume':{},'close':{},'delete':{}},
                     'promptCapabilities':{'image':True,'audio':False,'embeddedContext':True},
-                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True,'passiveInspect':True},'scheduledTurns':{'version':1,'completion':'settled'},'questionTurns':{'version':1,'completion':'settled','active':False},'observationTurns':{'version':1,'completion':'settled','active':False},'configurationClone':{'version':1},'taskState':{'version':1,'passive':True},'workers':{'version':1,'passiveInspection':True,'residentControls':True},'runtimeInspection':{'version':1,'residentOnly':True,'passiveStatus':True},'historyEdits':{'version':1,'completion':'settled','active':False},'sessionLifecycle':{'version':1,'passive':True,'deletion':'preserve-history'},'activeSteering':{'version':1,'mode':'request_boundary','cancellable':False,'runtimeNegotiated':True},'lifecycle':{'version':1,'gracefulRetire':True},'relocation':{'version':1,'passiveInspection':True},**({'transfer':{'version':1,'passiveInspection':True}} if self.config.get('transferAuthorityDirectory') and self.config.get('transferWorkspaceRoots') else {}),**({'admin':{'version':1,**({'generations':{'version':1}} if self.config.get('adminGenerations') else {})}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
+                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True,'passiveInspect':True},'scheduledTurns':{'version':1,'completion':'settled'},'questionTurns':{'version':1,'completion':'settled','active':False},'observationTurns':{'version':1,'completion':'settled','active':False},'configurationClone':{'version':1},'taskState':{'version':1,'passive':True},'workers':{'version':1,'passiveInspection':True,'residentControls':True},'runtimeInspection':{'version':1,'residentOnly':True,'passiveStatus':True},'historyEdits':{'version':1,'completion':'settled','active':False},'sessionLifecycle':{'version':1,'passive':True,'deletion':'preserve-history'},'activeSteering':{'version':1,'mode':'request_boundary','cancellable':False,'runtimeNegotiated':True},'lifecycle':{'version':1,'gracefulRetire':True},'relocation':{'version':1,'passiveInspection':True},**({'transfer':{'version':1,'passiveInspection':True}} if self.config.get('transferAuthorityDirectory') and self.config.get('transferWorkspaceRoots') else {}),**({'admin':{'version':1,**({'generations':{'version':1}} if self.config.get('adminGenerations') else {}),**({'maintenance':{'version':1,'selectedOnly':True,'privateArtifacts':True}} if self.config.get('adminMaintenance') is True else {})}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
         if not self.initialized:raise RpcError(-32600,'Initialize this connection first.')
         if method in {'_amplifier/relocation','_amplifier/relocation/reconcile'}:
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
