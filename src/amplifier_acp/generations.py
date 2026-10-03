@@ -8,7 +8,7 @@ from .native.host.config import write_private
 from .native.updates import active_release,foundation_home,process,pinned,safe_label,source_key,cache_changes
 from .native import runtime_environment as environments
 
-OPERATIONS={'generations.current','generations.inspect','generations.check','generations.prepare','generations.promote','generations.rollback','generations.receipt','generations.launcher','generations.ensure'}
+OPERATIONS={'generations.current','generations.inspect','generations.check','generations.prepare','generations.promote','generations.rollback','generations.receipt','generations.launcher','generations.ensure','generations.repair.preview','generations.repair'}
 
 def digest(value):return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':')).encode()).hexdigest()
 def identity(value):
@@ -69,6 +69,9 @@ class Generations:
   if operation=='generations.current':
    from .runtime_inspection import current
    return await asyncio.to_thread(current,self.home,args,self.state())
+  if operation=='generations.repair.preview':
+   from .generation_repair import preview
+   return await asyncio.to_thread(preview,self.home,args)
   if operation=='generations.receipt':
    result=self.receipt(args.get('commandId'));return {'receipt':result}
   if operation=='generations.launcher':return await launcher(self.home,args.get('generation') or active_release(self.home).get('current'))
@@ -83,10 +86,15 @@ class Generations:
     if previous['state']=='running':
      previous={**previous,'state':'unknown','detail':'Owner exited before settlement. Inspect receipts; no work was replayed.'};self.save(previous,signature)
     return previous
-   row={'commandId':command,'operation':operation,'state':'running','createdAt':time.time()};self.save(row,signature)
+   row={'commandId':command,'operation':operation,'state':'running','createdAt':time.time()}
+   if operation=='generations.repair':row['candidateGeneration']=uuid.uuid4().hex
+   self.save(row,signature)
    try:
     if operation=='generations.check':result=await self.check()
     elif operation=='generations.prepare':result=await self.prepare(args)
+    elif operation=='generations.repair':
+     from .generation_repair import rebuild
+     result=await rebuild(self,args,row['candidateGeneration'])
     elif operation in {'generations.promote','generations.rollback'}:result=await self.promote(args,rollback=operation.endswith('rollback'))
     elif operation=='generations.ensure':
      from .native.runtime_profiles import ensure
@@ -208,7 +216,7 @@ class Generations:
   await self.publish(phase='installed',pendingRelease=None,canRollback=bool(new['previous']),error=None)
   return {'pointer':new,'appliesTo':'future-workers','runningWorkersChanged':False}
 
- async def validate(self,stage,release):
+ async def validate(self,stage,release,*,profiles=None):
      from .native.runtime_environment import stage as stage_runtime, receipt_directory
      from .native.runtime_qualification import freeze, prepare_overrides, verify_recorded
      receipt=receipt_directory(self.home,release)
@@ -224,7 +232,7 @@ class Generations:
      workspace = stage / 'qualification-workspace'
      workspace.mkdir(exist_ok=True)
      config = read_config(workspace, home=stage, shared_home=stage/'shared-config', global_only=True)
-     profiles = self.config.get('generationProfiles') or offered_profiles(config)
+     profiles = profiles if profiles is not None else self.config.get('generationProfiles') or offered_profiles(config)
      if not profiles:
          raise ValueError('No app-level conversation profiles are configured')
      configs = [(str(workspace), profile) for profile in profiles]

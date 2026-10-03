@@ -129,6 +129,8 @@ Schema `$id` values express intended public identity, not a claim of deployment.
 Bounded generation and actual resident worker source evidence is documented in
 [runtime inspection](runtime-inspection.md). These reads do not start a worker
 or imply adoption from an installation receipt.
+Exact qualified-environment recovery uses the separate
+[generation repair](generation-repair.md) preview and durable command contract.
 
 The launcher opts in with `adminWorkspaceRoots: ["/authorized/workspace"]`.
 Only then does `agentCapabilities._meta['amplifier.dev/native'].admin` advertise

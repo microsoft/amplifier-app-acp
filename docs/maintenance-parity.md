@@ -25,7 +25,8 @@ replacement implementation is imported.
 | Distribution self-update / feature installation | Not implemented or advertised here. Requires installed-distribution owner, qualified release manifest, restart/adoption receipts and genuine lifecycle authority. |
 | Automatic background checking/install preferences, included/other application tiers | Not yet implemented in the optional product capability. Explicit native commands work. |
 | Full private backup / selective reset / destructive cleanup | Not implemented in this owner; original behavior remains a parity gap. |
-| Repair / rollback to an unqualified legacy baseline | Not implemented. Qualified-generation rollback is supported; active environments are never repaired in place. |
+| Environment repair | `generations.repair.preview` binds exact qualified receipts; `generations.repair` reconstructs a separate interpreter, checks provenance and read-only profile mounts, preserving original files and unknown work. Actual 98-distribution current graph passed without a model prompt or promotion. Missing/changed source inputs remain an explicit refusal. |
+| Rollback to an unqualified legacy baseline | Unsupported; qualified-generation rollback remains available. |
 | Retention / reclamation | Existing worker generation leases remain; no automated generation deletion in this owner. |
 | Browser support export | Native sanitized server diagnostics/check timing present; client-side support report composition is a separate remaining UI integration. |
 
@@ -49,9 +50,10 @@ interpreter path, native home, or workspace authority from browser arguments.
   The legacy global database snapshot is not a substitute for the new graph.
 - Browser support export composes local browser diagnostics with sanitized native
   reports. Credentials, drafts and full transcripts are not implied inputs.
-- Repair should reconstruct a separately qualified environment from recorded
-  evidence; the legacy in-place uv reinstall is intentionally not imported.
-  Activation remains an explicit generation CAS; unknown work is not rerun.
+- [Native environment repair](generation-repair.md) now reconstructs a separately
+  qualified environment from recorded evidence. The product still owns exposing
+  preview/approval, exact command recovery and the separate activation CAS. Repair
+  does not recover deleted local source checkouts or invent missing credentials.
 - Worker retention policy is host admission/lifecycle policy; native graceful
   retirement already refuses owned background work. Generation reclamation needs
   an authoritative live/configuration reference index and explicit preservation

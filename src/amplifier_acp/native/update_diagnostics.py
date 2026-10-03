@@ -11,10 +11,10 @@ import uuid
 PROBE_PREFIX = 'AMPLIFIER_UPDATE_PROBE='
 ERROR_TYPES = {'Exception','CommandFailure','CommandTimeout','AssertionError','ImportError','ModuleNotFoundError','FileNotFoundError','PermissionError',
                'OSError','RuntimeError','ValueError','TimeoutError','CancelledError','ModuleActivationError',
-               'BundleNotFoundError','BundleLoadError','BundleValidationError','BundleDependencyError','HostComponentConflict'}
+               'BundleNotFoundError','BundleLoadError','BundleValidationError','BundleDependencyError','HostComponentConflict','ConfiguredModuleError'}
 PREPARATION_REASONS = {'ModuleActivationError':'module-prepare-failed','BundleNotFoundError':'bundle-not-found',
                        'BundleLoadError':'bundle-load-failed','BundleValidationError':'bundle-validation-failed',
-                       'BundleDependencyError':'bundle-dependency-failed', 'HostComponentConflict':'host-component-conflict'}
+                       'BundleDependencyError':'bundle-dependency-failed', 'HostComponentConflict':'host-component-conflict','ConfiguredModuleError':'configured-module-failed'}
 RECOVERY_REASONS = {'protected-runtime-source', 'runtime-source-changed', *PREPARATION_REASONS.values()}
 PROBE_STAGES = {'imports','package','assets','login','terminal','complete','prepare','prepared','capabilities','cleanup'}
 
@@ -28,6 +28,10 @@ def probe_failure(error, stage):
     facts={'ok':False,'errorType':exception_type(error)}
     reason=PREPARATION_REASONS.get(type(error).__name__) if stage=='prepare' else None
     if reason:facts['reason']=reason
+    if type(error).__name__=='ConfiguredModuleError':
+        from .module_failures import safe_failures
+        failures=safe_failures(getattr(error,'failures',[]))
+        facts.update(moduleFailures=failures[:8],moduleFailuresTruncated=len(failures)>8)
     return facts
 
 
@@ -43,6 +47,10 @@ def probe_record(output):
         if isinstance(value.get('stage'),str) and value['stage'] in PROBE_STAGES:safe['stage']=value['stage']
         if isinstance(value.get('errorType'),str) and value['errorType'] in ERROR_TYPES:safe['errorType']=value['errorType']
         if isinstance(value.get('reason'),str) and value['reason'] in RECOVERY_REASONS:safe['reason']=value['reason']
+        if 'moduleFailures' in value:
+            from .module_failures import safe_failures
+            safe['moduleFailures']=safe_failures(value['moduleFailures'])[:8]
+            safe['moduleFailuresTruncated']=value.get('moduleFailuresTruncated') is True or isinstance(value['moduleFailures'],list) and len(value['moduleFailures'])>8
         for key in ('version','pythonVersion'):
             if isinstance(value.get(key),str) and re.fullmatch(r'\d+\.\d+\.\d+',value[key]):safe[key]=value[key]
         for key in ('elapsedMs', 'sources', 'packages', 'resolverTransactions'):
@@ -79,5 +87,4 @@ class CommandTimeout(TimeoutError):
     def __init__(self,duration):
         super().__init__('Update command exceeded its time limit')
         self.diagnostic_facts={'durationMs':round(duration*1000),'errorType':'TimeoutError','timedOut':True}
-
 

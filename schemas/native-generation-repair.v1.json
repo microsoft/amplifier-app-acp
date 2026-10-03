@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsoft.github.io/amplifier-acp/schemas/native-generation-repair.v1.json",
+  "description": "Arguments for launcher-authorized generations.repair after exact receipt preview; activation remains separate.",
+  "type": "object",
+  "required": ["commandId", "generation", "expectedSourceHash", "expectedCurrent"],
+  "properties": {
+    "commandId": {"type": "string", "minLength": 1, "maxLength": 200},
+    "generation": {"type": "string", "pattern": "^[a-f0-9]{32}$"},
+    "expectedSourceHash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "expectedCurrent": {"type": ["string", "null"], "pattern": "^[a-f0-9]{32}$"}
+  },
+  "additionalProperties": false
+}
