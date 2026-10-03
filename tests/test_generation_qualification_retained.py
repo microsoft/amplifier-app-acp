@@ -68,3 +68,29 @@ source={directory="../local-module"}
     output = runtime_qualification.lock_overrides(tmp_path, tmp_path / 'overrides.txt').read_text()
     assert '-e ' + (tmp_path.parent / 'cached-module').as_uri() in output
     assert 'amplifier-local @ ' + (tmp_path.parent / 'local-module').as_uri() in output
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('file_uri',[False,True])
+async def test_exported_wheel_uses_exact_locked_path_and_preserves_resolver_marker(tmp_path,monkeypatch,file_uri):
+    project=tmp_path/'worker';project.mkdir()
+    wheel=tmp_path/'local_fixture-1.0-py3-none-any.whl';wheel.write_bytes(b'fixture-identity')
+    (project/'uv.lock').write_text('version=1\n[[package]]\nname="local-fixture"\nversion="1.0"\nsource={path="../local_fixture-1.0-py3-none-any.whl"}\n')
+    marker=' ; python_version >= "3.13"'
+    async def export(*args,**kwargs):return (wheel.as_uri() if file_uri else '../'+wheel.name)+marker+'\n'
+    monkeypatch.setattr(updates,'process',export)
+    target=tmp_path/'runtime-install-overrides.txt'
+    await runtime_qualification.prepare_overrides(project,target)
+    assert target.read_text()=='local-fixture @ '+wheel.as_uri()+marker+'\n'
+    policy=target.read_bytes();(tmp_path/'runtime-installed.json').write_text('[]')
+    async def never_export(*args,**kwargs):pytest.fail('Recorded policy must not be refreshed')
+    monkeypatch.setattr(updates,'process',never_export)
+    await runtime_qualification.prepare_overrides(project,target);assert target.read_bytes()==policy
+
+@pytest.mark.asyncio
+async def test_exported_unlocked_local_wheel_is_refused_before_policy_write(tmp_path,monkeypatch):
+    (tmp_path/'uv.lock').write_text('version=1\n[[package]]\nname="locked"\nversion="1.0"\nsource={path="./locked-1.0-py3-none-any.whl"}\n')
+    async def export(*args,**kwargs):return './other-1.0-py3-none-any.whl\n'
+    monkeypatch.setattr(updates,'process',export)
+    target=tmp_path/'runtime-install-overrides.txt'
+    with pytest.raises(ValueError,match='did not match'):await runtime_qualification.prepare_overrides(tmp_path,target)
+    assert not target.exists() and not (tmp_path/'runtime-install-policy.json').exists()

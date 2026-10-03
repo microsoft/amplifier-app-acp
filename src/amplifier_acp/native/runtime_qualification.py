@@ -186,15 +186,20 @@ async def prepare_overrides(project, target):
     local_names = {}
     for row in tomllib.loads((project / 'uv.lock').read_text()).get('package', []):
         source = row.get('source') or {}
-        path = source.get('editable') or source.get('directory')
+        # uv records local wheels/archives as `path`, not `directory`. They
+        # still need the same exact lock-bound identity before normalization.
+        path = source.get('editable') or source.get('directory') or source.get('path')
         if path:
-            local_names[(project / path).resolve()] = row['name']
+            resolved = (project / path).resolve()
+            if resolved in local_names and local_names[resolved] != row['name']:
+                raise ValueError('A worker lock assigns one local source to multiple packages.')
+            local_names[resolved] = row['name']
     lines = []
     for line in output.splitlines():
         value, separator, marker = line.partition(' ; ')
         editable = value.startswith('-e ')
         reference = value[3:] if editable else value
-        if editable or reference.startswith(('.', '/')):
+        if editable or reference.startswith(('.', '/', 'file:')) or Path(reference).is_absolute():
             parsed = urlsplit(reference)
             path = Path(unquote(parsed.path)) if parsed.scheme == 'file' else project / reference
             path = path.resolve()
