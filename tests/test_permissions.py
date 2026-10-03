@@ -89,7 +89,7 @@ def test_exact_unknown_receipt_recovers_without_write_and_preserves_prior_marker
  config={'home':str(tmp_path/'home'),'appHome':str(tmp_path/'app')};owner=Permissions(config);update=owner.store.update
  def lose_ack(*args,**kwargs):update(*args,**kwargs);raise OSError('post-write fixture loss')
  monkeypatch.setattr(owner.store,'update',lose_ack)
- with pytest.raises(OSError):save(owner,str(tmp_path),'lost')
+ with pytest.raises(RuntimeError,match='receipt inspection'):save(owner,str(tmp_path),'lost')
  raw=(tmp_path/'home/settings.yaml').read_bytes()
  recovered=Permissions(config).perform(str(tmp_path),'permissions.receipt',{'commandId':'lost'});assert recovered['status']=='succeeded'
  assert (tmp_path/'home/settings.yaml').read_bytes()==raw
@@ -122,3 +122,24 @@ def test_effective_revision_includes_shadowed_scope_changes(tmp_path):
  assert before['revision']==after['revision']
  assert before['effective']['allowed']==after['effective']['allowed']
  assert before['effective']['revision']!=after['effective']['revision']
+
+def test_process_death_after_atomic_settings_write_has_one_passive_receipt(tmp_path):
+ import subprocess,sys
+ config={'home':str(tmp_path/'home'),'appHome':str(tmp_path/'app')}
+ script='''import json,os,sys\nfrom amplifier_acp.permissions import Permissions\nowner=Permissions(json.loads(sys.argv[1]));cwd=sys.argv[2];before=owner.perform(cwd,'permissions.get',{})\nupdate=owner.store.update\ndef crash(*args,**kwargs):\n update(*args,**kwargs)\n os._exit(91)\nowner.store.update=crash\nowner.perform(cwd,'permissions.save',{'commandId':'crash','expectedRevision':before['revision'],'allowed':['allowed'],'denied':['private']})\n'''
+ result=subprocess.run([sys.executable,'-I','-c',script,json.dumps(config),str(tmp_path)],capture_output=True,timeout=15)
+ assert result.returncode==91,result.stderr.decode()
+ body=(tmp_path/'home/settings.yaml').read_bytes();owner=Permissions(config)
+ receipt=owner.perform(str(tmp_path),'permissions.receipt',{'commandId':'crash'})
+ assert receipt['status']=='succeeded' and receipt['replayed'] is False
+ assert receipt['result']['allowed']==[str(tmp_path/'allowed')]
+ assert owner.perform(str(tmp_path),'permissions.receipt',{'commandId':'crash'})==receipt
+ assert (tmp_path/'home/settings.yaml').read_bytes()==body
+
+
+def test_settings_parser_errors_never_expose_unrelated_secret_values(tmp_path,monkeypatch):
+ owner=Permissions({'home':str(tmp_path/'home'),'appHome':str(tmp_path/'app')})
+ def fail(*args,**kwargs):raise ValueError('parser excerpt: api_key=private-secret-never-return')
+ monkeypatch.setattr(owner.store,'read',fail)
+ with pytest.raises(Invalid) as error:owner.perform(str(tmp_path),'permissions.get',{})
+ assert 'private-secret-never-return' not in str(error.value)

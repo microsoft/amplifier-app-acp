@@ -63,7 +63,8 @@ class Permissions:
         return path
     def read(self,workspace,scope):
         self.scope(workspace,scope)
-        return self.store.read(workspace,scope)
+        try:return self.store.read(workspace,scope)
+        except Exception as exc:raise Invalid('Selected settings could not be read; original file preserved') from exc
     def revision(self,workspace,scope,settings):return digest({'workspace':workspace,'scope':scope,'values':selected(settings)})
     def view(self,workspace,scope,settings=None):
         if settings is None:settings=self.read(workspace,scope)
@@ -143,6 +144,8 @@ class Permissions:
             except Invalid as exc:
                 receipt.update(status='failed',executed=False,error=str(exc)[:1000],reason='permissions-changed' if isinstance(exc,Conflict) else 'invalid-permissions')
                 if isinstance(exc,Conflict):receipt['currentRevision']=exc.current
+            except Exception as exc:
+                raise RuntimeError('Permission save outcome requires exact receipt inspection; original evidence preserved') from exc
             else:
                 # Presentation failure after replacement is uncertain, never a
                 # fabricated pre-effect refusal. Exact marker recovery is passive.
