@@ -77,6 +77,7 @@ class Worker:
         self.retiring = False
         self.parked_history_stamp = None
         self.parked_config_stamp = None
+        self.mounted_settings_stamp = {}
         self.config_inputs = ()
         self.command_lock = asyncio.Lock()
         self.memory_task = None
@@ -358,6 +359,9 @@ class Worker:
                 saved_controls = json.loads(controls_path.read_text())
                 if 'selection' in saved_controls:
                     selection = saved_controls['selection']
+            from amplifier_acp.native.shared_settings import settings_paths
+            self.mounted_settings_stamp = {str(path): self.shared_store_stamp(path)
+                for path in settings_paths(workspace, session_id=config['id']).values()}
             self.session, self.runtime, report = await prepare_manager(workspace,
                 runtime=self.runtime, bundle=config.get("bundle") or None, ask=self.ask,
                 resume=True, application_host="Amplifier ACP", selection=selection or None,
@@ -434,9 +438,9 @@ class Worker:
             self.execution = asyncio.create_task(self.session.execute(""))
             self.execution.add_done_callback(self.executed)
             self.parked_history_stamp = self.history_stamp()
-            self.parked_config_stamp = configuration_stamp(
+            self.parked_config_stamp = self.retain_mounted_settings(configuration_stamp(
                 workspace, config["id"], self.home, self.shared_store_stamp,
-                extra_paths=self.config_inputs)
+                extra_paths=self.config_inputs))
             report["tools"] = list(self.session.coordinator.get("tools"))
             # Keep absolute module sources and full mount plans on disk. The UI
             # gets a compact capability report, not credentials or config blobs.
@@ -468,6 +472,11 @@ class Worker:
                 progress.cancel()
                 await asyncio.gather(progress, return_exceptions=True)
 
+    def retain_mounted_settings(self, stamp):
+        """Parking cannot claim a concurrently saved policy was already mounted."""
+        return tuple((path, self.mounted_settings_stamp.get(path, value))
+                     for path, value in stamp)
+
     async def park(self, *, activation=None):
         """Checkpoint then relinquish only a settled manager activation."""
 
@@ -492,9 +501,9 @@ class Worker:
                     await checkpoint(self.root_generation_outcome or "completed")
                 self.parked_history_stamp = self.history_stamp()
                 from amplifier_acp.native.shared_state import configuration_stamp
-                self.parked_config_stamp = configuration_stamp(
+                self.parked_config_stamp = self.retain_mounted_settings(configuration_stamp(
                     self.workspace, self.runtime.session_id, self.home, self.shared_store_stamp,
-                    extra_paths=self.config_inputs)
+                    extra_paths=self.config_inputs))
                 self.activation_gate.release(activation)
                 await asyncio.to_thread(self.shared_handle.release)
                 self.shared_handle = None
