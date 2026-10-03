@@ -52,6 +52,9 @@ def source_config(owner,root_rows):
     if any(not isinstance(value,str) or len(value)>8192 for key,value in result.items() if key!='generationProfiles'):raise ValueError('Unsupported native source selector')
     profiles=result.get('generationProfiles',[])
     if not isinstance(profiles,list) or len(profiles)>128 or any(not isinstance(value,str) or len(value)>8192 for value in profiles):raise ValueError('Unsupported generation profile selection')
+    managed=owner.config.get('managedSessionRoots',[])
+    if not isinstance(managed,list) or len(managed)>16 or any(not isinstance(value,str) or not Path(value).is_absolute() or len(value)>8192 for value in managed):raise ValueError('Unsupported managed allocation source references')
+    if managed:result['managedAllocations']={'roots':managed,'authority':'external-host-owner','included':False,'requiredForManagedActivation':True}
     return result
 
 def prepare(owner,plan,parts,check,command_id,include_credentials):

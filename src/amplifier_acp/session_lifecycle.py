@@ -146,7 +146,7 @@ class Lifecycle:
         if operation.startswith('legacyCopy.'):
             from .retired_copy import perform
             return perform(self,operation,args)
-        fields={'inspect':set(),'receipt':{'commandId'},'export.read':{'snapshotId','offset','limit'},'delete.preview':set(),'fork':{'commandId','targetSessionId','expectedHistoryRevision','throughMessageId','mode','bundle','bundleRevision','resetModel','descendants'},'export':{'commandId','expectedHistoryRevision','format','scope','fromMessageId','throughMessageId','minimal'},'delete':{'commandId','expectedHistoryRevision','confirmationToken'},'delete.standard':{'commandId','expectedHistoryRevision'},'restore':{'commandId','expectedHistoryRevision'},'retention.hide':{'commandId','expectedHistoryRevision','modifiedBefore','descendants'}}
+        fields={'inspect':set(),'receipt':{'commandId'},'export.read':{'snapshotId','offset','limit'},'delete.preview':set(),'fork':{'commandId','targetSessionId','expectedHistoryRevision','throughMessageId','mode','bundle','bundleRevision','resetModel','descendants','managedTarget'},'export':{'commandId','expectedHistoryRevision','format','scope','fromMessageId','throughMessageId','minimal'},'delete':{'commandId','expectedHistoryRevision','confirmationToken'},'delete.standard':{'commandId','expectedHistoryRevision'},'restore':{'commandId','expectedHistoryRevision'},'retention.hide':{'commandId','expectedHistoryRevision','modifiedBefore','descendants'}}
         if operation not in fields or not isinstance(args,dict) or set(args)-fields[operation]:raise ValueError('Unsupported lifecycle operation or arguments')
         if len(json.dumps(args).encode())>32768:raise ValueError('Lifecycle arguments exceed their bound')
         if operation=='inspect':return self.inspect()
@@ -230,8 +230,7 @@ class Lifecycle:
         if args.get('confirmationToken')!=preview['confirmationToken'] or time.time()>preview['expiresAt'] or preview['historyRevision']!=inspected['historyRevision']:raise ValueError('Deletion preview expired or changed; review again')
         return preview
     def prepare_fork(self,args):
-        from .managed_session import runtime_scope
-        if runtime_scope(self.cwd,self.identity,self.server.config):raise ValueError('Managed history copies require a fresh owned target allocation')
+        from .managed_session import copy_target
         mode=args.get('mode','complete')
         if mode not in {'complete','recovery'}:raise ValueError('Choose complete history or readable recovery mode')
         if type(args.get('resetModel',False)) is not bool:raise ValueError('resetModel must be a boolean')
@@ -242,7 +241,8 @@ class Lifecycle:
         guard_copy_source(self.server,self.identity)
         target=args.get('targetSessionId')
         if not isinstance(target,str) or str(uuid.UUID(target))!=target:raise ValueError('Reserved target UUID required')
-        destination=self.server.directory(self.cwd,target);target_app=location(home(self.server),target)
+        managed=copy_target(self.server,self.identity,self.cwd,target,args.get('managedTarget'))
+        destination=self.server.directory(managed['workspace'] if managed else self.cwd,target);target_app=location(home(self.server),target)
         if destination.exists() or target_app.exists():raise ValueError('Fork target already exists; inspect original creation receipt, never replay')
         rows,metadata,revision=canonical(self.directory,args['expectedHistoryRevision'])
         if metadata.get('session_id')!=self.identity:raise ValueError('Canonical source metadata identity is unavailable or different')
@@ -273,31 +273,40 @@ class Lifecycle:
             context=[row for row in context if row.get('role') not in {'system','developer'}]
             controls=copied.get('control-state.json',{})
             copied={'control-state.json':({'selection':controls['selection']} if 'selection' in controls and not args.get('resetModel') else {})}
-        return context,metadata,revision,copied
+        return context,metadata,revision,copied,managed
     def fork_bundles(self):
         choices=self.server.config.get('forkBundles',{})
         if not isinstance(choices,dict) or len(choices)>64 or any(not isinstance(k,str) or not 1<=len(k)<=200 or not isinstance(v,str) or not 1<=len(v)<=4096 for k,v in choices.items()):raise ValueError('Launcher fork bundle choices are invalid')
         return choices
     def fork(self,args,prepared):
         from amplifier_foundation.session.history import SessionHistoryStore
-        context,metadata,revision,copied=prepared;target=args['targetSessionId'];target_app=location(home(self.server),target)
+        context,metadata,revision,copied,managed=prepared;target=args['targetSessionId'];target_app=location(home(self.server),target)
+        from .managed_session import reserve_copy,complete_copy,copied_configuration,location as managed_location
+        cwd=managed['workspace'] if managed else self.cwd
         target_app.mkdir(parents=True,exist_ok=False,mode=0o700)
+        managed_record=reserve_copy(self.server,managed,{'operation':'fork','sessionId':self.identity,'historyRevision':revision,'commandId':args['commandId']}) if managed else None
         marker={'state':'reserved','commandId':args['commandId'],'sourceSessionId':self.identity,'sourceRevision':revision,'bundle':metadata.get('bundle') or metadata['bundle_name']}
         write(target_app/'history-fork.json',marker)
-        destination=self.server.directory(self.cwd,target);destination.mkdir(parents=True,exist_ok=False,mode=0o700)
-        execution=state(self.server,self.identity,self.cwd)['executionDirectory']
+        destination=self.server.directory(cwd,target);destination.mkdir(parents=True,exist_ok=False,mode=0o700)
+        execution=cwd if managed else state(self.server,self.identity,self.cwd)['executionDirectory']
         safe={key:copy.deepcopy(metadata[key]) for key in ('bundle','bundle_name','working_dir','name','name_source','description','model','provider') if key in metadata}
+        if managed:
+            safe.update(working_dir=cwd,location=managed_location(managed))
+            copied=copied_configuration(copied,self.cwd,cwd)
         preserve_system=not (args.get('mode')=='recovery' or args.get('bundle'))
         safe.update(session_id=target,parent_id=None,created_at=time.time(),status='forked',preserve_system=preserve_system,fork={'source_session_id':self.identity,'source_revision':revision,'through_message_id':args.get('throughMessageId'),'jobs_replayed':False})
         if args.get('mode')=='recovery':safe['recovery']={'source_session_id':self.identity,'mode':'readable_history','work_replayed':False,'source_effects':'not_rolled_back'}
         from amplifier_foundation.session.shared_state import SharedSessionStore
-        target_handle=SharedSessionStore(self.cwd,target).acquire(app='amplifier-acp-fork',pid=os.getpid())
+        target_handle=SharedSessionStore(cwd,target).acquire(app='amplifier-acp-fork',pid=os.getpid())
         try:
             SessionHistoryStore(destination,session_id=target).save(context,safe,preserve_system=preserve_system)
             for name,value in copied.items():write(target_app/name,value)
-            write(target_app/'execution-location.json',{'sessionId':target,'historyCwd':self.cwd,'executionDirectory':execution,'executionRevision':0})
-            result={'sessionId':target,'creationConfirmed':True,'historyCwd':self.cwd,'executionDirectory':execution,'historyRevision':history.inspect(destination)['revision'],'source':{'sessionId':self.identity,'historyRevision':revision,**({'throughMessageId':args['throughMessageId']} if args.get('throughMessageId') else {})},'workReplayed':False,'mode':args.get('mode','complete'),'bundleSelection':args.get('bundle'),'preservedSource':True}
-            write(target_app/'history-fork.json',{**marker,'state':'committed','result':result});return result
+            write(target_app/'execution-location.json',{'sessionId':target,'historyCwd':cwd,'executionDirectory':execution,'executionRevision':0})
+            result={'sessionId':target,'creationConfirmed':True,'historyCwd':cwd,'executionDirectory':execution,'historyRevision':history.inspect(destination)['revision'],'source':{'sessionId':self.identity,'historyRevision':revision,**({'throughMessageId':args['throughMessageId']} if args.get('throughMessageId') else {})},'workReplayed':False,'mode':args.get('mode','complete'),'bundleSelection':args.get('bundle'),'preservedSource':True}
+            if managed_record:result.update(location=managed_location(managed),configurationScope='global-and-session',runtimeStarted=False,generatedFilesCopied=False)
+            write(target_app/'history-fork.json',{**marker,'state':'committed','result':result})
+            if managed_record:complete_copy(self.server,managed_record,title=safe.get('name','Copied chat'),bundle=safe['bundle'])
+            return result
         finally:target_handle.release()
     def prepare_export(self,args):
         if type(args.get('minimal',False)) is not bool:raise ValueError('Export minimal flag must be a boolean')

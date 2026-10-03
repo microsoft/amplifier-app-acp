@@ -1,112 +1,244 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Native managed creation v1",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "operation",
-    "sessionId",
-    "cwd",
-    "commandId",
-    "allocationHash"
-  ],
-  "properties": {
-    "operation": {
-      "enum": [
-        "create",
-        "receipt"
-      ]
-    },
-    "sessionId": {
-      "type": "string",
-      "format": "uuid"
-    },
-    "cwd": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 4096
-    },
-    "commandId": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 200
-    },
-    "allocationHash": {
-      "type": "string",
-      "pattern": "^[a-f0-9]{64}$"
-    },
-    "title": {
-      "type": "string",
-      "maxLength": 200
-    },
-    "bundle": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 200
-    },
-    "bundleRevision": {
-      "type": "string",
-      "pattern": "^[a-f0-9]{64}$"
-    },
-    "selection": {
+  "title": "Native managed creation and fresh copies v1",
+  "oneOf": [
+    {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "instance",
-        "model"
+        "operation"
       ],
       "properties": {
-        "instance": {
+        "operation": {
+          "const": "options"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation"
+      ],
+      "properties": {
+        "operation": {
+          "const": "defaults"
+        },
+        "bundle": {
           "type": "string",
           "minLength": 1,
           "maxLength": 200
         },
-        "model": {
+        "bundleRevision": {
           "type": "string",
-          "minLength": 1,
-          "maxLength": 500
-        },
-        "effort": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 100
+          "pattern": "^[a-f0-9]{64}$"
         }
       }
-    }
-  },
-  "allOf": [
+    },
     {
-      "if": {
-        "properties": {
-          "operation": {
-            "const": "receipt"
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "sessionId",
+        "cwd"
+      ],
+      "properties": {
+        "operation": {
+          "const": "configuration.snapshot"
+        },
+        "sessionId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "sessionId",
+        "cwd",
+        "commandId",
+        "allocationHash"
+      ],
+      "properties": {
+        "operation": {
+          "const": "create"
+        },
+        "sessionId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "commandId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "allocationHash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "bundle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "bundleRevision": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "selection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "instance",
+            "model"
+          ],
+          "properties": {
+            "instance": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "effort": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            }
           }
         }
-      },
-      "then": {
-        "not": {
-          "anyOf": [
-            {
-              "required": [
-                "title"
-              ]
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "sessionId",
+        "cwd",
+        "commandId",
+        "allocationHash"
+      ],
+      "properties": {
+        "operation": {
+          "const": "receipt"
+        },
+        "sessionId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "commandId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "allocationHash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "sessionId",
+        "cwd",
+        "commandId",
+        "allocationHash",
+        "source"
+      ],
+      "properties": {
+        "operation": {
+          "const": "clone"
+        },
+        "sessionId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "commandId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "allocationHash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "sourceSessionId",
+            "sourceCwd",
+            "configurationHash",
+            "executionDirectory",
+            "locationRevision"
+          ],
+          "properties": {
+            "version": {
+              "const": 1
             },
-            {
-              "required": [
-                "bundle"
-              ]
+            "sourceSessionId": {
+              "type": "string",
+              "format": "uuid"
             },
-            {
-              "required": [
-                "bundleRevision"
-              ]
+            "sourceCwd": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
             },
-            {
-              "required": [
-                "selection"
-              ]
+            "configurationHash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "executionDirectory": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "locationRevision": {
+              "type": "integer",
+              "minimum": 0
             }
-          ]
+          }
         }
       }
     }
