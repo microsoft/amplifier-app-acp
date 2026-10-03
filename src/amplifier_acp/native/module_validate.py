@@ -18,7 +18,9 @@ async def main():
         from amplifier_foundation import Bundle
         from amplifier_core.validation import ToolValidator,HookValidator,ProviderValidator,OrchestratorValidator,ContextValidator
         entry={'module':module}
-        if args.get('source'):entry['source']=args['source']
+        from amplifier_acp.module_sources import from_environment
+        source=from_environment().get(module) or args.get('source')
+        if source:entry['source']=source
         data={'bundle':{'name':'module-validation'}}
         if section in {'orchestrator','context'}:data['session']={section:entry}
         else:data[section]=[entry]

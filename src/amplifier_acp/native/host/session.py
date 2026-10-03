@@ -515,10 +515,15 @@ def required_components():
 
 def module_source(config, snapshot, module, source, components=None):
     components = components or required_components()
-    selected = components.source(module, source, installed=True)
-    if components.owns(module, source):
-        return selected
-    return source if snapshot else config.module_sources.get(module) or source
+    overrides = getattr(config, 'launcher_module_sources', {})
+    # Resolve the original policy for provenance without loading its source.
+    original = (components.source(module, source, installed=True) if components.owns(module, source)
+                else source if snapshot else config.module_sources.get(module) or source)
+    if module in overrides:
+        from amplifier_acp.module_sources import record
+        record(config, module, original, overrides[module])
+        return overrides[module]
+    return original
 
 
 async def load_configured_bundle(registry, config, reference):
@@ -715,7 +720,7 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
         source_resolver=lambda module, source: module_source(config, snapshot, module, source, components),
         progress_callback=progress)
     if getattr(prepared, "resolver", None) is not None:
-        prepared.resolver = ComponentResolver(prepared.resolver, components)
+        prepared.resolver = ComponentResolver(prepared.resolver, components, config.launcher_module_sources)
     await materialize_bundle_providers(loaded, prepared)
     apply_provider_environment(prepared.mount_plan)
     from ..session_files import project_slug
@@ -863,6 +868,8 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
             "capabilities": {name: coordinator.get_capability(name) is not None for name in
                 ("session.spawn", "session.resume", "mention_resolver", "model_role_resolver")},
             "module_load_failures": failures}
+        from amplifier_acp.module_sources import provenance
+        report["moduleSourceOverrides"] = provenance(config)
         report["config_inputs"] = config_inputs
         report["history_source"] = history_source
         report["execution_workspace"] = str(execution_workspace)

@@ -429,6 +429,8 @@ class Session:
 
 class Server:
     def __init__(self,config,output):
+        from .module_sources import configure
+        configure(config)
         self.config,self.output=config,output
         # One ACP process owns one configured native home. Passive Foundation
         # fence/lifecycle APIs must resolve the same canonical files as workers.

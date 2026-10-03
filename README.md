@@ -38,7 +38,9 @@ uv run --no-dev amplifier-acp --config /absolute/agent.json
 
 `home` owns the existing community settings/native history. `appHome` owns private
 configuration/controls/attachments/reports. `registryHome` can override the
-Foundation cache without moving native history. Omitted homes use existing
+Foundation cache without moving native history. Trusted launchers may set the bounded
+[`moduleSources` override map](docs/launcher-module-sources.md) to select an exact
+reviewed module source without editing shared settings. Omitted homes use existing
 `AMPLIFIER_HOME` / `AMPLIFIER_WEB_HOME` conventions. Credentials remain in the
 native configuration/environment; they are never ACP authentication payloads.
 Do not point an experiment at another owner's state.

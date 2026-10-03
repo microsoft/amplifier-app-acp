@@ -234,22 +234,23 @@ def imagegen_defaults(base, behavior):
 
 class ComponentResolver:
     """Apply the same source rule when a dynamic child lazily adds a module."""
-    def __init__(self, resolver, components):
+    def __init__(self, resolver, components, source_overrides=None):
         self.resolver, self.components = resolver, components
+        self.source_overrides = dict(source_overrides or {})
 
     def __getattr__(self, name):
         return getattr(self.resolver, name)
 
     def resolve(self, module_id, source_hint=None, profile_hint=None):
         hint = profile_hint if profile_hint is not None else source_hint
-        selected = self.components.source(module_id, hint, installed=True)
+        selected = self.source_overrides.get(module_id) or self.components.source(module_id, hint, installed=True)
         source = self.resolver.resolve(module_id, selected)
         from .context_source import equivalent_context_source
         return equivalent_context_source(module_id, selected, source)
 
     async def async_resolve(self, module_id, source_hint=None, profile_hint=None):
         hint = profile_hint if profile_hint is not None else source_hint
-        selected = self.components.source(module_id, hint, installed=True)
+        selected = self.source_overrides.get(module_id) or self.components.source(module_id, hint, installed=True)
         source = await self.resolver.async_resolve(module_id, selected)
         from .context_source import equivalent_context_source
         return equivalent_context_source(module_id, selected, source)

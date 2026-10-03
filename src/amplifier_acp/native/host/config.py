@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 import os
@@ -128,6 +128,9 @@ class HostConfig:
     registry_home: Path
     config_home: Path | None = None
     global_only: bool = False
+    launcher_module_sources: dict = field(default_factory=dict)
+    source_resolutions: dict = field(default_factory=dict, compare=False)
+    source_resolution_truncated: bool = field(default=False, compare=False)
 
     @property
     def settings_file(self):
@@ -250,4 +253,5 @@ def read_config(workspace, *, home=None, shared_home=None, session_id=None, glob
         if isinstance(value, list): return [relocate(v) for v in value]
         if isinstance(value, str): return value.replace(str(home / "foundation"), str(registry_home))
         return value
-    return HostConfig(home, workspace, relocate(settings), registry_home, shared, global_only)
+    from amplifier_acp.module_sources import from_environment
+    return HostConfig(home, workspace, relocate(settings), registry_home, shared, global_only, from_environment())

@@ -373,6 +373,7 @@ class Worker:
                 execution_workspace=config.get("workingDirectory"), install_overrides=install_overrides,global_only=bool(managed_scope))
             if install_overrides is not None:
                 active_install_overrides(self.home, str(install_overrides))
+            self.module_source_overrides = report.get("moduleSourceOverrides", {})
             self.config_inputs = tuple(report.get("config_inputs", ()))
             if config.get("mcpServers"):
                 from amplifier_acp.mcp import install
@@ -774,7 +775,7 @@ class Worker:
                     raise ValueError('Start a new runtime inspection before paging')
                 if self.inspection_snapshot is None or args.get('refresh'):
                     mounts=mounted(self.session.coordinator)
-                    self.inspection_snapshot=await asyncio.to_thread(interpreter,mounts,self.inspection_instance)
+                    self.inspection_snapshot=await asyncio.to_thread(interpreter,mounts,self.inspection_instance,getattr(self,"module_source_overrides",{}))
                 result=page(self.inspection_snapshot,args)
             elif op == "dependencies":
                 if __package__:

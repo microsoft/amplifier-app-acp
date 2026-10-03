@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsoft.github.io/amplifier-acp/schemas/launcher-module-sources.v1.json",
+  "description": "Trusted operator launcher field moduleSources, not an ACP request. Runtime additionally validates total64KiB, existing absolute directories, credential-free exact-commit Git sources and safe subdirectory.",
+  "type": "object",
+  "maxProperties": 64,
+  "propertyNames": {
+    "pattern": "^[a-z][a-z0-9_-]{0,127}$"
+  },
+  "additionalProperties": {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 4096
+  }
+}

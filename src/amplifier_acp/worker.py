@@ -30,6 +30,8 @@ class NativeWorker:
         env = os.environ.copy()
         # An inherited shell's venv must not redirect Foundation installers.
         env.pop('VIRTUAL_ENV',None)
+        from .module_sources import configure
+        configure(self.config,env)
         # Explicit process env remains authoritative over settings keys.env.
         if self.config.get('home'):
             env['AMPLIFIER_HOME'] = str(Path(self.config['home']).expanduser().resolve())

@@ -33,7 +33,8 @@ def public(value):
 
 
 async def query(request):
-    source=request.get('source')
+    from amplifier_acp.module_sources import from_environment
+    source=from_environment().get(request['module']) or request.get('source')
     if not source:
         try:provider_class(request['module'])
         except ImportError:source=request.get('fallbackSource')

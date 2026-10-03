@@ -55,6 +55,11 @@ def source_config(owner,root_rows):
     managed=owner.config.get('managedSessionRoots',[])
     if not isinstance(managed,list) or len(managed)>16 or any(not isinstance(value,str) or not Path(value).is_absolute() or len(value)>8192 for value in managed):raise ValueError('Unsupported managed allocation source references')
     if managed:result['managedAllocations']={'roots':managed,'authority':'external-host-owner','included':False,'requiredForManagedActivation':True}
+    if 'moduleSources' in owner.config:
+        from .module_sources import validate
+        result['moduleSourceOverrides']={'sources':validate(owner.config['moduleSources']),
+            'authority':'trusted-launcher','sourceBodies':'only-within-declared-native-roots',
+            'automaticRestore':False}
     return result
 
 def prepare(owner,plan,parts,check,command_id,include_credentials):

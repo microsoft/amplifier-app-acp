@@ -19,9 +19,11 @@ async def main():
     os.umask(0o077)
     try:
         import importlib.util
-        if importlib.util.find_spec('amplifier_module_provider_openai_chatgpt') is None:
+        from amplifier_acp.module_sources import from_environment
+        override=from_environment().get(request['module'])
+        if override or importlib.util.find_spec('amplifier_module_provider_openai_chatgpt') is None:
             from amplifier_foundation import Bundle
-            source=request.get('source')
+            source=override or request.get('source')
             if not source:raise ValueError('No configured source for this provider.')
             os.environ['AMPLIFIER_HOME']=request['registryHome']
             bundle=Bundle.from_dict({'bundle':{'name':'provider-sign-in'},'providers':[{'module':request['module'],'source':source}]})

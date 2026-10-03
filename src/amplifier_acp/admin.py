@@ -21,6 +21,8 @@ OPERATIONS=GENERATION_OPERATIONS | MAINTENANCE_OPERATIONS | HISTORY_IMPORT_OPERA
 
 class Administration:
  def __init__(self,config,on_idle=None):
+  from .module_sources import configure
+  configure(config)
   self.on_idle=on_idle
   self.config=config;self.lock=asyncio.Lock();self.setup=None;self.bundles=None;self.registry=None;self.background_gates={}
   from .admin_lifecycle import AdminLifecycle

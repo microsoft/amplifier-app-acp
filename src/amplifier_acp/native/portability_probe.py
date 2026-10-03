@@ -152,13 +152,15 @@ async def _bounded_info(provider, capability):
 async def _probe(request):
     policy = _validate_request(request)
     _runtime_transfer_fence()
-    if request.get("source"):
+    from amplifier_acp.module_sources import from_environment
+    source=from_environment().get(request['module']) or request.get('source')
+    if source:
         from amplifier_foundation import Bundle
         previous_home = os.environ.get("AMPLIFIER_HOME")
         try:
             os.environ["AMPLIFIER_HOME"] = request["registryHome"]
             bundle = Bundle.from_dict({"bundle": {"name": "destination-execution-probe"},
-                "providers": [{"module": request["module"], "source": request["source"]}]})
+                "providers": [{"module": request["module"], "source": source}]})
             await bundle.prepare(strict=True)
         finally:
             if previous_home is None:

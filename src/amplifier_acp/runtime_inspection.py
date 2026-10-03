@@ -113,7 +113,7 @@ def mounted(coordinator):
     for kind in ('context','orchestrator'):append(kind,kind,coordinator.get(kind))
     return rows
 
-def interpreter(mounts,instance):
+def interpreter(mounts,instance,module_source_overrides=None):
     rows=[]
     for dist in importlib.metadata.distributions():
         direct=dist.read_text('direct_url.json') or '{}'
@@ -124,6 +124,7 @@ def interpreter(mounts,instance):
     rows.sort(key=lambda row:row['name'])
     value={'version':1,'scope':'resident-native-worker','available':True,'resident':True,'instanceId':instance,'capturedAt':time.time(),'generation':os.environ.get('AMPLIFIER_UNIFIED_RELEASE') or None,'python':{'executable':sys.executable,'version':platform.python_version(),'prefix':sys.prefix},'mounts':mounts,'mountedCount':len(mounts),'coverage':{'installedDistributions':True,'selectedRootMounts':True,'hooksRegistration':'not_inspected','delegatedSessions':'not_inspected','loadedCodeBytesVerified':False},'items':rows}
     if len(json.dumps(value).encode())>MAX_RECEIPT:raise ValueError('Runtime inspection exceeds8MiB')
+    value['moduleSourceOverrides'] = module_source_overrides or {}
     return {**value,'revision':digest(value)}
 
 async def resident(session,args):

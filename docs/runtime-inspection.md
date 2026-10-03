@@ -52,3 +52,7 @@ It can compare the host's resident worker lifetime/generation to
 lifecycle changes. Absent worker authority must stay unavailable. A distribution
 self-updater still needs its own installed release manifest, command receipt,
 quiescence/restart authority and fresh-process adoption proof.
+
+Trusted launcher source overrides are reported separately as bounded
+`moduleSourceOverrides`; see [the launcher source contract](launcher-module-sources.md).
+Those selections do not replace mounted file-origin or sealed-byte evidence.
