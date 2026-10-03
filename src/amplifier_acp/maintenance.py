@@ -18,7 +18,7 @@ OPERATIONS={'maintenance.preview','maintenance.acquire','maintenance.snapshot',
  'maintenance.release','maintenance.lease','maintenance.receipt','maintenance.artifact.read',
  'maintenance.reset.preview','maintenance.reset.apply','maintenance.reset.restore','maintenance.reset.reconcile',
  'maintenance.archive.create','maintenance.archive.add','maintenance.archive.prepare','maintenance.archive.manifest',
- 'maintenance.restore.preview','maintenance.restore.manifest','maintenance.restore.apply','maintenance.restore.reconcile'}
+ 'maintenance.restore.preview','maintenance.restore.manifest','maintenance.restore.apply','maintenance.restore.reconcile','maintenance.restore.inspect'}
 PARTS={'session-history','session-state','native-settings'}
 CHUNK=256*1024
 MAX_FILES=2048
@@ -407,7 +407,7 @@ class Maintenance:
           'maintenance.receipt':{'commandId'},'maintenance.artifact.read':{'artifactId','sha256','offset','maxBytes'},
           'maintenance.reset.reconcile':{'commandId','leaseId','previewHash','resetCommandId'},'maintenance.reset.apply':{'commandId','leaseId','previewHash'},'maintenance.reset.restore':{'commandId','leaseId','previewHash','resetCommandId','expectedPostResetHash'}}
         fields.update({'maintenance.archive.create':{'commandId','parts','privateContentReviewed','includeCredentials','credentialsReviewed'},'maintenance.archive.add':{'commandId','planId','expectedRevision','sessions','workspaces'},'maintenance.archive.prepare':{'commandId','planId','expectedRevision'},'maintenance.archive.manifest':{'previewHash','cursor','limit'}})
-        fields.update({'maintenance.restore.preview':{'artifactId','sha256','destination','privateContentReviewed','credentialsReviewed'},'maintenance.restore.manifest':{'previewHash','cursor','limit'},'maintenance.restore.apply':{'commandId','previewHash'},'maintenance.restore.reconcile':{'commandId','restoreCommandId'}})
+        fields.update({'maintenance.restore.preview':{'artifactId','sha256','destination','privateContentReviewed','credentialsReviewed'},'maintenance.restore.manifest':{'previewHash','cursor','limit'},'maintenance.restore.apply':{'commandId','previewHash'},'maintenance.restore.reconcile':{'commandId','restoreCommandId'},'maintenance.restore.inspect':{'restoreCommandId'}})
         if fields[operation] is not None and set(args)-fields[operation]:raise ValueError('Unsupported maintenance operation fields')
         async with self.lock:
             if operation in {'maintenance.preview','maintenance.reset.preview'}:return await self.run(self.preview,workspace,args,operation.endswith('reset.preview'))
@@ -417,6 +417,7 @@ class Maintenance:
             if operation=='maintenance.lease':return self.lease_view()
             if operation=='maintenance.archive.manifest':return await self.run(self.archives().page,workspace,args)
             if operation in {'maintenance.restore.preview','maintenance.restore.manifest'}:return await self.run(self.restores().preview if operation.endswith('.preview') else self.restores().page,workspace,args)
+            if operation=='maintenance.restore.inspect':return await self.run(self.restores().inspect,workspace,args)
             if operation=='maintenance.release':return await self.run(self.release,identity(args.get('leaseId')))
             command=args.get('commandId');previous=await self.run(self.receipt,workspace,command);signature=fingerprint({'workspace':workspace,'operation':operation,'args':args})
             if previous:

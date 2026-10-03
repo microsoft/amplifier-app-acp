@@ -14,7 +14,7 @@ from .history_import import strict_json
 from .relocation import write
 from .session_lifecycle import regular
 
-OPERATIONS={'maintenance.restore.preview','maintenance.restore.manifest','maintenance.restore.apply','maintenance.restore.reconcile'}
+OPERATIONS={'maintenance.restore.preview','maintenance.restore.manifest','maintenance.restore.apply','maintenance.restore.reconcile','maintenance.restore.inspect'}
 ROOT_IDS={'native-home','app-home','checkpoint','events','registry','sources','bundle','runtimeManifest','workspace-settings'}
 PENDING='.amplifier-acp-restore-pending.json'
 
@@ -264,6 +264,19 @@ class Restores:
         path.unlink();fd=os.open(path.parent,os.O_RDONLY)
         try:os.fsync(fd)
         finally:os.close(fd)
+    def inspect(self,workspace,args):
+        command=args.get('restoreCommandId');previous=self.owner.receipt(workspace,command)
+        if previous is None:return {'available':False,'restoreCommandId':command,'finalized':False,'replayed':False}
+        receipt=previous[1]
+        if receipt.get('operation')!='maintenance.restore.apply':raise Refused('Exact original restore command required')
+        view={'available':True,'restoreCommandId':command,'receipt':receipt,'finalized':False,'replayed':False,'startsWorker':False}
+        if receipt['state']!='succeeded' or not receipt.get('result',{}).get('restored'):return view
+        result=receipt['result'];target=self.target(result['destination']);pending=checked(target/'native-home'/PENDING)
+        completion=checked(target/'app-home/restore-receipts'/(hashlib.sha256(command.encode()).hexdigest()+'.json'))
+        expected={'version':1,'commandId':command,'phase':'completed','result':result,'inputsReplayed':False}
+        view['pending']=pending.exists()
+        view['finalized']=not view['pending'] and completion.exists() and strict_json(regular(completion,1024*1024))==expected
+        return view
     def reconcile(self,workspace,args):
         require_admin(self.owner);previous=self.owner.receipt(workspace,args.get('restoreCommandId'))
         if previous is None or previous[1].get('operation')!='maintenance.restore.apply' or previous[1]['state']!='succeeded':raise Refused('Only a conclusively completed original restore may clear its leftover fence')

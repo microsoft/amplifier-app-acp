@@ -893,6 +893,39 @@
         }
       },
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "maintenance.restore.inspect"
+        },
+        "args": {
+          "type": "object",
+          "required": [
+            "restoreCommandId"
+          ],
+          "properties": {
+            "restoreCommandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     }
   ]
 }

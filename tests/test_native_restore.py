@@ -30,6 +30,8 @@ async def test_protocol_restores_new_home_preserves_native_identity_and_never_re
         assert applied['receipt']['state']=='succeeded' and not client.events
         same=await call(client,cwd,'maintenance.restore.apply',request,auth)
         assert same['directory']==applied['directory'] and same['replayed'] is False
+        inspected=await call(client,cwd,'maintenance.restore.inspect',{'restoreCommandId':'restore-once'})
+        assert inspected['finalized'] is True and inspected['pending'] is False and inspected['receipt']==applied['receipt']
         target=Path(applied['directory']);restored=target/'native-home/projects'/project_slug(cwd)/'sessions'/sid
         assert all((restored/p).read_bytes()==raw for p,raw in before.items())
         assert all((original/p).read_bytes()==raw for p,raw in before.items())
@@ -136,6 +138,8 @@ asyncio.run(owner.perform(sys.argv[2],'maintenance.restore.apply',{'commandId':'
     try:
         receipt=(await call(replacement,cwd,'maintenance.receipt',{'commandId':'crash-restore'}))['receipt']
         assert receipt['state']==('unknown' if loss=='during-write' else 'succeeded')
+        inspected=await call(replacement,cwd,'maintenance.restore.inspect',{'restoreCommandId':'crash-restore'})
+        assert inspected['finalized'] is False
         auth=await hold(replacement,cwd)
         before={p:p.read_bytes() for p in marker.parent.rglob('*') if p.is_file() and not p.name.endswith('.lock')}
         duplicate=await call(replacement,cwd,'maintenance.restore.apply',{'commandId':'crash-restore','previewHash':plan['previewHash']},auth)
@@ -147,6 +151,8 @@ asyncio.run(owner.perform(sys.argv[2],'maintenance.restore.apply',{'commandId':'
             settled=await call(replacement,cwd,'maintenance.restore.reconcile',{'commandId':'finish-proof','restoreCommandId':'crash-restore'},auth)
             assert settled['replayed'] is False and not marker.exists()
             with Gate({'home':str(marker.parent)}):pass
+            inspected=await call(replacement,cwd,'maintenance.restore.inspect',{'restoreCommandId':'crash-restore'})
+            assert inspected['finalized'] is True and inspected['pending'] is False
             again=await call(replacement,cwd,'maintenance.restore.reconcile',{'commandId':'finish-proof','restoreCommandId':'crash-restore'},auth)
             assert again['receipt']==settled['receipt']
         assert not replacement.events

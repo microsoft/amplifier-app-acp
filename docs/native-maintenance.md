@@ -351,6 +351,10 @@ Each parent must already exist outside the source native/adapter homes. Operatio
   immutable indexed page. This exact passive read remains available while held.
 - `maintenance.restore.apply`: `{commandId,previewHash}` requires the matching
   held recovery admin authority and creates a **new absent** destination only.
+- `maintenance.restore.inspect`: `{restoreCommandId}` passively checks the exact
+  original receipt and destination completion record. `finalized:true` requires
+  a succeeded original, matching completion record, and absent pending marker.
+  Missing/unknown evidence never becomes success and this read clears no fence.
 - `maintenance.restore.reconcile`: `{commandId,restoreCommandId}` may finalize a
   leftover destination fence only if the original exact receipt is conclusively
   succeeded. It never repeats extraction or turns unknown into success.
