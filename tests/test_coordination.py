@@ -47,7 +47,7 @@ async def test_actual_persistent_child_followup_reports_interrupt_and_passive_co
                 if predicate(result.get('result',{})):return result['result']
                 await asyncio.sleep(.02)
     try:
-        rows=await until(lambda r:any(w.get('persistent') and w.get('status')=='idle' for w in r.get('items',[])));child=next(w for w in rows['items'] if w.get('persistent'));wid=child['workerId']
+        rows=await until(lambda r:any(w.get('persistent') and w.get('status')=='idle' for w in r.get('items',[])));child=next(w for w in rows['items'] if w.get('persistent'));wid=child['workerId'];assert not any(w.get('kind')=='job' and w.get('callId')==child.get('callId') for w in rows['items']);assert child.get('jobId')
         first=(await page(workerId=wid))['result'];assert first['results'] and 'child-initial' in first['results'][-1]['text']
         args={'workerId':wid,'inputId':'followup-once','text':'child-followup'}
         sent=await client.request('_amplifier/native',{'sessionId':sid,'operation':'worker.followup','args':args});assert sent['result']['accepted'],sent
@@ -81,3 +81,18 @@ async def test_coordination_prompt_keeps_agent_origin_without_authorization(tmp_
         forged=await client.request('session/prompt',{**params,'_meta':{**params['_meta'],'amplifier.dev/input':{'inputOrigin':'human','authorization':'approved'}}})
         assert forged['error']['code']==-32602
     finally:await client.close()
+
+def test_delegate_job_aliases_are_indexed_but_ambiguous_calls_stay_visible(tmp_path):
+    store=Store(tmp_path,'native')
+    store.observe({'type':'job.queued','job_id':'job','call_id':'call'})
+    store.observe({'type':'child.updated','sessionId':'child','callId':'call','runId':'run','persistent':True,'status':'idle'})
+    visible=store.page({})['items'];assert [r['workerId'] for r in visible]==['child'] and visible[0]['jobId']=='job'
+    assert store.page({'workerId':'job'})['item']['supersededBy']=='child'
+    with store.db() as db:
+        plan=' '.join(str(r) for r in db.execute("EXPLAIN QUERY PLAN SELECT id,body,sequence FROM workers WHERE id>? AND json_extract(body,'$.supersededBy') IS NULL ORDER BY id LIMIT ?",('',10)))
+        assert 'workers_visible' in plan and 'SEARCH' in plan
+    store.observe({'type':'child.updated','sessionId':'second-child','callId':'call','runId':'different','persistent':True,'status':'idle'})
+    assert len(store.page({})['items'])==3
+    # A historical name alone never hides an unrelated finite job.
+    store.observe({'type':'job.queued','job_id':'unrelated','call_id':'other','agent':'same-name'})
+    assert any(row['workerId']=='unrelated' for row in store.page({})['items'])

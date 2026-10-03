@@ -43,3 +43,11 @@ command ID. The adapter reserves that origin durably before native admission and
 annotates the exact canonical input. Arbitrary authority/provenance fields are
 refused. Passive history retains `authorization:'unverified-native-history'`;
 this marker never grants human consent.
+
+
+A delegated tool's queue placeholder may share an exact call ID with its native
+child. The index links only an unambiguous active job/child pair: the canonical
+child remains visible, its `jobId` links the retained job, and the placeholder's
+`supersededBy` points back. Exact-ID reads retain both records. Visible keyset
+pages use a partial index, so hidden placeholders do not create historical scans.
+Matching labels never establish identity; ambiguous call IDs remain visible.

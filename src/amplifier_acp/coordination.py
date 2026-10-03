@@ -20,7 +20,7 @@ class Store:
         db=sqlite3.connect(self.path);db.execute('PRAGMA journal_mode=WAL');db.execute('PRAGMA synchronous=FULL')
         try:
             with db:
-                if create:db.executescript('CREATE TABLE IF NOT EXISTS workers(id TEXT PRIMARY KEY,body TEXT NOT NULL,sequence INTEGER NOT NULL DEFAULT 0);CREATE INDEX IF NOT EXISTS workers_status ON workers(json_extract(body,\'$.status\'));CREATE TABLE IF NOT EXISTS reports(worker TEXT,sequence INTEGER,id TEXT,body TEXT,PRIMARY KEY(worker,sequence),UNIQUE(worker,id));CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY,signature TEXT,body TEXT);CREATE INDEX IF NOT EXISTS command_disposition ON commands(json_extract(body,\'$.disposition\'));CREATE TABLE IF NOT EXISTS state(id INTEGER PRIMARY KEY,revision INTEGER);INSERT OR IGNORE INTO state VALUES(1,0);')
+                if create:db.executescript('CREATE TABLE IF NOT EXISTS workers(id TEXT PRIMARY KEY,body TEXT NOT NULL,sequence INTEGER NOT NULL DEFAULT 0);CREATE INDEX IF NOT EXISTS workers_status ON workers(json_extract(body,\'$.status\'));CREATE INDEX IF NOT EXISTS workers_call ON workers(json_extract(body,\'$.callId\'),json_extract(body,\'$.kind\'));CREATE INDEX IF NOT EXISTS workers_visible ON workers(id) WHERE json_extract(body,\'$.supersededBy\') IS NULL;CREATE TABLE IF NOT EXISTS reports(worker TEXT,sequence INTEGER,id TEXT,body TEXT,PRIMARY KEY(worker,sequence),UNIQUE(worker,id));CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY,signature TEXT,body TEXT);CREATE INDEX IF NOT EXISTS command_disposition ON commands(json_extract(body,\'$.disposition\'));CREATE TABLE IF NOT EXISTS state(id INTEGER PRIMARY KEY,revision INTEGER);INSERT OR IGNORE INTO state VALUES(1,0);')
                 yield db
         finally:db.close()
     def observe(self,event):
@@ -42,8 +42,25 @@ class Store:
                 if not db.execute('SELECT 1 FROM reports WHERE worker=? AND id=?',(wid,rid)).fetchone():
                     sequence+=1;raw=report.encode();text=raw[-20000:].decode('utf-8',errors='ignore');receipt={'id':rid,'sequence':sequence,'text':text,'source':'worker','runId':event.get('runId'),'sourceTruncated':bool(event.get('reportTruncated') or len(raw)>20000),'sourceChars':event.get('reportSourceChars',len(report)),'window':event.get('reportWindow','tail')}
                     db.execute('INSERT INTO reports VALUES(?,?,?,?)',(wid,sequence,rid,json.dumps(receipt)));db.execute('DELETE FROM reports WHERE worker=? AND sequence<=?',(wid,sequence-32))
-            db.execute('INSERT OR REPLACE INTO workers VALUES(?,?,?)',(wid,json.dumps(body),sequence));db.execute('UPDATE state SET revision=revision+1 WHERE id=1')
+            db.execute('INSERT OR REPLACE INTO workers VALUES(?,?,?)',(wid,json.dumps(body),sequence))
+            self.link_delegate(db,body)
+            db.execute('UPDATE state SET revision=revision+1 WHERE id=1')
         return True
+    @staticmethod
+    def link_delegate(db,body):
+        # A live delegated tool job and its actual native child describe one
+        # visible worker. Keep both receipts; join only unique active call proof.
+        call=body.get('callId')
+        if not call:return
+        active="json_extract(body,'$.status') IN ('working','running','starting','ready','queued','pending','stopping','idle')"
+        jobs=db.execute("SELECT id FROM workers WHERE json_extract(body,'$.callId')=? AND json_extract(body,'$.kind')='job' AND "+active+' LIMIT 2',(call,)).fetchall()
+        children=db.execute("SELECT id FROM workers WHERE json_extract(body,'$.callId')=? AND json_extract(body,'$.kind')='session' AND "+active+' LIMIT 2',(call,)).fetchall()
+        if len(jobs)==1 and len(children)==1:
+            db.execute("UPDATE workers SET body=json_set(body,'$.supersededBy',?) WHERE id=?",(children[0][0],jobs[0][0]))
+            db.execute("UPDATE workers SET body=json_set(body,'$.jobId',?) WHERE id=?",(jobs[0][0],children[0][0]))
+        elif len(children)>1 or len(jobs)>1:
+            # Ambiguous native call identities must stay visible, not guessed.
+            db.execute("UPDATE workers SET body=json_remove(body,'$.supersededBy') WHERE json_extract(body,'$.callId')=? AND json_extract(body,'$.kind')='job'",(call,))
     def lost(self):
         with self.db() as db:
             if not db:return
@@ -63,7 +80,7 @@ class Store:
                 if not row:raise ValueError('Worker is not indexed for this native parent')
                 results=[json.loads(r[0]) for r in db.execute('SELECT body FROM reports WHERE worker=? AND sequence>? ORDER BY sequence LIMIT ?',(wid,after,count))]
                 return {'available':True,'item':self.public(row,resident),'results':results,'latestSequence':row[1],'revision':revision,'source':'native-worker-index','resident':resident}
-            rows=db.execute('SELECT id,body,sequence FROM workers WHERE id>? ORDER BY id LIMIT ?',(cursor,limit+1)).fetchall()
+            rows=db.execute("SELECT id,body,sequence FROM workers WHERE id>? AND json_extract(body,'$.supersededBy') IS NULL ORDER BY id LIMIT ?",(cursor,limit+1)).fetchall()
             return {'available':True,'items':[self.public((r[1],r[2]),resident) for r in rows[:limit]],'nextCursor':rows[limit-1][0] if len(rows)>limit else None,'revision':revision,'source':'native-worker-index','resident':resident}
     @staticmethod
     def public(row,resident):
