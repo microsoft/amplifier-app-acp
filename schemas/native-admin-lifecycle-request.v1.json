@@ -4,17 +4,195 @@
   "title": "Private configured native administration lifecycle",
   "description": "_amplifier/admin/lifecycle on a launcher-authorized private admin connection. A held intake lease is not browser authorization or a release proof.",
   "type": "object",
-  "required": ["cwd", "operation", "args"],
+  "required": [
+    "cwd",
+    "operation",
+    "args"
+  ],
   "properties": {
-    "cwd": {"type": "string", "minLength": 1},
-    "operation": {"enum": ["inspect", "acquire", "release"]},
-    "args": {"type": "object"}
+    "cwd": {
+      "type": "string",
+      "minLength": 1
+    },
+    "operation": {
+      "enum": [
+        "inspect",
+        "acquire",
+        "release"
+      ]
+    },
+    "args": {
+      "type": "object"
+    }
   },
   "additionalProperties": false,
   "allOf": [
-    {"if": {"properties": {"operation": {"const": "inspect"}}}, "then": {"properties": {"args": {"maxProperties": 0}}}},
-    {"if": {"properties": {"operation": {"const": "acquire"}}}, "then": {"properties": {"args": {"type": "object", "required": ["fenceId", "commandId", "purpose", "instanceId", "dataScope"], "properties": {"fenceId": {"$ref": "#/$defs/token"}, "commandId": {"$ref": "#/$defs/token"}, "purpose": {"enum": ["recovery", "distribution-update"]}, "instanceId": {"$ref": "#/$defs/token"}, "dataScope": {"$ref": "#/$defs/token"}}, "additionalProperties": false}}}},
-    {"if": {"properties": {"operation": {"const": "release"}}}, "then": {"properties": {"args": {"type": "object", "required": ["fenceId", "commandId", "leaseId", "outcome"], "properties": {"fenceId": {"$ref": "#/$defs/token"}, "commandId": {"$ref": "#/$defs/token"}, "leaseId": {"$ref": "#/$defs/token"}, "outcome": {"enum": ["unchanged", "ready", "unknown"]}, "proof": {"type": "object"}}, "additionalProperties": false}}}}
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "inspect"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "args": {
+            "maxProperties": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "acquire"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "required": [
+              "fenceId",
+              "commandId",
+              "purpose",
+              "instanceId",
+              "dataScope"
+            ],
+            "properties": {
+              "fenceId": {
+                "$ref": "#/$defs/token"
+              },
+              "commandId": {
+                "$ref": "#/$defs/token"
+              },
+              "purpose": {
+                "enum": [
+                  "recovery",
+                  "distribution-update",
+                  "service-stop"
+                ]
+              },
+              "instanceId": {
+                "$ref": "#/$defs/token"
+              },
+              "dataScope": {
+                "$ref": "#/$defs/token"
+              },
+              "serviceIdentity": {
+                "$ref": "#/$defs/serviceIdentity"
+              }
+            },
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "purpose": {
+                      "const": "service-stop"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "serviceIdentity"
+                  ]
+                },
+                "else": {
+                  "not": {
+                    "required": [
+                      "serviceIdentity"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "release"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "required": [
+              "fenceId",
+              "commandId",
+              "leaseId",
+              "outcome"
+            ],
+            "properties": {
+              "fenceId": {
+                "$ref": "#/$defs/token"
+              },
+              "commandId": {
+                "$ref": "#/$defs/token"
+              },
+              "leaseId": {
+                "$ref": "#/$defs/token"
+              },
+              "outcome": {
+                "enum": [
+                  "unchanged",
+                  "ready",
+                  "unknown"
+                ]
+              },
+              "proof": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    }
   ],
-  "$defs": {"token": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\u0000-\\u001f]+$"}}
+  "$defs": {
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[^\\u0000-\\u001f]+$"
+    },
+    "serviceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "installationId",
+        "dataScope",
+        "ownerId",
+        "instanceId",
+        "releaseDigest"
+      ],
+      "properties": {
+        "installationId": {
+          "$ref": "#/$defs/token"
+        },
+        "dataScope": {
+          "$ref": "#/$defs/token"
+        },
+        "ownerId": {
+          "$ref": "#/$defs/token"
+        },
+        "instanceId": {
+          "$ref": "#/$defs/token"
+        },
+        "releaseDigest": {
+          "$ref": "#/$defs/token"
+        }
+      }
+    }
+  }
 }

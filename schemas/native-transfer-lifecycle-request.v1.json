@@ -53,8 +53,12 @@
             "purpose": {
               "enum": [
                 "recovery",
-                "distribution-update"
+                "distribution-update",
+                "service-stop"
               ]
+            },
+            "serviceIdentity": {
+              "$ref": "#/$defs/serviceIdentity"
             }
           },
           "additionalProperties": false,
@@ -64,6 +68,29 @@
             "instanceId",
             "dataScope",
             "purpose"
+          ],
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "purpose": {
+                    "const": "service-stop"
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "serviceIdentity"
+                ]
+              },
+              "else": {
+                "not": {
+                  "required": [
+                    "serviceIdentity"
+                  ]
+                }
+              }
+            }
           ]
         }
       },
@@ -105,7 +132,8 @@
             "purpose": {
               "enum": [
                 "recovery",
-                "distribution-update"
+                "distribution-update",
+                "service-stop"
               ]
             },
             "outcome": {
@@ -117,6 +145,9 @@
             },
             "proof": {
               "type": "object"
+            },
+            "serviceIdentity": {
+              "$ref": "#/$defs/serviceIdentity"
             }
           },
           "additionalProperties": false,
@@ -127,6 +158,29 @@
             "dataScope",
             "purpose",
             "outcome"
+          ],
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "purpose": {
+                    "const": "service-stop"
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "serviceIdentity"
+                ]
+              },
+              "else": {
+                "not": {
+                  "required": [
+                    "serviceIdentity"
+                  ]
+                }
+              }
+            }
           ]
         }
       },
@@ -136,5 +190,41 @@
       ],
       "additionalProperties": false
     }
-  ]
+  ],
+  "$defs": {
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[^\\u0000-\\u001f]+$"
+    },
+    "serviceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "installationId",
+        "dataScope",
+        "ownerId",
+        "instanceId",
+        "releaseDigest"
+      ],
+      "properties": {
+        "installationId": {
+          "$ref": "#/$defs/token"
+        },
+        "dataScope": {
+          "$ref": "#/$defs/token"
+        },
+        "ownerId": {
+          "$ref": "#/$defs/token"
+        },
+        "instanceId": {
+          "$ref": "#/$defs/token"
+        },
+        "releaseDigest": {
+          "$ref": "#/$defs/token"
+        }
+      }
+    }
+  }
 }

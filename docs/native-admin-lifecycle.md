@@ -44,3 +44,39 @@ transfer work in another cooperating ACP process. Its separate transfer intake
 fence must be acquired first; it does not take another exclusive admin gate.
 
 `voice.configuration` is an explicit passive read on the held owner, including during its selected snapshot lease. It uses SettingsStore directly and cannot initialize a provider, configure credentials, or mutate native files. When credential access is disabled, it does not load key files or inspect credential environment; presence fields are null (uninspected), available/configurable are false. Another admin process cannot borrow this lease. `voice.credential` and `voice.configure` remain excluded from held reads.
+
+## Service stop identity
+
+Lifecycle negotiation additionally advertises `serviceStop:{version:1}`. Only a
+peer with this marker may acquire `purpose:'service-stop'`, with the additional
+`serviceIdentity:{installationId,dataScope,ownerId,instanceId,releaseDigest}`.
+All fields are bounded tokens; the identity's instance and data scope must equal
+the outer fence. The native owner retains a copy, not caller-owned mutable data.
+This purpose grants no recovery maintenance exception. Passive allowlisted reads
+remain available while all writes remain fenced.
+
+External release must have the normal authenticated fence/command/outcome/data
+scope/instance/receipt proof plus `kind:'service-lifecycle'`, exact `expected`
+identity, and an `observed` identity. A conclusive stop refusal uses `unchanged`,
+`serviceOutcome:'stop-refused'`, identical expected/observed identities and a
+`refusalReceiptId`. An explicit successful resume uses `ready`,
+`serviceOutcome:'resumed'`, a different instance ID, and `resumeCommandId`,
+`exitReceiptId`, and `readyReceiptId`. Installation, data scope, owner and release
+digest remain identical. The proof's instance is the observed instance. Legacy
+recovery or update receipts cannot release a service fence.
+
+The host authenticates platform receipts before passing them on this private
+channel; protocol assertions do not themselves establish process ownership. The
+only shortcut is rollback of the exact just-acquired live lease after host
+admission is refused, before any platform stop is authorized. Its lease closure
+may release `unchanged` with `{kind:'admission-refused'}`. Replacement/reconciliation
+APIs reject that shortcut before acquiring another gate. Process death releases
+an OS descriptor, never the product's durable service fence or proof obligation.
+
+The passive transfer lifecycle retains and checks the same service identity and
+release fields. Its process-local intake gate is acquired before the single
+native-home administration gate. Tests cover identity mismatch, caller mutation,
+missing/changed platform receipts, replacement reconciliation, live preflight
+rollback, and the absence of Core sessions or model calls. This implements only
+native participants; application service stop is unavailable until every required
+configured owner and the platform authority have qualified compatible support.

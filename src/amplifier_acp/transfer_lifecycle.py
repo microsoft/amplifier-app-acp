@@ -1,7 +1,7 @@
 """Held passive-transfer intake and native-home writer lifetime."""
 from __future__ import annotations
 import asyncio,os,sys,uuid
-from .admin_lifecycle import AdminGate,AdminFenced,context
+from .admin_lifecycle import AdminGate,AdminFenced,context,service_release
 from .maintenance_gate import Gate
 
 def managed_probe(config):
@@ -35,7 +35,8 @@ class TransferLifecycle:
             if outcome=='unknown':return {'released':False,**self.inspect()}
             if self.requests:raise AdminFenced('Native transfer work remains active')
             abort=outcome=='unchanged' and proof=={'kind':'admission-refused'}
-            if not abort:
+            if not abort and expected['purpose']=='service-stop':service_release(expected,outcome,proof)
+            elif not abort:
                 if not isinstance(proof,dict) or proof.get('verified') is not True or outcome not in {'unchanged','ready'} or any(proof.get(k)!=expected[k] for k in ('fenceId','commandId','dataScope')) or proof.get('outcome')!=outcome or not proof.get('receiptId'):raise AdminFenced('Exact authenticated host release proof required')
                 if not isinstance(proof.get('instanceId'),str) or (proof['instanceId']==expected['instanceId'])!=(outcome=='unchanged'):raise AdminFenced('Transfer release instance differs from the declared outcome')
             self.releases[expected['fenceId']]=receipt
