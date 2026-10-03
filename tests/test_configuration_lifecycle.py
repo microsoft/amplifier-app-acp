@@ -25,9 +25,19 @@ async def test_apply_remount_and_cancel_queued_configuration(tmp_path):
   slow=asyncio.create_task(client.request('session/prompt',{'sessionId':sid,'prompt':[{'type':'text','text':'slow turn'}]}))
   await asyncio.sleep(.1)
   current=await control('configuration.inspect')
-  queued=asyncio.create_task(control('configuration.apply',{'config':plan,'whenIdle':True,'expectedConfigurationRevision':current['result']['configurationRevision']}));await asyncio.sleep(.1)
-  cancelled=await control('configuration.cancel');assert cancelled['result']['cancelled']
+  queued=asyncio.create_task(control('configuration.apply',{'config':plan,'whenIdle':True,'commandId':'pending-apply','expectedConfigurationRevision':current['result']['configurationRevision']}))
+  for _ in range(100):
+   pending=(await control('configuration.inspect'))['result']['pendingConfiguration']
+   if pending:break
+   await asyncio.sleep(.01)
+  assert pending=={'phase':'queued','commandId':'pending-apply'}
+  wrong=await control('configuration.cancel',{'pendingCommandId':'previous-apply'});assert not wrong['result']['cancelled']
+  assert not queued.done()
+  cancelled=await control('configuration.cancel',{'pendingCommandId':pending['commandId']});assert cancelled['result']['cancelled']
   assert (await queued)['result']=={'cancelled':True,'applied':False}
+  assert (await control('configuration.inspect'))['result']['pendingConfiguration'] is None
+  transitions=[e['params']['event']['pendingConfiguration'] for e in client.events if e.get('method')=='_amplifier/event' and e['params']['event'].get('type')=='configuration.pending']
+  assert {'phase':'queued','commandId':'pending-apply'} in transitions and transitions[-1] is None
   await client.request('session/cancel',{'sessionId':sid});assert (await slow)['result']['stopReason']=='cancelled'
  finally:await client.close()
 

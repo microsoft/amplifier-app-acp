@@ -30,7 +30,7 @@ class Session:
         from .coordination import Store
         self.coordination=Store(home(server),identity);self.coordination_lock=asyncio.Lock()
         self.steering=Receipts(home(server),identity);self.steering_lock=asyncio.Lock();self.generation_id=None
-        self.config_options=[];self.mcp_servers=[];self.idle_task=None;self.start_lock=asyncio.Lock();self.config_cancel=None;self.config_applying=False;self.retiring=False;self.retired=False;self.active_requests=0;self.worker_retirement_pending=None
+        self.config_options=[];self.mcp_servers=[];self.idle_task=None;self.start_lock=asyncio.Lock();self.config_cancel=None;self.config_applying=False;self.config_command=None;self.retiring=False;self.retired=False;self.active_requests=0;self.worker_retirement_pending=None
 
     async def start(self):
         async with self.start_lock:
@@ -234,21 +234,43 @@ class Session:
             await self.start()
             return await self.worker.control(operation,args)
 
+    def pending_configuration(self):
+        if self.config_cancel is None:return None
+        return {'phase':'applying' if self.config_applying else 'queued',**({'commandId':self.config_command} if self.config_command else {})}
+
+    async def configuration_pending(self):
+        if NATIVE in getattr(self.server,'extensions',set()):
+            await self.server.notify('_amplifier/event',{'sessionId':self.identity,'event':{'type':'configuration.pending','pendingConfiguration':self.pending_configuration()}})
+
+    def cancel_configuration(self,args):
+        pending=self.pending_configuration()
+        if pending is None:return {'cancelled':False,'reason':'not-pending','pendingConfiguration':None}
+        if self.config_command and args.get('pendingCommandId')!=self.config_command:
+            return {'cancelled':False,'reason':'pending-command-mismatch','pendingConfiguration':pending}
+        if self.config_applying:return {'cancelled':False,'reason':'already-applying','pendingConfiguration':pending}
+        self.config_cancel.set()
+        return {'cancelled':True,'pendingConfiguration':pending}
+
     async def apply_configuration(self,args):
         expected=args.get('expectedConfigurationRevision')
         if not isinstance(expected,str) or len(expected)!=64 or any(c not in '0123456789abcdef' for c in expected):
             raise RpcError(-32602,'Applying a mount plan requires its inspected expectedConfigurationRevision.')
         if self.config_cancel is not None:raise RpcError(-32000,'A configuration change is already pending.')
         if self.lock.locked() and not args.get('whenIdle'):raise RpcError(-32000,'Configuration requires an idle turn.')
+        command=args.get('commandId')
+        if command is not None and (not isinstance(command,str) or not command or len(command)>256):raise RpcError(-32602,'Configuration commandId must be a bounded nonempty string.')
+        self.config_command=command
         cancel=self.config_cancel=asyncio.Event()
         acquiring=asyncio.create_task(self.lock.acquire());cancelled=asyncio.create_task(cancel.wait())
         held=False
         try:
+            await self.configuration_pending()
             await asyncio.wait({acquiring,cancelled},return_when=asyncio.FIRST_COMPLETED)
             held=acquiring.done() and not acquiring.cancelled() and acquiring.result()
             if cancel.is_set():return {'cancelled':True,'applied':False}
             if not held:await acquiring;held=True
             self.config_applying=True
+            await self.configuration_pending()
             current=await self.worker.control('configuration.inspect')
             if current.get('configurationRevision')!=expected:
                 raise RpcError(-32009,'Configuration changed; inspect and review the current plan before applying this draft.',{'reason':'configuration-conflict','configurationRevision':current.get('configurationRevision'),'executed':False,'replayed':False})
@@ -278,7 +300,8 @@ class Session:
         finally:
             acquiring.cancel();cancelled.cancel();await asyncio.gather(acquiring,cancelled,return_exceptions=True)
             if held:self.lock.release()
-            self.config_cancel=None;self.config_applying=False
+            self.config_cancel=None;self.config_applying=False;self.config_command=None
+            await self.configuration_pending()
 
     async def send(self,blocks,meta):
         if self.lock.locked():raise RpcError(-32000,'A prompt is already active for this session.')
@@ -676,13 +699,12 @@ class Server:
                 return {'version':1,'agentKind':'amplifier-core-foundation','report':session.report,'hostBridge':HOST in self.extensions,'hostCapabilities':self.host_info if HOST in self.extensions else {},
                     'controls':NATIVE_CONTROLS,'workerOperations':['worker.followup','worker.interrupt']}
             if operation not in NATIVE_CONTROLS:raise RpcError(-32601,'Unknown native operation.')
-            if operation=='configuration.cancel':
-                if session.config_applying:raise RpcError(-32000,'Configuration changes are already applying.')
-                if session.config_cancel:session.config_cancel.set()
-                return {'cancelled':session.config_cancel is not None}
+            if operation=='configuration.cancel':return session.cancel_configuration(args)
             if operation=='configuration.apply':result=await session.apply_configuration(args)
             elif operation in {'configuration.toggle','bundle.switch','provider.select','provider.reset','mode.set','mode.clear'}:result=await session.configuration_control(operation,args)
             else:result=await session.worker.control(operation,args)
+            if operation=='configuration.inspect':result={**result,'pendingConfiguration':session.pending_configuration()}
+            if operation=='configuration.apply' and isinstance(result.get('configuration'),dict):result={**result,'configuration':{**result['configuration'],'pendingConfiguration':None}}
             if operation in {'configuration.apply','bundle.switch','provider.select','provider.reset','mode.set','mode.clear'}:
                 if operation in {'provider.select','provider.reset'}:session.report['selection']=result.get('selection');session.report['effective_selection']=None
                 await session.refresh_options()
