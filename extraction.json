@@ -704,6 +704,18 @@
         "StartupCapture"
       ],
       "lines": 135
+    },
+    "portability_probe": {
+      "source": "portability_probe.py",
+      "sourceRevision": "95e96851b799b2e63c44344d69457ca044572c45",
+      "sha256": "ca4b338860310836bdc288723c00d018a721b7cf9cb11d614c760441bde4dd2e",
+      "adaptation": "Standalone native imports; retained bounded readiness contracts"
+    },
+    "portability_policy": {
+      "source": "portability_policy.py",
+      "sourceRevision": "95e96851b799b2e63c44344d69457ca044572c45",
+      "sha256": "481e69c86d8c38baaa0f7a55a919fae2ce0dc8b09954ced13795d065673fa986",
+      "adaptation": "Standalone native imports; retained bounded readiness contracts"
     }
   },
   "sourceRepository": "https://github.com/microsoft/amplifier-unified"

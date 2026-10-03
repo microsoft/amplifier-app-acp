@@ -20,6 +20,9 @@ dependencies = [
   "websockets>=15,<16",
 ]
 
+[project.optional-dependencies]
+portability = ["amplifier-portability>=0.1.0"]
+
 [project.scripts]
 amplifier-acp = "amplifier_acp.server:main"
 
