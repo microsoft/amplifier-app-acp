@@ -1,5 +1,20 @@
 # Reviewed managed allocation file disposal
 
+Disposal now acquires the native home's actual exclusive OS writer gate before
+review validation, and retains it through the joined effect. An unrelated active
+ACP worker or native request causes a known refusal; no worker is killed. The
+selected managed project's canonical metadata is independently inventoried twice,
+before and after per-session Foundation ownership acquisition. The complete
+acyclic family must exactly equal the host-reviewed descendant identities.
+Missing or contradictory metadata, unknown entries, links, changed identities,
+and exceeded budgets refuse before effect. This cold operation reads at most101
+session metadata files (32KiB each, 2MiB combined, five-second budget), plus their
+bounded known Foundation metadata-lock entries. It never scans other projects or
+reads transcript/event bodies to discover membership. Completion includes a
+`familyGuard.selectedProject` bounded metadata digest and coverage declaration.
+The OS gate excludes cooperating ACP workers/creation requests; independent
+noncooperating filesystem writers remain outside the stated coverage.
+
 This optional passive native lifecycle capability removes files only from a
 launcher-authorized managed allocation with its exact native creation proof.
 A working directory, marker copy, catalog row, or age does not confer ownership.

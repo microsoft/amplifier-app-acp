@@ -504,6 +504,10 @@ class Server:
         if method.startswith('_amplifier/') and NATIVE not in self.extensions:
             raise RpcError(-32601,'Native extension was not negotiated.')
         from .maintenance_gate import Gate
+        # This exact reviewed effect owns an exclusive home gate for its entire
+        # joined lifetime; acquiring the ordinary shared gate here would deadlock.
+        if method=='_amplifier/session' and params.get('operation')=='managedFiles.dispose':
+            return await self._dispatch(method,params)
         with Gate(self.config):return await self._dispatch(method,params)
 
     async def _dispatch(self,method,params):

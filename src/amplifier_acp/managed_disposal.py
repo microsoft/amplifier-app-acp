@@ -171,6 +171,16 @@ def save(owner,command,signature,value):
     with db(owner) as connection:connection.execute('INSERT OR REPLACE INTO commands VALUES(?,?,?)',(command,signature,json.dumps(value)))
 
 def perform(owner,operation,args):
+    if operation=='managedFiles.dispose':
+        from .maintenance_gate import Gate,native_home
+        # Whole native workers and ordinary ACP requests hold this same gate
+        # shared. Do not upgrade a shared descriptor or kill an active owner.
+        with Gate(owner.server.config,exclusive=True):
+            if (native_home(owner.server.config)/'.amplifier-acp-restore-pending.json').exists():raise Refused('An unresolved native restore protects managed files')
+            return _perform(owner,operation,args)
+    return _perform(owner,operation,args)
+
+def _perform(owner,operation,args):
     allowed={'managedFiles.preview':set(),'managedFiles.dispose':{'commandId','reviewId','reviewHash','expectedHistoryRevision','descendants'},'managedFiles.receipt':{'commandId'}}
     if operation not in allowed or not isinstance(args,dict) or set(args)-allowed[operation]:raise Refused('Exact managed-files operation required')
     if not supported():raise Refused('Foundation retained historical ownership is unavailable')
@@ -207,8 +217,15 @@ def perform(owner,operation,args):
             from amplifier_foundation.session import SharedSessionStore
             retained={}
             def retain(sid,cwd):retained[sid]=SharedSessionStore(cwd,sid).identity()
+            from .managed_family import verify
+            try:family_evidence=verify(owner,args.get('descendants',[]))
+            except (OSError,ValueError) as error:raise Refused(str(error)) from None
             with own_descendants(owner,args.get('descendants',[]),check=retain) as family:
                 if family['count']!=len(args.get('descendants',[])):raise Refused('Native family differs from product-reviewed descendants; refresh the catalog before disposal')
+                try:current_family=verify(owner,args.get('descendants',[]))
+                except (OSError,ValueError) as error:raise Refused(str(error)) from None
+                if current_family!=family_evidence:raise Refused('Canonical managed family changed while acquiring native ownership')
+                family={**family,'selectedProject':family_evidence}
                 current=inventory(allocation)
                 if current['treeHash']!=review['treeHash']:raise Refused('Managed files changed since review; nothing removed')
                 value={'commandId':command,'operation':'managedFiles.dispose','status':'unknown','reviewHash':review['reviewHash'],'preservesCanonical':True,'replayed':False}
