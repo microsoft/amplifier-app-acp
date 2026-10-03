@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsoft.github.io/amplifier-acp/schemas/native-archive-owner-coverage.v1.json",
+  "description": "Additive selected native-store coverage. This never establishes complete native or product backup. Other file coverage remains in the immutable archive manifest.",
+  "type": "object",
+  "required": [
+    "included",
+    "omitted",
+    "completeNativeBackup",
+    "completeProductBackup"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "included": {
+      "type": "array",
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "required": [
+          "part",
+          "owner",
+          "sourceRevision",
+          "scope",
+          "format",
+          "status"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "part": {
+            "enum": [
+              "native-import-records",
+              "native-preference-receipts"
+            ]
+          },
+          "owner": {
+            "enum": [
+              "native-history-import",
+              "native-voice-preferences"
+            ]
+          },
+          "sourceRevision": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "scope": {
+            "const": "all-records-in-configured-native-app-home"
+          },
+          "format": {
+            "const": "sqlite-backup-image"
+          },
+          "status": {
+            "enum": [
+              "included",
+              "missing"
+            ]
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "tables": {
+            "type": "object",
+            "maxProperties": 2,
+            "additionalProperties": false,
+            "properties": {
+              "commands": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "uploads": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "included"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "bytes",
+                "sha256",
+                "tables"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "omitted": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "required": [
+          "owner",
+          "reason",
+          "preventsCompleteNativeCoverage"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "owner": {
+            "enum": [
+              "native-history-import",
+              "native-voice-preferences",
+              "native-maintenance"
+            ]
+          },
+          "part": {
+            "enum": [
+              "native-import-records",
+              "native-preference-receipts"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "preventsCompleteNativeCoverage": {
+            "const": true
+          }
+        }
+      }
+    },
+    "completeNativeBackup": {
+      "const": false
+    },
+    "completeProductBackup": {
+      "const": false
+    }
+  }
+}

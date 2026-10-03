@@ -524,7 +524,9 @@
                   "session-history",
                   "session-state",
                   "shared-configuration",
-                  "workspace-configuration"
+                  "workspace-configuration",
+                  "native-import-records",
+                  "native-preference-receipts"
                 ]
               }
             },

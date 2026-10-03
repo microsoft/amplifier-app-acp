@@ -198,3 +198,48 @@ or rebuilt automatically. Only exact receipt inspection can resolve it.
 
 See [the retained-behavior audit](recovery-parity-audit.md) for full-product backup,
 credential reset, managed deletion and retention boundaries.
+
+### Explicit native private stores
+
+`archivePlans.nativeStores` advertises `{version:1,parts:["native-import-records",
+"native-preference-receipts"],requiresRecoveryAdminLease:true}`. These additive
+parts use the existing create/prepare/capture wire. They are never silently added
+to a selected-session or configuration archive.
+
+* `native-import-records` preserves the adapter's original imported upload bytes,
+  prepared evidence, target reservations and exact command receipts.
+* `native-preference-receipts` preserves shared voice-default command receipts.
+  The settings and last-write proof are in `shared-configuration`, which must be
+  selected separately for their preservation.
+
+Both selections cover **all records in the configured native app home**, not only
+the current workspace. This scope is explicit in the returned `ownerCoverage`.
+Prepare requires this connection's exact held recovery admin lease; service-stop
+and update leases grant no maintenance rights. An exclusive native writer gate
+also fences live native workers during image creation. Launcher-owned paths select
+only these adapter stores; browser file paths and foreign databases are not read.
+
+The owner uses SQLite's backup API in bounded page batches to create standalone
+database images. Committed WAL contents are included in each image, but original
+WAL/SHM files are never archived or checkpointed. Dormant stores are opened as
+immutable only when the held owner gates prove no writer and no WAL exists.
+Integrity, source revisions, sizes and deadlines are checked; missing stores are
+reported without creating them. Source changes after review require a new plan.
+Source contents remain private; previews include only store scope, table counts,
+image hash/bytes and an opaque source revision. Manifest entries and artifact reads
+retain existing pagination and 256 KiB chunk limits. No restore or execution is
+authorized by these images; uncertain receipts stay uncertain.
+
+`ownerCoverage` has `included` store rows and typed `omitted` owner rows, plus
+`completeNativeBackup:false` and `completeProductBackup:false`. Maintenance command
+receipts, retained archive artifacts/plans and reset originals remain an explicit
+`native-maintenance` omission in this version. Independent product stores,
+unselected histories/configuration, runtime generations and existing documented
+exclusions are still outside coverage. This is a selected native archive, not a
+full native or configured-product backup.
+
+`test_private_store_snapshot.py` qualifies actual ACP subprocesses with impossible
+worker launchers: original upload and receipt fidelity, committed WAL inclusion,
+source-byte preservation, exact repeat/restart reads, missing stores, stale review,
+held lease authority, corrupted/foreign databases and unsafe paths. It makes no
+provider, credential, model-account or live-service calls.

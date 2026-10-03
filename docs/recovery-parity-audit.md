@@ -30,6 +30,14 @@ about every external CLI version. Whole-archive restore, credential reset, manag
 hard delete and reference-aware generation reclamation remain visible gaps. Existing
 limits fail explicitly; they never silently truncate the backup.
 
+The explicit `native-import-records` and `native-preference-receipts` parts now
+capture owner-made SQLite images under the held administration and native writer
+gates. `test_private_store_snapshot.py` proves original upload/receipt bytes and
+committed WAL records survive without copying raw WAL files or changing canonical
+history. Native maintenance/archive receipts, plans, retained artifacts and reset
+originals remain a typed omission. This closes two selected-owner gaps; it does
+not establish full-native or full-product coverage or a restore workflow.
+
 ## Full configured-product snapshot seam
 
 A distribution coordinator can compose independently installed owner participants:

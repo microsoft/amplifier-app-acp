@@ -10,7 +10,7 @@ from .relocation import write
 from .session_lifecycle import regular
 
 OPERATIONS={'maintenance.archive.create','maintenance.archive.add','maintenance.archive.prepare','maintenance.archive.manifest'}
-PARTS={'session-history','session-state','shared-configuration','workspace-configuration'}
+PARTS={'session-history','session-state','shared-configuration','workspace-configuration','native-import-records','native-preference-receipts'}
 OMISSIONS=['unselected native and delegated histories','independent product and client stores','workspace files outside selected .amplifier configuration','module source, caches and runtime generations','external credential stores, environment variables and authentication sessions','Foundation live writer leases and transfer authority','unknown shared-home entries outside the documented native configuration roots']
 EXCLUSIONS=['transient .lock files and SQLite -shm files']
 
@@ -86,6 +86,8 @@ class ArchivePlans:
             elif 'workspace-configuration' in parts:
                 for name in ('settings.yaml','settings.local.yaml','routing','routing.local','bundles'):
                     yield 'workspace-configuration/'+key+'/'+name,checked(Path(cwd)/'.amplifier'/name)
+        for row in value.get('nativeStores',[]):
+            yield 'native-owned-stores/'+row['part']+'.sqlite3',checked(self.root/value['planId']/'native-stores'/(row['part']+'.sqlite3'))
         if 'shared-configuration' in parts:
             for name in ('settings.yaml','routing','bundles',*(['keys.env'] if value['includeCredentials'] else [])):
                 yield 'shared-configuration/'+name,checked(self.owner.home/name)
@@ -121,6 +123,7 @@ class ArchivePlans:
             count+=1;files+=row['status']=='included';missing+=row['status']=='missing';total+=row.get('bytes',0)
         return {'entries':count,'files':files,'missing':missing,'bytes':total,'sessions':counts.get('session',0),'workspaces':counts.get('workspace',0),'manifestHash':digest_rows(self.rows(db)),'selectionHash':digest_rows(list(row) for row in db.execute('SELECT kind,id,cwd FROM selections ORDER BY kind,id'))}
     def prepare(self,workspace,args):
+        from . import private_store_snapshot as stores
         with self.db(args.get('planId'),mutate=True) as db:
             value=self.meta(db,workspace)
             if value['phase']!='open' or type(args.get('expectedRevision'))is not int or args.get('expectedRevision')!=value['revision']:raise ValueError('Exact open archive revision required')
@@ -128,19 +131,22 @@ class ArchivePlans:
             if any(p.startswith('session-') for p in value['parts']) and not counts.get('session'):raise ValueError('Explicit sessions required for native session content')
             if 'workspace-configuration' in value['parts'] and not counts.get('workspace'):raise ValueError('Explicit workspaces required for workspace configuration')
             if (set(value['parts'])&{'shared-configuration','workspace-configuration'} or counts.get('session',0)>32) and value['externalWriterPolicy']!='stopped':raise ValueError('Configuration trees or more than32 sessions require launcher-verified stopped external writers')
+            if set(value['parts'])&stores.STORES.keys():stores.require_admin(self.owner)
             value['phase']='building';self.save(db,value)
         # Persist building before filesystem inspection. Interrupted seal remains
         # an uncertain immutable plan; a new command must not restart its effects.
         with self.db(args['planId'],mutate=True) as db:
             value=self.meta(db,workspace);count=total=0
-            with Gate(self.owner.config):
+            with Gate(self.owner.config,exclusive=bool(set(value['parts'])&stores.STORES.keys())):
+                if set(value['parts'])&stores.STORES.keys():
+                    value['nativeStores']=stores.prepare(self.owner,value['planId'],value['parts'],self.owner.ensure_open);self.save(db,value)
                 for label,path in self.roots(db,value):
                     for row in self.walk(label,path,self.owner.ensure_open):
                         count+=1;total+=row.get('bytes',0)
                         if count>self.max_entries or total>self.owner.maximum:raise ValueError('Explicit native archive exceeds configured entry/byte limits')
                         db.execute('INSERT INTO entries VALUES(?,?)',(row['path'],json.dumps(row)))
             summary=self.summary(db,value)
-            body={'version':2,'workspace':workspace,'archivePlanId':value['planId'],'spec':{'sessions':[],'parts':value['parts'],'includeCredentials':value['includeCredentials'],'externalWriterPolicy':value['externalWriterPolicy']},'inventory':summary,'omissions':OMISSIONS,'exclusions':EXCLUSIONS,'coverage':'explicit-selected-native-only','containsPrivateContent':True,'authorityHash':fingerprint({'roots':sorted(str(root) for root in self.owner.admin.roots),'home':str(self.owner.home),'app':str(self.owner.app)}),'credentialCoverage':'keys.env included by explicit review' if value['includeCredentials'] else 'keys.env excluded; inline secrets in selected files may remain'}
+            body={'version':2,'workspace':workspace,'archivePlanId':value['planId'],'spec':{'sessions':[],'parts':value['parts'],'includeCredentials':value['includeCredentials'],'externalWriterPolicy':value['externalWriterPolicy']},'inventory':summary,'ownerCoverage':stores.coverage(value['parts'],value.get('nativeStores',[])),'omissions':OMISSIONS,'exclusions':EXCLUSIONS,'coverage':'explicit-selected-native-only','containsPrivateContent':True,'authorityHash':fingerprint({'roots':sorted(str(root) for root in self.owner.admin.roots),'home':str(self.owner.home),'app':str(self.owner.app)}),'credentialCoverage':'keys.env included by explicit review' if value['includeCredentials'] else 'keys.env excluded; inline secrets in selected files may remain'}
             preview=fingerprint(body);value.update(phase='sealed',previewHash=preview,summary=summary);self.save(db,value)
             write(self.owner.root/'previews'/(preview+'.json'),body)
         write(self.root/value['planId']/'sealed.json',{'previewHash':preview,'stamp':file_stamp(self.root/value['planId']/'manifest.sqlite3')})
@@ -163,9 +169,11 @@ class ArchivePlans:
             rows=list(db.execute('SELECT path,body FROM entries WHERE path>? ORDER BY path LIMIT ?',(cursor,limit+1)))
         items=[{k:v for k,v in json.loads(row[1]).items() if k not in {'source','stamp','identity'}} for row in rows[:limit]]
         if len(encoded(items))>512*1024:raise ValueError('Selected manifest page exceeds transport bound')
-        return {'previewHash':args['previewHash'],'items':items,'nextCursor':rows[limit-1][0] if len(rows)>limit else None,'inventory':body['inventory'],'coverage':body['coverage'],'omissions':body['omissions'],'exclusions':body['exclusions']}
+        return {'previewHash':args['previewHash'],'items':items,'nextCursor':rows[limit-1][0] if len(rows)>limit else None,'inventory':body['inventory'],'coverage':body['coverage'],'omissions':body['omissions'],'exclusions':body['exclusions'],**({'ownerCoverage':body['ownerCoverage']} if 'ownerCoverage' in body else {})}
     def verify_sources(self,workspace,body,check):
         value=self.reviewed(workspace,body);count=0
+        from .private_store_snapshot import verify
+        verify(self.owner,value.get('nativeStores',[]))
         with self.db(value['planId']) as db:
             if self.summary(db,value)!=body['inventory']:raise ValueError('Immutable manifest content changed')
             for label,path in self.roots(db,value):
