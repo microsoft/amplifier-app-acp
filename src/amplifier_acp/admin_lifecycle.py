@@ -35,11 +35,13 @@ def service_identity(value):
 def service_release(expected,outcome,proof):
     """Validate binding only; the configured host authenticates platform receipts."""
     try:
+        allowed={'verified','fenceId','commandId','outcome','instanceId','dataScope','receiptId','kind','serviceOutcome','expected','observed','resumeCommandId','exitReceiptId','readyReceiptId','refusalReceiptId'}
+        if not isinstance(proof,dict) or set(proof)-allowed:raise ValueError()
         original=service_identity(proof.get('expected'));observed=service_identity(proof.get('observed'))
         if proof.get('kind')!='service-lifecycle' or proof.get('verified') is not True or original!=expected['serviceIdentity'] or any(proof.get(k)!=expected[k] for k in ('fenceId','commandId','dataScope')) or proof.get('outcome')!=outcome or proof.get('instanceId')!=observed['instanceId']:raise ValueError()
         if any(original[k]!=observed[k] for k in SERVICE_IDENTITY-{'instanceId'}):raise ValueError()
-        if outcome=='unchanged' and proof.get('serviceOutcome')=='stop-refused' and original==observed:keys=['receiptId','refusalReceiptId']
-        elif outcome=='ready' and proof.get('serviceOutcome')=='resumed' and original['instanceId']!=observed['instanceId']:keys=['receiptId','resumeCommandId','exitReceiptId','readyReceiptId']
+        if outcome=='unchanged' and proof.get('serviceOutcome')=='stop-refused' and original==observed and not {'resumeCommandId','exitReceiptId','readyReceiptId'}&set(proof):keys=['receiptId','refusalReceiptId']
+        elif outcome=='ready' and proof.get('serviceOutcome')=='resumed' and original['instanceId']!=observed['instanceId'] and 'refusalReceiptId' not in proof:keys=['receiptId','resumeCommandId','exitReceiptId','readyReceiptId']
         else:raise ValueError()
         if any(not isinstance(proof.get(k),str) or not 1<=len(proof[k])<=200 or any(ord(c)<32 for c in proof[k]) for k in keys):raise ValueError()
     except (AttributeError,KeyError,TypeError,ValueError):raise AdminFenced('Exact authenticated service lifecycle release proof required') from None

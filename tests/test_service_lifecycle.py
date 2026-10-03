@@ -24,7 +24,7 @@ async def test_admin_service_stop_exact_identity_no_maintenance_authority_and_pl
   authorization={k:held['lease'][k] for k in ('fenceId','commandId','leaseId')}
   blocked=await client.request('_amplifier/admin',{'cwd':str(cwd),'operation':'maintenance.archive.create','args':{'commandId':'never','parts':['shared-configuration'],'privateContentReviewed':True},'_meta':{'amplifier.dev/admin':authorization}})
   assert blocked['error']['data']['executed'] is False
-  for invalid in [None,{'verified':True,**CONTEXT,'outcome':'unchanged','receiptId':'old-recovery'}, {**proof(),'observed':{**IDENTITY,'releaseDigest':'b'*64}}, {**proof('ready'),'exitReceiptId':None}]:
+  for invalid in [None,{'verified':True,**CONTEXT,'outcome':'unchanged','receiptId':'old-recovery'}, {**proof(),'observed':{**IDENTITY,'releaseDigest':'b'*64}}, {**proof('ready'),'exitReceiptId':None}, {**proof('ready'),'refusalReceiptId':'conflicting-outcome'}, {**proof(),'purpose':'service-stop'}]:
    outcome='ready' if invalid and invalid.get('outcome')=='ready' else 'unchanged'
    assert 'error' in await life('release',{**authorization,'outcome':outcome,'proof':invalid})
   assert (await life('inspect',{}))['result']['intakeClosed']
