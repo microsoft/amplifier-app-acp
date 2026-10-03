@@ -158,6 +158,17 @@
             }
           },
           "additionalProperties": false
+        },
+        "writerProtection": {
+          "const": {
+            "policy": "operator-attested-stopped",
+            "declaredBy": "trusted-launcher",
+            "nativeWriterGate": "exclusive-held-through-capture",
+            "nativeAdminGate": "exclusive-held-through-capture",
+            "cooperativeSessionLeasesHeld": false,
+            "noncooperatingWriters": "not-independently-observed",
+            "requiresOperatorVerification": true
+          }
         }
       },
       "additionalProperties": false

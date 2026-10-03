@@ -62,7 +62,8 @@ class Restores:
         timeout=self.owner.config.get('maintenanceFullTimeoutSeconds',600)
         if type(timeout)is not int or not 1<=timeout<=7200:raise Refused('Restore deadline must be1–7200seconds')
         self.deadline=time.monotonic()+timeout
-    def header(self,archive):
+    @staticmethod
+    def header(archive):
         first=archive.next()
         if first is None or first.name!='native-archive.json' or not first.isfile() or not 1<=first.size<=1024*1024:raise ValueError('Native archive header is absent or unsupported')
         header=strict_json(archive.extractfile(first).read())

@@ -1,0 +1,159 @@
+{
+  "type": "object",
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "artifactId": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{32}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "bytes": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "contentType": {
+      "const": "application/x-tar"
+    },
+    "format": {
+      "const": "amplifier-native-authority"
+    },
+    "archiveVersion": {
+      "const": 1
+    },
+    "previewHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "manifest": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "const": "native-manifest.sqlite3"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 268435456
+        },
+        "digestKind": {
+          "const": "sha256-exact-native-manifest-sqlite3-bytes"
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "bytes",
+        "digestKind"
+      ],
+      "additionalProperties": false
+    },
+    "authority": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "const": "all-configured-native-authority-roots"
+        },
+        "completeNativeBackup": {
+          "type": "boolean"
+        },
+        "completeProductBackup": {
+          "const": false
+        },
+        "declaredRootIds": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "native-home",
+              "app-home",
+              "checkpoint",
+              "events",
+              "registry",
+              "sources",
+              "bundle",
+              "runtimeManifest",
+              "workspace-settings"
+            ]
+          }
+        },
+        "authoritativeOmissions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "excludedEntries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "credentialsIncluded": {
+          "type": "boolean"
+        },
+        "externalWriters": {
+          "const": {
+            "policy": "operator-attested-stopped",
+            "declaredBy": "trusted-launcher",
+            "nativeWriterGate": "exclusive-held-through-capture",
+            "nativeAdminGate": "exclusive-held-through-capture",
+            "cooperativeSessionLeasesHeld": false,
+            "noncooperatingWriters": "not-independently-observed",
+            "requiresOperatorVerification": true
+          }
+        }
+      },
+      "required": [
+        "scope",
+        "completeNativeBackup",
+        "completeProductBackup",
+        "declaredRootIds",
+        "authoritativeOmissions",
+        "excludedEntries",
+        "credentialsIncluded",
+        "externalWriters"
+      ],
+      "additionalProperties": false
+    },
+    "integrity": {
+      "type": "object",
+      "properties": {
+        "artifactHashVerified": {
+          "const": true
+        },
+        "manifestHashVerified": {
+          "const": true
+        }
+      },
+      "required": [
+        "artifactHashVerified",
+        "manifestHashVerified"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "version",
+    "artifactId",
+    "sha256",
+    "bytes",
+    "contentType",
+    "format",
+    "archiveVersion",
+    "previewHash",
+    "manifest",
+    "authority",
+    "integrity"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsoft.github.io/amplifier-acp/schemas/native-artifact-inspect-result.v1.json",
+  "description": "Native-only exact archive evidence; noncooperating writer exclusion still requires separate trusted operator verification."
+}

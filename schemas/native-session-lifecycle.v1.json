@@ -1,1 +1,138 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"Passive selected native session lifecycle","type":"object","additionalProperties":false,"required":["sessionId","cwd","operation"],"properties":{"sessionId":{"type":"string","minLength":1,"maxLength":221},"cwd":{"type":"string","minLength":1},"operation":{"enum":["inspect","receipt","fork","export","export.read","delete.preview","delete","restore"]},"args":{"type":"object","description":"See docs/session-lifecycle.md for per-operation bounds and immutable receipt semantics."}}}
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Passive selected native session lifecycle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sessionId",
+    "cwd",
+    "operation"
+  ],
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 221
+    },
+    "cwd": {
+      "type": "string",
+      "minLength": 1
+    },
+    "operation": {
+      "enum": [
+        "inspect",
+        "receipt",
+        "fork",
+        "export",
+        "export.read",
+        "delete.preview",
+        "delete",
+        "restore"
+      ]
+    },
+    "args": {
+      "type": "object",
+      "description": "See docs/session-lifecycle.md for per-operation bounds and immutable receipt semantics."
+    }
+  },
+  "$defs": {
+    "forkArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commandId",
+        "targetSessionId",
+        "expectedHistoryRevision"
+      ],
+      "properties": {
+        "commandId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "targetSessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 221
+        },
+        "expectedHistoryRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "throughMessageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "bundle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "bundleRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "mode": {
+          "enum": [
+            "complete",
+            "recovery"
+          ]
+        },
+        "resetModel": {
+          "type": "boolean"
+        },
+        "descendants": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "cwd",
+              "parentSessionId"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "sessionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 221
+              },
+              "parentSessionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 221
+              },
+              "cwd": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "fork"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "args": {
+            "$ref": "#/$defs/forkArgs"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -33,6 +33,15 @@ def lifecycle_state(server,identity,cwd):
     if value.get('sessionId')!=identity or value.get('historyCwd')!=cwd:raise ValueError('Native lifecycle identity does not match history workspace')
     return value
 
+def guard_copy_source(server,identity):
+    """Copy only a coherent settled authority image; never finish its journals."""
+    app=location(home(server),identity)
+    for name in ('history-edit-pending.json','maintenance-reset-pending.json'):
+        if (app/name).exists():raise ValueError('Canonical native history or configuration is unresolved; source preserved')
+    for name in ('history-fork.json','history-import.json'):
+        path=app/name
+        if path.exists() and record(path).get('state')!='committed':raise ValueError('Native creation outcome is unresolved; source preserved')
+
 def guard_start(server,identity,cwd):
     value=lifecycle_state(server,identity,cwd)
     if value['deleted']:raise ValueError('This native session was removed from discovery; restore it before continuing. Its history is preserved.')
@@ -125,13 +134,14 @@ class Lifecycle:
         try:yield handle
         finally:handle.release()
     def inspect(self):
+        from .lifecycle_failure import read as failure
         result=history.inspect(self.directory);metadata=record(self.directory/'metadata.json')
         fields=('session_id','parent_id','name','name_source','description','created','created_at','updated_at','bundle','bundle_name','status','turn_count','fork','recovery')
         selected={key:metadata[key] for key in fields if key in metadata}
         if len(json.dumps(selected).encode())>32768:raise ValueError('Native metadata inspection exceeds its bound')
-        return {'sessionId':self.identity,'historyRevision':result['revision'],'metadata':selected,'diagnostics':result['diagnostics'],'location':state(self.server,self.identity,self.cwd),'state':lifecycle_state(self.server,self.identity,self.cwd),'preserved':PRESERVED}
+        return {'sessionId':self.identity,'historyRevision':result['revision'],'metadata':selected,'diagnostics':result['diagnostics'],'location':state(self.server,self.identity,self.cwd),'state':lifecycle_state(self.server,self.identity,self.cwd),'preserved':PRESERVED,'failure':failure(self.server,self.identity),'forkBundles':[{'id':key,'name':key,'revision':fingerprint([key,value])} for key,value in self.fork_bundles().items()]}
     def perform(self,operation,args):
-        fields={'inspect':set(),'receipt':{'commandId'},'export.read':{'snapshotId','offset','limit'},'delete.preview':set(),'fork':{'commandId','targetSessionId','expectedHistoryRevision','throughMessageId'},'export':{'commandId','expectedHistoryRevision','format','scope','fromMessageId','throughMessageId','minimal'},'delete':{'commandId','expectedHistoryRevision','confirmationToken'},'delete.standard':{'commandId','expectedHistoryRevision'},'restore':{'commandId','expectedHistoryRevision'}}
+        fields={'inspect':set(),'receipt':{'commandId'},'export.read':{'snapshotId','offset','limit'},'delete.preview':set(),'fork':{'commandId','targetSessionId','expectedHistoryRevision','throughMessageId','mode','bundle','bundleRevision','resetModel','descendants'},'export':{'commandId','expectedHistoryRevision','format','scope','fromMessageId','throughMessageId','minimal'},'delete':{'commandId','expectedHistoryRevision','confirmationToken'},'delete.standard':{'commandId','expectedHistoryRevision'},'restore':{'commandId','expectedHistoryRevision'}}
         if operation not in fields or not isinstance(args,dict) or set(args)-fields[operation]:raise ValueError('Unsupported lifecycle operation or arguments')
         if len(json.dumps(args).encode())>32768:raise ValueError('Lifecycle arguments exceed their bound')
         if operation=='inspect':return self.inspect()
@@ -147,7 +157,9 @@ class Lifecycle:
             if previous:
                 if previous['signature']!=signature:raise ValueError('Lifecycle commandId conflicts with its original request')
                 return {**previous.get('result',{}),'receipt':previous,'replayed':False}
-            with self.own():
+            from .lifecycle_family import own_descendants
+            from contextlib import nullcontext
+            with self.own(), (own_descendants(self,args.get('descendants',[])) if operation=='fork' else nullcontext()) as family:
                 inspected=self.inspect()
                 if inspected['location']['blocked']:raise ValueError('Resolve native execution relocation before lifecycle changes')
                 if args.get('expectedHistoryRevision')!=inspected['historyRevision']:raise ValueError('Native history changed; review a fresh revision')
@@ -158,7 +170,7 @@ class Lifecycle:
                 receipt={'commandId':command,'operation':operation,'status':'running','createdAt':time.time(),'replayed':False}
                 self.save(command,signature,receipt)
                 try:
-                    if operation=='fork':result=self.fork(args,prepared)
+                    if operation=='fork':result={**self.fork(args,prepared),'familyGuard':family}
                     elif operation=='export':result=self.export(args,prepared)
                     else:
                         value={'sessionId':self.identity,'historyCwd':self.cwd,'deleted':operation in {'delete','delete.standard'},'commandId':command,'updatedAt':time.time()}
@@ -177,14 +189,28 @@ class Lifecycle:
         if args.get('confirmationToken')!=preview['confirmationToken'] or time.time()>preview['expiresAt'] or preview['historyRevision']!=inspected['historyRevision']:raise ValueError('Deletion preview expired or changed; review again')
         return preview
     def prepare_fork(self,args):
+        mode=args.get('mode','complete')
+        if mode not in {'complete','recovery'}:raise ValueError('Choose complete history or readable recovery mode')
+        if type(args.get('resetModel',False)) is not bool:raise ValueError('resetModel must be a boolean')
+        if args.get('resetModel') and not args.get('bundle'):raise ValueError('Reset model requires an explicitly selected bundle')
+        if args.get('bundle') is not None and (not isinstance(args['bundle'],str) or args['bundle'] not in self.fork_bundles()):raise ValueError('Choose a launcher-configured fork bundle identity')
+        if args.get('bundle') and args.get('bundleRevision')!=fingerprint([args['bundle'],self.fork_bundles()[args['bundle']]]):raise ValueError('Configured fork bundle changed; review a fresh selection')
+        if args.get('bundleRevision') is not None and not args.get('bundle'):raise ValueError('Bundle revision requires a selected bundle')
+        guard_copy_source(self.server,self.identity)
         target=args.get('targetSessionId')
         if not isinstance(target,str) or str(uuid.UUID(target))!=target:raise ValueError('Reserved target UUID required')
         destination=self.server.directory(self.cwd,target);target_app=location(home(self.server),target)
         if destination.exists() or target_app.exists():raise ValueError('Fork target already exists; inspect original creation receipt, never replay')
-        rows,metadata,revision=canonical(self.directory,args['expectedHistoryRevision']);selected=scope_rows(rows,args,fork=True)
+        rows,metadata,revision=canonical(self.directory,args['expectedHistoryRevision'])
+        if metadata.get('session_id')!=self.identity:raise ValueError('Canonical source metadata identity is unavailable or different')
+        selected=scope_rows(rows,args,fork=True)
         from .native.session_store import complete_tool_exchanges
         from .native.host.session import repair_interrupted_receipts
-        context=repair_interrupted_receipts(complete_tool_exchanges([row for _,row in selected]))
+        if mode=='recovery':
+            from .native.session_health import recovery_context
+            context,_=recovery_context([row for _,row in selected])
+            if not context:raise ValueError('Selected source contains no coherent readable recovery history')
+        else:context=repair_interrupted_receipts(complete_tool_exchanges([row for _,row in selected]))
         copied={}
         for name in ('configuration.json','effective-configuration.json','control-state.json'):
             path=self.app/name
@@ -199,7 +225,16 @@ class Lifecycle:
                 plan.setdefault(section,[]).extend(row for row in saved.get(section,[]) if (row.get('instance_id') or row.get('id') or row.get('module')) not in identities)
             copied['configuration.json']=plan
         if not isinstance(metadata.get('bundle') or metadata.get('bundle_name'),str):raise ValueError('The saved native bundle identity is unavailable; resume and inspect configuration before forking')
+        if args.get('bundle'):
+            metadata={**metadata,'bundle':self.fork_bundles()[args['bundle']],'bundle_name':self.fork_bundles()[args['bundle']]}
+            context=[row for row in context if row.get('role') not in {'system','developer'}]
+            controls=copied.get('control-state.json',{})
+            copied={'control-state.json':({'selection':controls['selection']} if 'selection' in controls and not args.get('resetModel') else {})}
         return context,metadata,revision,copied
+    def fork_bundles(self):
+        choices=self.server.config.get('forkBundles',{})
+        if not isinstance(choices,dict) or len(choices)>64 or any(not isinstance(k,str) or not 1<=len(k)<=200 or not isinstance(v,str) or not 1<=len(v)<=4096 for k,v in choices.items()):raise ValueError('Launcher fork bundle choices are invalid')
+        return choices
     def fork(self,args,prepared):
         from amplifier_foundation.session.history import SessionHistoryStore
         context,metadata,revision,copied=prepared;target=args['targetSessionId'];target_app=location(home(self.server),target)
@@ -209,14 +244,16 @@ class Lifecycle:
         destination=self.server.directory(self.cwd,target);destination.mkdir(parents=True,exist_ok=False,mode=0o700)
         execution=state(self.server,self.identity,self.cwd)['executionDirectory']
         safe={key:copy.deepcopy(metadata[key]) for key in ('bundle','bundle_name','working_dir','name','name_source','description','model','provider') if key in metadata}
-        safe.update(session_id=target,parent_id=None,created_at=time.time(),status='forked',preserve_system=True,fork={'source_session_id':self.identity,'source_revision':revision,'through_message_id':args.get('throughMessageId'),'jobs_replayed':False})
+        preserve_system=not (args.get('mode')=='recovery' or args.get('bundle'))
+        safe.update(session_id=target,parent_id=None,created_at=time.time(),status='forked',preserve_system=preserve_system,fork={'source_session_id':self.identity,'source_revision':revision,'through_message_id':args.get('throughMessageId'),'jobs_replayed':False})
+        if args.get('mode')=='recovery':safe['recovery']={'source_session_id':self.identity,'mode':'readable_history','work_replayed':False,'source_effects':'not_rolled_back'}
         from amplifier_foundation.session.shared_state import SharedSessionStore
         target_handle=SharedSessionStore(self.cwd,target).acquire(app='amplifier-acp-fork',pid=os.getpid())
         try:
-            SessionHistoryStore(destination,session_id=target).save(context,safe,preserve_system=True)
+            SessionHistoryStore(destination,session_id=target).save(context,safe,preserve_system=preserve_system)
             for name,value in copied.items():write(target_app/name,value)
             write(target_app/'execution-location.json',{'sessionId':target,'historyCwd':self.cwd,'executionDirectory':execution,'executionRevision':0})
-            result={'sessionId':target,'creationConfirmed':True,'historyCwd':self.cwd,'executionDirectory':execution,'historyRevision':history.inspect(destination)['revision'],'source':{'sessionId':self.identity,'historyRevision':revision,**({'throughMessageId':args['throughMessageId']} if args.get('throughMessageId') else {})},'workReplayed':False}
+            result={'sessionId':target,'creationConfirmed':True,'historyCwd':self.cwd,'executionDirectory':execution,'historyRevision':history.inspect(destination)['revision'],'source':{'sessionId':self.identity,'historyRevision':revision,**({'throughMessageId':args['throughMessageId']} if args.get('throughMessageId') else {})},'workReplayed':False,'mode':args.get('mode','complete'),'bundleSelection':args.get('bundle'),'preservedSource':True}
             write(target_app/'history-fork.json',{**marker,'state':'committed','result':result});return result
         finally:target_handle.release()
     def prepare_export(self,args):

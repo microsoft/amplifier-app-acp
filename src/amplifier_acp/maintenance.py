@@ -15,7 +15,7 @@ from .configuration_clone import fingerprint,location
 from .relocation import write
 
 OPERATIONS={'maintenance.preview','maintenance.acquire','maintenance.snapshot',
- 'maintenance.release','maintenance.lease','maintenance.receipt','maintenance.artifact.read',
+ 'maintenance.release','maintenance.lease','maintenance.receipt','maintenance.artifact.read','maintenance.artifact.inspect',
  'maintenance.reset.preview','maintenance.reset.apply','maintenance.reset.restore','maintenance.reset.reconcile',
  'maintenance.archive.create','maintenance.archive.add','maintenance.archive.prepare','maintenance.archive.manifest',
  'maintenance.restore.preview','maintenance.restore.manifest','maintenance.restore.apply','maintenance.restore.reconcile','maintenance.restore.inspect'}
@@ -419,7 +419,7 @@ class Maintenance:
     async def perform(self,workspace,operation,args):
         fields={'maintenance.preview':None,'maintenance.reset.preview':None,'maintenance.acquire':{'commandId','previewHash','ttlSeconds'},
           'maintenance.snapshot':{'commandId','leaseId','previewHash'},'maintenance.release':{'leaseId'},'maintenance.lease':set(),
-          'maintenance.receipt':{'commandId'},'maintenance.artifact.read':{'artifactId','sha256','offset','maxBytes'},
+          'maintenance.receipt':{'commandId'},'maintenance.artifact.read':{'artifactId','sha256','offset','maxBytes'},'maintenance.artifact.inspect':{'artifactId','sha256'},
           'maintenance.reset.reconcile':{'commandId','leaseId','previewHash','resetCommandId'},'maintenance.reset.apply':{'commandId','leaseId','previewHash'},'maintenance.reset.restore':{'commandId','leaseId','previewHash','resetCommandId','expectedPostResetHash'}}
         fields.update({'maintenance.archive.create':{'commandId','parts','privateContentReviewed','includeCredentials','credentialsReviewed'},'maintenance.archive.add':{'commandId','planId','expectedRevision','sessions','workspaces'},'maintenance.archive.prepare':{'commandId','planId','expectedRevision'},'maintenance.archive.manifest':{'previewHash','cursor','limit'}})
         fields.update({'maintenance.restore.preview':{'artifactId','sha256','destination','privateContentReviewed','credentialsReviewed'},'maintenance.restore.manifest':{'previewHash','cursor','limit'},'maintenance.restore.apply':{'commandId','previewHash'},'maintenance.restore.reconcile':{'commandId','restoreCommandId'},'maintenance.restore.inspect':{'restoreCommandId'}})
@@ -429,6 +429,9 @@ class Maintenance:
             if operation=='maintenance.receipt':
                 row=await self.run(self.receipt,workspace,args.get('commandId'));return {'receipt':row[1] if row else None}
             if operation=='maintenance.artifact.read':return await self.run(self.artifact,workspace,args)
+            if operation=='maintenance.artifact.inspect':
+                from .full_native_archive import inspect_artifact
+                return await self.run(inspect_artifact,self,workspace,args)
             if operation=='maintenance.lease':return self.lease_view()
             if operation=='maintenance.archive.manifest':return await self.run(self.archives().page,workspace,args)
             if operation in {'maintenance.restore.preview','maintenance.restore.manifest'}:return await self.run(self.restores().preview if operation.endswith('.preview') else self.restores().page,workspace,args)

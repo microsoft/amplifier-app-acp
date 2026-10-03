@@ -41,6 +41,17 @@ async def test_cold_full_native_captures_all_histories_generation_authority_and_
         with tarfile.open(fileobj=io.BytesIO(raw)) as tar:
             assert tar.getnames()[:2]==['native-archive.json','native-manifest.sqlite3']
             header=json.load(tar.extractfile('native-archive.json'))
+            attested=await call(client,cwd,'maintenance.artifact.inspect',{'artifactId':artifact['artifactId'],'sha256':artifact['sha256']})
+            assert attested['manifest']['sha256']==header['manifest']['sha256']
+            assert attested['manifest']['digestKind']=='sha256-exact-native-manifest-sqlite3-bytes'
+            assert attested['authority']['completeNativeBackup'] and not attested['authority']['completeProductBackup']
+            assert attested['authority']['externalWriters']['policy']=='operator-attested-stopped'
+            assert attested['authority']['externalWriters']['cooperativeSessionLeasesHeld'] is False
+            assert attested['authority']['externalWriters']['requiresOperatorVerification'] is True
+            assert set(attested['authority']['declaredRootIds'])=={row['id'] for row in header['nativeAuthority']['roots']}
+            assert str(tmp_path) not in json.dumps(attested) and 'fixture-only' not in json.dumps(attested)
+            import jsonschema
+            jsonschema.validate(attested,json.loads((Path(__file__).resolve().parents[1]/'schemas/native-artifact-inspect-result.v1.json').read_text()))
             import jsonschema
             schema=json.loads((Path(__file__).resolve().parents[1]/'schemas/native-full-archive.v1.json').read_text());jsonschema.Draft202012Validator.check_schema(schema);jsonschema.Draft202012Validator(schema).validate(header)
             assert header['format']=='amplifier-native-authority' and header['version']==1
@@ -112,5 +123,32 @@ async def test_full_native_disk_inventory_pages_many_cold_histories_and_marks_un
             if cursor is None:break
         assert names==sorted(set(names)) and len(names)>1000
         assert sum(name.endswith('/transcript.jsonl') for name in names)==351
+        assert not client.events
+    finally:await client.close()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('changed',['artifact','manifest','old-evidence'])
+async def test_passive_artifact_attestation_refuses_changed_bytes_and_missing_sealed_policy(tmp_path,changed):
+    client,cwd,config,_,_=await full_setup(tmp_path)
+    try:
+        auth=await hold(client,cwd);preview=await prepare(client,cwd,auth,parts=['full-native-authority'])
+        artifact,raw=await capture(client,cwd,auth,preview,'inspect')
+        directory=Path(config['appHome'])/'maintenance/artifacts'/artifact['artifactId']
+        if changed=='artifact':
+            value=bytearray(raw);value[-1]^=1;(directory/'snapshot.tar').write_bytes(value)
+        else:
+            with tarfile.open(fileobj=io.BytesIO(raw)) as source:
+                members=[(member,source.extractfile(member).read()) for member in source]
+            if changed=='manifest':
+                value=bytearray(members[1][1]);value[-1]^=1;members[1]=(members[1][0],bytes(value))
+            else:
+                header=json.loads(members[0][1]);header['nativeAuthority'].pop('writerProtection');value=json.dumps(header).encode();members[0][0].size=len(value);members[0]=(members[0][0],value)
+            rebuilt=io.BytesIO()
+            with tarfile.open(fileobj=rebuilt,mode='w') as target:
+                for member,value in members:target.addfile(member,io.BytesIO(value))
+            value=rebuilt.getvalue();(directory/'snapshot.tar').write_bytes(value)
+            description=json.loads((directory/'description.json').read_text());description.update(sha256=hashlib.sha256(value).hexdigest(),bytes=len(value));(directory/'description.json').write_text(json.dumps(description));artifact=description
+        denied=await call(client,cwd,'maintenance.artifact.inspect',{'artifactId':artifact['artifactId'],'sha256':artifact['sha256']},okay=False)
+        assert ('hash changed' in denied['message']) if changed!='old-evidence' else ('no supported sealed writer-exclusion evidence' in denied['message'])
         assert not client.events
     finally:await client.close()
