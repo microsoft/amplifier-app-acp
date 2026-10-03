@@ -274,3 +274,17 @@ async def test_background_admin_signin_retains_writer_gate_after_request(tmp_pat
         finished.set();await task;await asyncio.sleep(0)
         with Gate(config,exclusive=True):pass
     finally:finished.set();await task
+
+
+def test_advisory_release_failure_still_releases_native_home_gate(tmp_path):
+    from amplifier_acp.maintenance import release_all
+    from amplifier_acp.maintenance_gate import Gate
+    config={'home':str(tmp_path/'home')};calls=[]
+    class BrokenAdvisory:
+        def release(self):calls.append('failed advisory');raise OSError('disk full while writing released metadata')
+    class AnotherLease:
+        def release(self):calls.append('another lease released')
+    gate=Gate(config,exclusive=True)
+    with pytest.raises(ValueError,match='attempting every release'):release_all([gate,AnotherLease(),BrokenAdvisory()])
+    assert calls==['failed advisory','another lease released']
+    with Gate(config,exclusive=True):pass

@@ -34,6 +34,14 @@ def identity(value):
     if not isinstance(value,str) or len(value)!=32 or any(c not in '0123456789abcdef' for c in value):raise ValueError('Opaque native maintenance artifact or lease identity required')
     return value
 
+def release_all(held):
+    errors=[]
+    for item in reversed(held):
+        try:item.release()
+        except Exception as error:errors.append(type(error).__name__)
+    if errors:raise ValueError('Native maintenance lease cleanup failed after attempting every release; close the private admin process and inspect ownership before continuing')
+
+
 def file_stamp(path):
     info=checked(path).lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_nlink!=1:raise ValueError('Snapshot files must be regular files without hard links')
@@ -200,7 +208,7 @@ class Maintenance:
             self.lease={'leaseId':uuid.uuid4().hex,'previewHash':args['previewHash'],'workspace':workspace,'body':body,'held':held,'released':False,'deadline':deadline,'expiresAt':expires}
             return self.lease_view()
         except BaseException:
-            for item in reversed(held):item.release()
+            release_all(held)
             raise
 
     def release(self,lease_id=None):
@@ -209,7 +217,7 @@ class Maintenance:
         if lease_id is not None and row['leaseId']!=lease_id:raise ValueError('Lease identity does not match this connection')
         if not row['released']:
             row['released']=True
-            for item in reversed(row['held']):item.release()
+            release_all(row['held'])
         return {'released':True,**self.lease_view()}
 
     async def expire(self,lease_id,seconds):
