@@ -28,8 +28,11 @@ class AppReset:
             db.execute("CREATE INDEX IF NOT EXISTS app_reset_pending ON commands(json_extract(body,'$.operation'),json_extract(body,'$.state'))")
     def current(self):
         raw=regular(self.path,65536) if self.path.exists() else None
-        if raw is not None and self.path.stat().st_nlink!=1:refused('App settings cannot use hard links')
-        stamp={'bytes':base64.b64encode(raw).decode() if raw is not None else None,'stat':list(self.path.stat()[0:]) if raw is not None else None}
+        info=self.path.stat() if raw is not None else None
+        if info is not None and info.st_nlink!=1:refused('App settings cannot use hard links')
+        # Reads can change atime on a strict-atime filesystem. Preserve content,
+        # replacement and writer metadata in CAS, never read-induced changes.
+        stamp={'bytes':base64.b64encode(raw).decode() if raw is not None else None,'stat':{key:getattr(info,key) for key in ('st_dev','st_ino','st_mode','st_nlink','st_uid','st_gid','st_size','st_mtime_ns','st_ctime_ns')} if info is not None else None}
         # The private digest never leaves the owner's store. Public revisions are random.
         hashed=digest(stamp)
         with self.owner.db() as db:

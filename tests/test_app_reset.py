@@ -1,4 +1,4 @@
-import asyncio,json,sqlite3
+import asyncio,json,sqlite3,os
 from pathlib import Path
 import pytest
 from client import Client
@@ -90,4 +90,25 @@ async def test_expired_review_and_unknown_after_file_commit_never_replay(tmp_pat
         same=await request('apply',args);assert same['receipt']['state']=='unknown' and path.read_bytes()==current
         with pytest.raises(ValueError) as unresolved:await request('prepare',{'commandId':'no-new-review','parts':['native.app-bundle-default'],'privateContentReviewed':True})
         assert unresolved.value.data['executed'] is False
+    finally:await owner.close()
+
+@pytest.mark.asyncio
+async def test_read_induced_atime_does_not_invalidate_opaque_review(tmp_path,monkeypatch):
+    from amplifier_acp.admin import Administration
+    from amplifier_acp.app_reset import AppReset
+    from amplifier_acp.maintenance import Maintenance
+    home=tmp_path/'home';home.mkdir();app=tmp_path/'app';app.mkdir();cwd=tmp_path/'workspace';cwd.mkdir()
+    owner=Administration({'home':str(home),'appHome':str(app),'adminWorkspaceRoots':[str(cwd)],'adminMaintenance':True})
+    path=app/'admin-settings.yaml';path.write_text('bundle:\n  active: original\n')
+    owner.maintenance=Maintenance(owner);reset=AppReset(owner.maintenance);stat=Path.stat;reads=0
+    def read_advances_atime(self,*args,**kwargs):
+        nonlocal reads
+        info=stat(self,*args,**kwargs)
+        if self!=path:return info
+        reads+=1;values=list(info);values[7]+=reads
+        return os.stat_result(values,{'st_atime_ns':info.st_atime_ns+reads*1000000000,'st_mtime_ns':info.st_mtime_ns,'st_ctime_ns':info.st_ctime_ns})
+    monkeypatch.setattr(Path,'stat',read_advances_atime)
+    try:
+        first=reset.current();assert reset.current()==first and reads>1
+        path.write_text('bundle:\n  active: newer\n');assert reset.current()[1]!=first[1]
     finally:await owner.close()
