@@ -263,7 +263,15 @@ def main():
         except Exception:
             result = {"error": "Invalid destination probe request.", "code": "invalid_request"}
         else:
-            result = asyncio.run(probe(request))
+            # Capture the configured home before probe fixtures temporarily replace
+            # AMPLIFIER_HOME. Independent child leases survive parent process death.
+            from amplifier_acp.admin_lifecycle import AdminGate
+            from amplifier_acp.maintenance_gate import Gate, MaintenanceBusy
+            try:
+                with AdminGate({}), Gate():
+                    result = asyncio.run(probe(request))
+            except MaintenanceBusy:
+                result = {"error": "Native maintenance holds destination admission.", "code": "native_maintenance_busy"}
         output.write(json.dumps(result) + "\n")
         output.flush()
 

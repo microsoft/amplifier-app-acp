@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Private native transfer lifecycle v1",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "const": "inspect"
+        },
+        "args": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false,
+          "required": []
+        }
+      },
+      "required": [
+        "operation",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "const": "acquire"
+        },
+        "args": {
+          "type": "object",
+          "properties": {
+            "fenceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "dataScope": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "purpose": {
+              "enum": [
+                "recovery",
+                "distribution-update"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "fenceId",
+            "commandId",
+            "instanceId",
+            "dataScope",
+            "purpose"
+          ]
+        }
+      },
+      "required": [
+        "operation",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "const": "release"
+        },
+        "args": {
+          "type": "object",
+          "properties": {
+            "fenceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "dataScope": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "purpose": {
+              "enum": [
+                "recovery",
+                "distribution-update"
+              ]
+            },
+            "outcome": {
+              "enum": [
+                "unchanged",
+                "ready",
+                "unknown"
+              ]
+            },
+            "proof": {
+              "type": "object"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "fenceId",
+            "commandId",
+            "instanceId",
+            "dataScope",
+            "purpose",
+            "outcome"
+          ]
+        }
+      },
+      "required": [
+        "operation",
+        "args"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

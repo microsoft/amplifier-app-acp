@@ -1,6 +1,6 @@
 """Held administration intake, including writers that outlive their request."""
 from __future__ import annotations
-import os,uuid
+import asyncio,os,uuid
 from .maintenance_gate import Gate,MaintenanceBusy
 
 READS={'maintenance.receipt','maintenance.artifact.read','maintenance.lease','generations.receipt','generations.inspect','generations.current'}
@@ -25,7 +25,7 @@ def context(args):
 
 class AdminLifecycle:
     def __init__(self,owner):
-        self.owner=owner;self.instance=uuid.uuid4().hex;self.requests={};self.fence=None;self.gate=None;self.closing=False
+        self.owner=owner;self.instance=uuid.uuid4().hex;self.requests={};self.fence=None;self.gate=None;self.closing=False;self.waiting_idle=False
     def work(self):
         operations={}
         for row in self.requests.values():operations[row['operation']]=operations.get(row['operation'],0)+1
@@ -43,9 +43,17 @@ class AdminLifecycle:
             if operation not in READS and not (matching and self.fence['purpose']=='recovery' and operation.startswith('maintenance.')):raise AdminFenced()
         else:gate=AdminGate(self.owner.config)
         identity=uuid.uuid4().hex;self.requests[identity]={'operation':operation,'gate':gate};return identity
+    def maybe_idle(self):
+        work=self.work()
+        if self.waiting_idle and not self.closing and not self.fence and not any(work.values()):
+            self.waiting_idle=False
+            if self.owner.on_idle:
+                task=asyncio.create_task(self.owner.on_idle())
+                task.add_done_callback(lambda done:done.exception() if not done.cancelled() else None)
     def leave(self,identity):
         row=self.requests.pop(identity,None)
         if row and row['gate']:row['gate'].release()
+        self.maybe_idle()
     def perform(self,operation,args):
         if operation=='inspect':
             if args:raise ValueError('Administration lifecycle inspection takes no selectors')
@@ -58,7 +66,9 @@ class AdminLifecycle:
                 if all(self.fence[k]==v for k,v in expected.items()):return {'acquired':True,**self.inspect()}
                 return {'acquired':False,'executed':False,'reason':'already-fenced','intakeClosed':True}
             work=self.work()
-            if work['requests'] or work['providerSignIns'] or work['maintenanceLease']:return {'acquired':False,'executed':False,'reason':'owned-work','intakeClosed':False,'work':work}
+            if work['requests'] or work['providerSignIns'] or work['maintenanceLease']:
+                self.waiting_idle=True
+                return {'acquired':False,'executed':False,'reason':'owned-work','intakeClosed':False,'work':work}
             try:gate=AdminGate(self.owner.config,exclusive=True)
             except MaintenanceBusy:return {'acquired':False,'executed':False,'reason':'other-native-admin-writer','intakeClosed':False,'work':work}
             # No await occurs between checking native-owned activity and closing intake.

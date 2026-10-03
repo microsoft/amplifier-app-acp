@@ -28,3 +28,17 @@ The independently packaged Unified native bridge exposes `AdminConnection.quiesc
 Protocol subprocess tests prove cross-process refusal, private recovery snapshot while held, normal mutation refusal, active recovery lease blocking release, process-death lock release and no native session creation. A native owner fixture proves post-response sign-in accounting and cancelled-request lifetime joining. Node tests use the official ACP SDK and actual adapter process for held/replacement behavior and expired detached scopes. No credential/account operation or model turn is performed.
 
 An unresponsive or lost process is an unknown outcome, never a known busy refusal. The product host must retain its durable fence. This extension does not authenticate a browser, approve maintenance, manage application installation, assert a new application is ready, or supply a complete cross-owner backup.
+
+## Idle advisories
+
+Lifecycle negotiation now adds `idleNotification:true`. After an acquisition is
+refused for this process's queued request, sign-in, or maintenance lease, settling
+that actual work emits one private `_amplifier/admin/idle {version:1}` notification.
+It is only a prompt to recheck; it never opens intake, authenticates release, or
+proves other processes are idle. The public bridge's `AdminOptions.onMayBeIdle`
+also signals ordinary request completion. No dormant polling is introduced.
+
+Each native transfer request now holds the same shared admin writer gate for its
+whole lifetime, so the one native-home exclusive admin participant also detects
+transfer work in another cooperating ACP process. Its separate transfer intake
+fence must be acquired first; it does not take another exclusive admin gate.

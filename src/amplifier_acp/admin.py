@@ -17,7 +17,8 @@ OPERATIONS=GENERATION_OPERATIONS | MAINTENANCE_OPERATIONS | {
  'bundles.reorder','bundles.move','bundle.discover','bundle.export','bundle.save','bundle.default','configuration.defaults'}
 
 class Administration:
- def __init__(self,config):
+ def __init__(self,config,on_idle=None):
+  self.on_idle=on_idle
   self.config=config;self.lock=asyncio.Lock();self.setup=None;self.bundles=None;self.registry=None;self.background_gates={}
   from .admin_lifecycle import AdminLifecycle
   self.lifecycle=AdminLifecycle(self);self.effects=set();self.requests=set()
@@ -90,6 +91,7 @@ class Administration:
        if gate:
         from .maintenance import release_all
         release_all(gate)
+       self.lifecycle.maybe_idle()
       task.add_done_callback(release)
  async def authorized(self,workspace,operation,args):
   if operation in GENERATION_OPERATIONS:

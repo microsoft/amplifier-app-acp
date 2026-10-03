@@ -9,6 +9,7 @@ import sys
 import uuid
 from . import __version__
 from .worker import NativeWorker, NativeError
+from .transfer_lifecycle import managed_probe
 
 NATIVE='amplifier.dev/native'
 HOST='amplifier.dev/host'
@@ -515,29 +516,24 @@ class Server:
             return {'protocolVersion':1,'agentInfo':{'name':'amplifier-acp','title':'Amplifier','version':__version__},
                 'agentCapabilities':{'loadSession':True,'sessionCapabilities':{'resume':{},'close':{},'delete':{}},
                     'promptCapabilities':{'image':True,'audio':False,'embeddedContext':True},
-                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True,'passiveInspect':True},'scheduledTurns':{'version':1,'completion':'settled'},'questionTurns':{'version':1,'completion':'settled','active':False},'observationTurns':{'version':1,'completion':'settled','active':False},'configurationClone':{'version':1},'taskState':{'version':1,'passive':True},'workers':{'version':1,'passiveInspection':True,'residentControls':True},'runtimeInspection':{'version':1,'residentOnly':True,'passiveStatus':True},'historyEdits':{'version':1,'completion':'settled','active':False},'sessionLifecycle':{'version':1,'passive':True,'deletion':'preserve-history'},'activeSteering':{'version':1,'mode':'request_boundary','cancellable':False,'runtimeNegotiated':True},'lifecycle':{'version':1,'gracefulRetire':True},'relocation':{'version':1,'passiveInspection':True},**({'transfer':{'version':1,'passiveInspection':True}} if self.config.get('transferAuthorityDirectory') and self.config.get('transferWorkspaceRoots') else {}),**({'admin':{'version':1,'lifecycle':{'version':1,'heldIntake':True,'crossProcessWriterFence':True},**({'generations':{'version':1}} if self.config.get('adminGenerations') else {}),**({'maintenance':{'version':1,'selectedOnly':True,'privateArtifacts':True}} if self.config.get('adminMaintenance') is True else {})}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
+                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True,'passiveInspect':True},'scheduledTurns':{'version':1,'completion':'settled'},'questionTurns':{'version':1,'completion':'settled','active':False},'observationTurns':{'version':1,'completion':'settled','active':False},'configurationClone':{'version':1},'taskState':{'version':1,'passive':True},'workers':{'version':1,'passiveInspection':True,'residentControls':True},'runtimeInspection':{'version':1,'residentOnly':True,'passiveStatus':True},'historyEdits':{'version':1,'completion':'settled','active':False},'sessionLifecycle':{'version':1,'passive':True,'deletion':'preserve-history'},'activeSteering':{'version':1,'mode':'request_boundary','cancellable':False,'runtimeNegotiated':True},'lifecycle':{'version':1,'gracefulRetire':True},'relocation':{'version':1,'passiveInspection':True},**({'transfer':{'version':1,'passiveInspection':True,'lifecycle':{'version':1,'heldIntake':True,'nativeAdminWriter':managed_probe(self.config)}}} if self.config.get('transferAuthorityDirectory') and self.config.get('transferWorkspaceRoots') else {}),**({'admin':{'version':1,'lifecycle':{'version':1,'heldIntake':True,'crossProcessWriterFence':True,'idleNotification':True},**({'generations':{'version':1}} if self.config.get('adminGenerations') else {}),**({'maintenance':{'version':1,'selectedOnly':True,'privateArtifacts':True}} if self.config.get('adminMaintenance') is True else {})}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
         if not self.initialized:raise RpcError(-32600,'Initialize this connection first.')
         if method in {'_amplifier/relocation','_amplifier/relocation/reconcile'}:
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
             from .relocation import passive
             return passive(self,params,reconcile=method.endswith('/reconcile'))
-        if method=='_amplifier/transfer':
+        if method in {'_amplifier/transfer','_amplifier/transfer/lifecycle'}:
             if NATIVE not in self.extensions or not self.config.get('transferAuthorityDirectory') or not self.config.get('transferWorkspaceRoots'):raise RpcError(-32601,'Native transfer authority was not launcher-enabled and negotiated.')
+            from .transfer_lifecycle import TransferLifecycle
+            if not hasattr(self,'transfers'):self.transfers=TransferLifecycle(self)
+            if method=='_amplifier/transfer/lifecycle':return self.transfers.control(params.get('operation'),params.get('args',{}))
             loaded=self.sessions.get(params.get('sessionId'))
             if params.get('operation')!='inspect' and loaded and loaded.worker and loaded.worker.process.returncode is None:raise RpcError(-32000,'Retire the resident native worker before transfer fencing.',{'executed':False})
-            from .transfer import TransferAuthority
-            owner=await asyncio.to_thread(TransferAuthority,self,params)
-            if params.get('operation')=='destination.policy':
-                from .transfer_readiness import policy
-                return await asyncio.to_thread(policy,owner)
-            if params.get('operation')=='destination.check':
-                from .transfer_readiness import check
-                return await check(owner)
-            return await asyncio.to_thread(owner.perform,params.get('operation'))
+            return await self.transfers.perform(params)
         if method in {'_amplifier/admin','_amplifier/admin/lifecycle'}:
             if NATIVE not in self.extensions or not self.config.get('adminWorkspaceRoots'):raise RpcError(-32601,'Native administration was not negotiated or launcher-enabled.')
             from .admin import Administration
-            if not hasattr(self,'admin'):self.admin=Administration(self.config)
+            if not hasattr(self,'admin'):self.admin=Administration(self.config,lambda:self.send({'jsonrpc':'2.0','method':'_amplifier/admin/idle','params':{'version':1}}))
             if method=='_amplifier/admin/lifecycle':
                 self.admin.workspace(params.get('cwd'))
                 return self.admin.lifecycle.perform(params.get('operation'),params.get('args',{}))
@@ -733,6 +729,7 @@ class Server:
                 self.track(self.handle(row))
         finally:
             transport.close()
+            if hasattr(self,'transfers'):await self.transfers.close()
             if hasattr(self,'admin'):await self.admin.close()
             # A lost client means cancellation, never automatic replay on reconnect.
             for session in list(self.sessions.values()):await session.close()
