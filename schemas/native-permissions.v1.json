@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://amplifier.dev/acp/native-permissions.v1.json",
+  "title": "Native scoped write-path preferences v1",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "cwd": {
+          "type": "string"
+        },
+        "operation": {
+          "const": "permissions.get"
+        },
+        "args": {
+          "type": "object",
+          "properties": {
+            "scope": {
+              "enum": [
+                "global",
+                "project",
+                "local"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "cwd": {
+          "type": "string"
+        },
+        "operation": {
+          "const": "permissions.save"
+        },
+        "args": {
+          "type": "object",
+          "properties": {
+            "scope": {
+              "enum": [
+                "global",
+                "project",
+                "local"
+              ]
+            },
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "expectedRevision": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "allowed": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              }
+            },
+            "denied": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              }
+            }
+          },
+          "required": [
+            "commandId",
+            "expectedRevision",
+            "allowed",
+            "denied"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "cwd": {
+          "type": "string"
+        },
+        "operation": {
+          "const": "permissions.receipt"
+        },
+        "args": {
+          "type": "object",
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "required": [
+            "commandId"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}
