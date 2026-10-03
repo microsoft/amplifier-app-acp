@@ -133,3 +133,68 @@ Receipts are `running`, `succeeded`, `refused`, or `unknown`; a saved running
 operation observed after interruption is unknown. There is no mutation retry on
 lost transport. Neither retention nor native generation deletion is implemented:
 safe reclamation needs an authoritative live/configuration reference index.
+
+## Paged native archive plans
+
+The additive `admin.maintenance.archivePlans` capability advertises version1,
+32-selection batches and paged manifests. This path extends native coverage;
+it does not replace the existing small selected-preview/reset contract.
+
+1. `maintenance.archive.create {commandId,parts,privateContentReviewed:true,
+   includeCredentials?:false,credentialsReviewed?:false}` creates an opaque plan.
+   Parts are `session-history`, `session-state`, `shared-configuration`, and
+   `workspace-configuration`. The response is `{planId,revision:0,phase:'open'}`.
+2. `maintenance.archive.add {commandId,planId,expectedRevision,sessions?:
+   [{nativeSessionId,cwd}],workspaces?:[cwd]}` appends at most32 of each per batch.
+   Every native identity and workspace is checked against launcher authority.
+   Repeat exact command IDs inspect saved receipts; new batches require the
+   returned revision. There is no discovery, directory listing or implicit child
+   inclusion. Up to100,000 explicit selections fit in the private SQLite plan.
+3. `maintenance.archive.prepare {commandId,planId,expectedRevision}` seals the
+   selection and returns an immutable `previewHash`, compact inventory counts,
+   selection/manifest hashes, omissions, exclusions and credential coverage.
+   The inventory stays in SQLite, not in a response or hot application state.
+   `maintenanceMaxManifestEntries` defaults to100,000 (maximum1,000,000); the
+   existing configured source byte limit applies. Exceeding either fails
+   explicitly, with private partial plan retained and no source changes.
+4. `maintenance.archive.manifest {previewHash,cursor?,limit?:50}` reads1–100
+   entries by indexed keyset cursor. Entries have `path`, `status` (included,
+   directory, missing), and included `bytes/sha256`; no absolute source path.
+   It returns `items,nextCursor,inventory,coverage,omissions,exclusions`.
+   Immutable-plan identity/authority checks are bounded metadata reads, including
+   after restart. Paging does not rescan source files or hydrate the manifest.
+5. Existing acquire/snapshot/release and chunked artifact reads consume the
+   sealed hash. The snapshot verifies the complete explicit selection before
+   and after capture. A TAR contains `manifest.json` with `{summary,entries}`;
+   entries stream from SQLite into the private manifest file. Archive bytes and
+   manifest entries are never assembled into one RPC result. Source changes,
+   unsafe filesystem objects and lease expiry prevent publication of a completed
+   artifact. A fresh review is required, never an implicit recapture.
+
+`shared-configuration` includes shared `settings.yaml`, `routing/`, `bundles/`,
+and adapter `admin-settings.yaml`. Reviewed credential inclusion additionally
+captures `keys.env`; excluding it does not redact inline secrets elsewhere.
+`workspace-configuration` includes only explicitly named workspaces' `.amplifier/`
+`settings.yaml`, `settings.local.yaml`, `routing/`, `routing.local/`, and `bundles/`.
+Missing named roots appear in the inventory. Unknown home entries, workspace
+source files, module caches, generation stores, product/client stores and
+external credential stores remain omitted. Transient `.lock`/`-shm` are excluded.
+Native-history authority and original files are not modified.
+
+Shared/workspace configuration trees require the trusted launcher assertion
+`maintenanceExternalWriters:'stopped'`: current settings file locks do not cover
+arbitrary routing/bundle directory changes by external tools. Plans selecting
+more than32 sessions also require stopped external writers, avoiding thousands
+of simultaneously live Foundation writer leases. Smaller cooperative plans
+acquire actual Foundation session writer leases. The native-home exclusive OS
+gate remains mandatory in both modes. This assertion is deployment authority,
+not an untrusted browser checkbox or proof inferred from a momentary idle sample.
+
+Plan create/add/prepare failures that finish their private file thread have a
+`failed` receipt with `settled:true,canonicalFilesChanged:0`. Private partial
+selection/manifest files can remain; this is not `executed:false`. Process loss
+before a conclusive receipt remains `unknown`. No interrupted plan is resumed
+or rebuilt automatically. Only exact receipt inspection can resolve it.
+
+See [the retained-behavior audit](recovery-parity-audit.md) for full-product backup,
+credential reset, managed deletion and retention boundaries.

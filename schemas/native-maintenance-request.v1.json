@@ -489,6 +489,223 @@
         }
       },
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "maintenance.archive.create"
+        },
+        "args": {
+          "type": "object",
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "parts": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 4,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "session-history",
+                  "session-state",
+                  "shared-configuration",
+                  "workspace-configuration"
+                ]
+              }
+            },
+            "privateContentReviewed": {
+              "const": true
+            },
+            "includeCredentials": {
+              "type": "boolean"
+            },
+            "credentialsReviewed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "commandId",
+            "parts",
+            "privateContentReviewed"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "maintenance.archive.add"
+        },
+        "args": {
+          "type": "object",
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "planId": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{32}$"
+            },
+            "expectedRevision": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "sessions": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "object",
+                "required": [
+                  "nativeSessionId",
+                  "cwd"
+                ],
+                "properties": {
+                  "nativeSessionId": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,220}$"
+                  },
+                  "cwd": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8192
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "workspaces": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8192
+              }
+            }
+          },
+          "required": [
+            "commandId",
+            "planId",
+            "expectedRevision"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "maintenance.archive.prepare"
+        },
+        "args": {
+          "type": "object",
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "planId": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{32}$"
+            },
+            "expectedRevision": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "commandId",
+            "planId",
+            "expectedRevision"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "maintenance.archive.manifest"
+        },
+        "args": {
+          "type": "object",
+          "properties": {
+            "previewHash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "cursor": {
+              "type": "string",
+              "maxLength": 8192
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          "required": [
+            "previewHash"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     }
   ]
 }

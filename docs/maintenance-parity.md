@@ -24,7 +24,7 @@ replacement implementation is imported.
 | Active worker currency | `generations.current` reports selected qualified receipts/policy; resident-only `runtime.inspect` reports actual interpreter, installed provenance and mounted root origins. Host inventory/aggregate adoption remains a public callback; absence is explicit. |
 | Distribution self-update / feature installation | Not implemented or advertised here. Requires installed-distribution owner, qualified release manifest, restart/adoption receipts and genuine lifecycle authority. |
 | Automatic background checking/install preferences, included/other application tiers | Not yet implemented in the optional product capability. Explicit native commands work. |
-| Native private snapshot / selected reset | Explicit selected histories/state + limited native settings, exclusive native-home gate and Foundation writer leases, private streamed artifacts, retained configuration originals and exact undo. Aggregate product snapshot/restore and destructive cleanup remain separate gaps. |
+| Native private snapshot / selected reset | Explicit selected histories/state, paged shared/workspace configuration archive plans, exclusive native-home gate and Foundation writer leases, private streamed artifacts, retained configuration originals and exact undo. Aggregate product snapshot/restore and destructive cleanup remain separate gaps. |
 | Environment repair | `generations.repair.preview` binds exact qualified receipts; `generations.repair` reconstructs a separate interpreter, checks provenance and read-only profile mounts, preserving original files and unknown work. Actual 98-distribution current graph passed without a model prompt or promotion. Missing/changed source inputs remain an explicit refusal. |
 | Rollback to an unqualified legacy baseline | Unsupported; qualified-generation rollback remains available. |
 | Retention / reclamation | Existing worker generation leases remain; no automated generation deletion in this owner. |
@@ -64,3 +64,5 @@ interpreter path, native home, or workspace authority from browser arguments.
   restore, unknown partial-reset automatic recovery, broad/destructive reset and
   generation reclamation remain explicit gaps; no partial native snapshot is a
   full-product backup.
+
+The [retained recovery audit](recovery-parity-audit.md) records the exact legacy effects, current acceptance and remaining aggregate/destructive boundaries.

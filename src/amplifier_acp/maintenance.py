@@ -15,7 +15,8 @@ from .relocation import write
 
 OPERATIONS={'maintenance.preview','maintenance.acquire','maintenance.snapshot',
  'maintenance.release','maintenance.lease','maintenance.receipt','maintenance.artifact.read',
- 'maintenance.reset.preview','maintenance.reset.apply','maintenance.reset.restore','maintenance.reset.reconcile'}
+ 'maintenance.reset.preview','maintenance.reset.apply','maintenance.reset.restore','maintenance.reset.reconcile',
+ 'maintenance.archive.create','maintenance.archive.add','maintenance.archive.prepare','maintenance.archive.manifest'}
 PARTS={'session-history','session-state','native-settings'}
 CHUNK=256*1024
 MAX_FILES=2048
@@ -74,6 +75,10 @@ class Maintenance:
         result=json.loads(row[2])
         if result['state']=='running':result={**result,'state':'unknown','replayed':False}
         return row[1],result
+
+    def claim(self,workspace,signature,row):
+        with self.db() as db:
+            return db.execute('INSERT OR IGNORE INTO commands VALUES(?,?,?,?)',(row['commandId'],workspace,signature,json.dumps(row))).rowcount==1
 
     def save(self,workspace,signature,row):
         with self.db() as db:db.execute('INSERT OR REPLACE INTO commands VALUES(?,?,?,?)',(row['commandId'],workspace,signature,json.dumps(row)))
@@ -153,6 +158,12 @@ class Maintenance:
         if len(json.dumps(result).encode())>512*1024:raise ValueError('Selected native inclusion manifest exceeds 512 KiB')
         return result
 
+    def archives(self):
+        if not hasattr(self,'archive_plans'):
+            from .archive_plan import ArchivePlans
+            self.archive_plans=ArchivePlans(self)
+        return self.archive_plans
+
     def ensure_open(self):
         if self.closing:raise ValueError('Native maintenance connection is closing; work was not replayed')
 
@@ -169,6 +180,7 @@ class Maintenance:
     def reviewed(self,workspace,digest):
         digest=token(digest);path=self.root/'previews'/(digest+'.json');body=json.loads(regular(path,1024*1024))
         if body.get('workspace')!=workspace or fingerprint(body)!=digest:raise ValueError('Maintenance preview identity or workspace changed')
+        if 'archivePlanId' in body:self.archives().reviewed(workspace,body)
         # Reapply launcher authority, even when a preview was created by another process.
         for row in body['spec']['sessions']:self.admin.workspace(row['cwd'])
         return body
@@ -189,7 +201,9 @@ class Maintenance:
         if self.lease and not self.lease['released']:raise ValueError('This connection already holds a native maintenance lease')
         ttl=args.get('ttlSeconds',60)
         if type(ttl)is not int or not 1<=ttl<=300:raise ValueError('Maintenance lease duration must be 1–300 seconds')
-        body=self.reviewed(workspace,args.get('previewHash'));spec=body['spec'];held=[]
+        body=self.reviewed(workspace,args.get('previewHash'))
+        if 'archivePlanId' in body:return self.archives().acquire(workspace,args,body,ttl)
+        spec=body['spec'];held=[]
         deadline=time.monotonic()+ttl;expires=time.time()+ttl
         def check():
             self.ensure_open()
@@ -237,7 +251,9 @@ class Maintenance:
     def snapshot(self,workspace,args):
         lease=self.valid(identity(args.get('leaseId')))
         if lease['workspace']!=workspace or args.get('previewHash')!=lease['previewHash']:raise ValueError('Snapshot requires the exact reviewed lease')
-        body=lease['body'];check=lambda:self.valid(lease['leaseId'])
+        body=lease['body']
+        if 'archivePlanId' in body:return self.archives().snapshot(workspace,args,lease)
+        check=lambda:self.valid(lease['leaseId'])
         if self.inventory(body['spec'],check)!=body['inventory']:raise ValueError('Selected source changed while fenced; snapshot refused')
         artifact=uuid.uuid4().hex;directory=checked(self.root/'artifacts'/artifact);directory.mkdir(parents=True,mode=0o700)
         partial=directory/'snapshot.partial.tar';target=directory/'snapshot.tar';resolve=self.paths(body['spec'])
@@ -381,6 +397,7 @@ class Maintenance:
           'maintenance.snapshot':{'commandId','leaseId','previewHash'},'maintenance.release':{'leaseId'},'maintenance.lease':set(),
           'maintenance.receipt':{'commandId'},'maintenance.artifact.read':{'artifactId','sha256','offset','maxBytes'},
           'maintenance.reset.reconcile':{'commandId','leaseId','previewHash','resetCommandId'},'maintenance.reset.apply':{'commandId','leaseId','previewHash'},'maintenance.reset.restore':{'commandId','leaseId','previewHash','resetCommandId','expectedPostResetHash'}}
+        fields.update({'maintenance.archive.create':{'commandId','parts','privateContentReviewed','includeCredentials','credentialsReviewed'},'maintenance.archive.add':{'commandId','planId','expectedRevision','sessions','workspaces'},'maintenance.archive.prepare':{'commandId','planId','expectedRevision'},'maintenance.archive.manifest':{'previewHash','cursor','limit'}})
         if fields[operation] is not None and set(args)-fields[operation]:raise ValueError('Unsupported maintenance operation fields')
         async with self.lock:
             if operation in {'maintenance.preview','maintenance.reset.preview'}:return await self.run(self.preview,workspace,args,operation.endswith('reset.preview'))
@@ -388,6 +405,7 @@ class Maintenance:
                 row=await self.run(self.receipt,workspace,args.get('commandId'));return {'receipt':row[1] if row else None}
             if operation=='maintenance.artifact.read':return await self.run(self.artifact,workspace,args)
             if operation=='maintenance.lease':return self.lease_view()
+            if operation=='maintenance.archive.manifest':return await self.run(self.archives().page,workspace,args)
             if operation=='maintenance.release':return await self.run(self.release,identity(args.get('leaseId')))
             command=args.get('commandId');previous=await self.run(self.receipt,workspace,command);signature=fingerprint({'workspace':workspace,'operation':operation,'args':args})
             if previous:
@@ -397,19 +415,34 @@ class Maintenance:
                 if previous[1]['state']=='refused':result.update(accepted=False,executed=False)
                 return result
             receipt={'commandId':command,'operation':operation,'state':'running','createdAt':time.time(),'replayed':False}
-            await self.run(self.save,workspace,signature,receipt)
+            if not await self.run(self.claim,workspace,signature,receipt):
+                # Another private admin process owns this exact admission. Do not
+                # overwrite its receipt or repeat its file effects.
+                prior=await self.run(self.receipt,workspace,command)
+                if prior is None or prior[0]!=signature:raise ValueError('Maintenance command identity conflicts with its exact saved request')
+                result={'receipt':prior[1],**prior[1].get('result',{}),'replayed':False}
+                if operation=='maintenance.acquire':result['active']=self.lease_view().get('active',False) and self.lease_view().get('leaseId')==result.get('leaseId')
+                if prior[1]['state']=='refused':result.update(accepted=False,executed=False)
+                return result
             try:
                 if operation=='maintenance.acquire':
                     result=await self.run(self.acquire,workspace,args)
                     self.timer=asyncio.create_task(self.expire(result['leaseId'],max(0,result['expiresAt']-time.time())))
+                elif operation.startswith('maintenance.archive.'):
+                    method={'maintenance.archive.create':'create','maintenance.archive.add':'add','maintenance.archive.prepare':'prepare'}[operation]
+                    result=await self.run(getattr(self.archives(),method),workspace,args)
                 elif operation=='maintenance.snapshot':result=await self.run(self.snapshot,workspace,args)
                 elif operation=='maintenance.reset.reconcile':result=await self.run(self.reconcile_reset,workspace,args)
                 else:result=await self.run(self.reset,workspace,args,operation=='maintenance.reset.restore')
                 receipt={**receipt,'state':'succeeded','result':result,'settledAt':time.time()}
             except BaseException as error:
+                archive_failure=operation.startswith('maintenance.archive.') and isinstance(error,Exception)
                 known=operation=='maintenance.acquire' and isinstance(error,Exception) and (self.lease is None or self.lease['released'])
-                receipt={**receipt,'state':'refused' if known else 'unknown','errorType':type(error).__name__,'settledAt':time.time(),**({'executed':False} if known else {})}
+                receipt={**receipt,'state':'refused' if known else 'failed' if archive_failure else 'unknown','errorType':type(error).__name__,'settledAt':time.time(),**({'executed':False} if known else {}),**({'settled':True,'canonicalFilesChanged':0} if archive_failure else {})}
                 await self.run(self.save,workspace,signature,receipt)
+                if archive_failure:
+                    failed=ValueError(str(error));failed.data={'reason':'native-archive-plan-failed','settled':True,'canonicalFilesChanged':0,'commandId':command,'replayed':False}
+                    raise failed from None
                 if known:
                     refused=ValueError(str(error));refused.data={**getattr(error,'data',{}),'reason':getattr(error,'data',{}).get('reason','native-maintenance-refused'),'executed':False,'replayed':False}
                     raise refused from None
