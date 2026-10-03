@@ -1,0 +1,267 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsoft.github.io/amplifier-acp/schemas/native-capture-scope.v1.json",
+  "description": "Private trusted offline coordinator requests; live connection authority cannot be recreated from durable receipts.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "maintenance.capture.acquire"
+        },
+        "args": {
+          "type": "object",
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "nonce": {
+              "type": "string",
+              "minLength": 32,
+              "maxLength": 128
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "dataScope": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "stopReceiptSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "commandId",
+            "nonce",
+            "instanceId",
+            "dataScope",
+            "stopReceiptSha256"
+          ],
+          "additionalProperties": false
+        },
+        "_meta": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "maintenance.capture.inspect"
+        },
+        "args": {
+          "type": "object",
+          "properties": {
+            "captureId": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$"
+            },
+            "nonce": {
+              "type": "string",
+              "minLength": 32,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "captureId",
+            "nonce"
+          ],
+          "additionalProperties": false
+        },
+        "_meta": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "maintenance.capture.release"
+        },
+        "args": {
+          "type": "object",
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "captureId": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$"
+            },
+            "nonce": {
+              "type": "string",
+              "minLength": 32,
+              "maxLength": 128
+            },
+            "outcome": {
+              "enum": [
+                "sealed",
+                "aborted"
+              ]
+            },
+            "artifactId": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$"
+            },
+            "artifactSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "manifestDigest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "productSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "commandId",
+            "captureId",
+            "nonce",
+            "outcome"
+          ],
+          "additionalProperties": false
+        },
+        "_meta": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "context": {
+      "type": "object",
+      "properties": {
+        "captureId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "nonce": {
+          "type": "string",
+          "minLength": 32,
+          "maxLength": 128
+        },
+        "commandId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "adminInstanceId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "instanceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "dataScope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "stopReceiptSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "acquiredAt": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "captureId",
+        "nonce",
+        "commandId",
+        "adminInstanceId",
+        "instanceId",
+        "dataScope",
+        "stopReceiptSha256",
+        "acquiredAt"
+      ]
+    },
+    "binding": {
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "manifestDigest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "manifestDigestKind": {
+          "const": "sha256-exact-native-manifest-sqlite3-bytes"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "previewHash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "sha256",
+        "manifestDigest",
+        "manifestDigestKind",
+        "bytes",
+        "previewHash"
+      ]
+    }
+  }
+}

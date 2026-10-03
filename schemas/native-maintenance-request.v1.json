@@ -966,6 +966,9 @@
     },
     {
       "$ref": "native-cache-maintenance.v1.json"
+    },
+    {
+      "$ref": "native-capture-scope.v1.json"
     }
   ]
 }

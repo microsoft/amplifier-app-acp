@@ -170,6 +170,7 @@ def prepare(owner,plan,parts,check,command_id,include_credentials):
     finally:index.close()
     descriptor={'format':FORMAT,'version':VERSION,'roots':[{**row,'destination':row['id']} for row in selected],'sourceConfiguration':source_config(owner,selected),'cutoff':{'capturedAt':source_cut,'phase':'before-current-plan-seal','excludedPlanId':plan,'prepareCommandId':command_id,'unfinishedReceipts':'uncertain-never-replay'},'coverage':{'completeNativeBackup':incomplete==0,'completeProductBackup':False,'scope':'all-configured-native-authority-roots','authoritativeOmissions':incomplete,'excludedEntries':excluded,'credentialsIncluded':include_credentials,'workspaceFiles':'native-configuration-captured-workspace-content-external','workspaceRestoration':'staged-only-never-overwrite-existing-workspaces','externalDependencies':'source paths outside declared native roots remain external requirements'},'inventory':{'entries':count,'bytes':total,'knownNativeSessions':native_sessions}}
     descriptor['writerProtection']=dict(WRITER_PROTECTION)
+    if hasattr(owner,'capture_scope') and owner.capture_scope.active():descriptor['capture']=owner.capture_scope.context()
     from .relocation import write
     write(directory/'descriptor.json',descriptor)
     def sync(path):
@@ -246,6 +247,9 @@ def snapshot(plans,workspace,args,lease):
     with target.open('rb') as stream:
         while block:=stream.read(CHUNK):check();digest.update(block)
     result={'artifactId':artifact,'sha256':digest.hexdigest(),'bytes':file_stamp(target)[2],'contentType':'application/x-tar','workspace':workspace,'previewHash':lease['previewHash'],'coverage':'full-configured-native-authority','format':FORMAT,'version':VERSION,'manifest':{'fullNative':body['fullNative'],'inventory':body['inventory'],'previewHash':lease['previewHash']}}
+    if 'capture' in body['fullNative']:
+        owner.capture().verify_plan(body['fullNative']['capture'])
+        result['capture']=owner.capture().bind(workspace,result,header['manifest'])
     write(directory/'description.json',result);return result
 
 
@@ -285,4 +289,5 @@ def inspect_artifact(owner,workspace,args):
     return {'version':1,'artifactId':artifact,'sha256':expected,'bytes':before[2],'contentType':'application/x-tar','format':FORMAT,'archiveVersion':VERSION,'previewHash':header['previewHash'],
       'manifest':{**manifest,'digestKind':'sha256-exact-native-manifest-sqlite3-bytes'},
       'authority':{**{key:coverage[key] for key in ('scope','completeNativeBackup','completeProductBackup','authoritativeOmissions','excludedEntries','credentialsIncluded')},'declaredRootIds':sorted(roots),'externalWriters':dict(WRITER_PROTECTION)},
-      'integrity':{'artifactHashVerified':True,'manifestHashVerified':True}}
+      'integrity':{'artifactHashVerified':True,'manifestHashVerified':True},
+      **({'capture':{'context':authority['capture'],'binding':{'artifactId':artifact,'sha256':expected,'manifestDigest':expected_manifest,'manifestDigestKind':'sha256-exact-native-manifest-sqlite3-bytes','bytes':before[2],'previewHash':header['previewHash']},'liveAuthority':'maintenance.capture.inspect on original connection required'}} if 'capture' in authority else {})}

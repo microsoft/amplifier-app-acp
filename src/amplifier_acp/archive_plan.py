@@ -149,7 +149,10 @@ class ArchivePlans:
         # an uncertain immutable plan; a new command must not restart its effects.
         with self.db(args['planId'],mutate=True) as db:
             value=self.meta(db,workspace);count=total=0
-            with Gate(self.owner.config,exclusive=bool(set(value['parts'])&(stores.PARTS|{'full-native-authority'}))):
+            if hasattr(self.owner,'capture_scope') and self.owner.capture_scope.active():
+                capture=self.owner.capture_scope.valid()
+                if capture['workspace']!=workspace or len(capture['artifacts'])>=16:raise ValueError('Capture workspace or artifact budget is unavailable')
+            with self.owner.archive_gate(exclusive=bool(set(value['parts'])&(stores.PARTS|{'full-native-authority'}))):
                 if 'full-native-authority' in value['parts']:
                     from .full_native_archive import prepare as prepare_full
                     value['fullNative']=prepare_full(self.owner,value['planId'],value['parts'],self.owner.ensure_open,args['commandId'],value['includeCredentials']);self.save(db,value)
@@ -199,6 +202,7 @@ class ArchivePlans:
         if 'fullNative' in value:
             from .private_store_snapshot import require_admin
             require_admin(self.owner)
+            if 'capture' in value['fullNative']:self.owner.capture().verify_plan(value['fullNative']['capture'])
         with self.db(value['planId']) as db:
             if self.summary(db,value)!=body['inventory']:raise ValueError('Immutable manifest content changed')
             for label,path in self.roots(db,value):
@@ -213,7 +217,7 @@ class ArchivePlans:
             self.owner.ensure_open()
             if time.monotonic()>=deadline:raise ValueError('Native archive acquisition expired')
         try:
-            held.append(Gate(self.owner.config,exclusive=True))
+            held.append(self.owner.archive_gate(exclusive=True))
             if body['spec']['externalWriterPolicy']!='stopped':
                 from amplifier_foundation.session.shared_state import SharedSessionStore
                 with self.db(body['archivePlanId']) as db:

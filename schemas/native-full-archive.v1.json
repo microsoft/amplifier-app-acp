@@ -169,6 +169,57 @@
             "noncooperatingWriters": "not-independently-observed",
             "requiresOperatorVerification": true
           }
+        },
+        "capture": {
+          "type": "object",
+          "properties": {
+            "captureId": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$"
+            },
+            "nonce": {
+              "type": "string",
+              "minLength": 32,
+              "maxLength": 128
+            },
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "adminInstanceId": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$"
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "dataScope": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "stopReceiptSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "acquiredAt": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "captureId",
+            "nonce",
+            "commandId",
+            "adminInstanceId",
+            "instanceId",
+            "dataScope",
+            "stopReceiptSha256",
+            "acquiredAt"
+          ]
         }
       },
       "additionalProperties": false

@@ -20,7 +20,8 @@ OPERATIONS={'maintenance.preview','maintenance.acquire','maintenance.snapshot',
  'maintenance.archive.create','maintenance.archive.add','maintenance.archive.prepare','maintenance.archive.manifest',
  'maintenance.restore.preview','maintenance.restore.manifest','maintenance.restore.apply','maintenance.restore.reconcile','maintenance.restore.inspect'}
 CACHE_OPERATIONS={'maintenance.cache.scan','maintenance.cache.page','maintenance.cache.preview','maintenance.cache.clear'}
-OPERATIONS |= CACHE_OPERATIONS
+CAPTURE_OPERATIONS={'maintenance.capture.acquire','maintenance.capture.inspect','maintenance.capture.release'}
+OPERATIONS |= CACHE_OPERATIONS | CAPTURE_OPERATIONS
 PARTS={'session-history','session-state','native-settings'}
 CHUNK=256*1024
 MAX_FILES=2048
@@ -174,6 +175,18 @@ class Maintenance:
             from .native_restore import Restores
             self.restore_plans=Restores(self)
         return self.restore_plans
+
+    def capture(self):
+        if not hasattr(self,'capture_scope'):
+            from .capture_scope import Capture
+            self.capture_scope=Capture(self)
+        return self.capture_scope
+
+    def archive_gate(self,exclusive=False):
+        if hasattr(self,'capture_scope') and self.capture_scope.active():
+            from .capture_scope import BorrowedGate
+            return BorrowedGate(self.capture_scope)
+        return Gate(self.config,exclusive=exclusive)
 
     def caches(self):
         if not hasattr(self,'cache_plans'):
@@ -433,6 +446,8 @@ class Maintenance:
         fields.update({'maintenance.restore.preview':{'artifactId','sha256','destination','privateContentReviewed','credentialsReviewed'},'maintenance.restore.manifest':{'previewHash','cursor','limit'},'maintenance.restore.apply':{'commandId','previewHash'},'maintenance.restore.reconcile':{'commandId','restoreCommandId'},'maintenance.restore.inspect':{'restoreCommandId'}})
         from .cache_maintenance import FIELDS as CACHE_FIELDS
         fields.update(CACHE_FIELDS)
+        from .capture_scope import FIELDS as CAPTURE_FIELDS
+        fields.update(CAPTURE_FIELDS)
         if fields[operation] is not None and set(args)-fields[operation]:raise ValueError('Unsupported maintenance operation fields')
         async with self.lock:
             if operation in {'maintenance.preview','maintenance.reset.preview'}:return await self.run(self.preview,workspace,args,operation.endswith('reset.preview'))
@@ -443,6 +458,7 @@ class Maintenance:
                 from .full_native_archive import inspect_artifact
                 return await self.run(inspect_artifact,self,workspace,args)
             if operation=='maintenance.lease':return self.lease_view()
+            if operation=='maintenance.capture.inspect':return self.capture().inspect(workspace,args)
             if operation in {'maintenance.cache.page','maintenance.cache.preview'}:return await self.run(getattr(self.caches(),operation.rsplit('.',1)[1]),workspace,args)
             if operation=='maintenance.archive.manifest':return await self.run(self.archives().page,workspace,args)
             if operation in {'maintenance.restore.preview','maintenance.restore.manifest'}:return await self.run(self.restores().preview if operation.endswith('.preview') else self.restores().page,workspace,args)
@@ -453,6 +469,7 @@ class Maintenance:
                 if previous[0]!=signature:raise ValueError('Maintenance command identity conflicts with its exact saved request')
                 result={'receipt':previous[1],**previous[1].get('result',{}),'replayed':False}
                 if operation=='maintenance.acquire':result['active']=self.lease_view().get('active',False) and self.lease_view().get('leaseId')==result.get('leaseId')
+                if operation=='maintenance.capture.acquire':result['active']=self.capture().inspect(workspace,{'captureId':result.get('captureId','0'*32),'nonce':args.get('nonce')}).get('active',False)
                 if previous[1]['state']=='refused':result.update(accepted=False,executed=False)
                 return result
             receipt={'commandId':command,'operation':operation,'state':'running','createdAt':time.time(),'replayed':False}
@@ -469,6 +486,7 @@ class Maintenance:
                 if operation=='maintenance.acquire':
                     result=await self.run(self.acquire,workspace,args)
                     self.timer=asyncio.create_task(self.expire(result['leaseId'],max(0,result['expiresAt']-time.time())))
+                elif operation in CAPTURE_OPERATIONS:result=await self.run(getattr(self.capture(),operation.rsplit('.',1)[1]),workspace,args)
                 elif operation in CACHE_OPERATIONS:result=await self.run(getattr(self.caches(),operation.rsplit('.',1)[1]),workspace,args)
                 elif operation.startswith('maintenance.archive.'):
                     method={'maintenance.archive.create':'create','maintenance.archive.add':'add','maintenance.archive.prepare':'prepare'}[operation]
@@ -483,7 +501,7 @@ class Maintenance:
                 receipt={**receipt,'state':'succeeded','result':result,'settledAt':time.time()}
             except BaseException as error:
                 archive_failure=operation.startswith('maintenance.archive.') and isinstance(error,Exception)
-                known=(operation=='maintenance.acquire' and isinstance(error,Exception) and (self.lease is None or self.lease['released'])) or ((operation.startswith('maintenance.restore.') or operation in CACHE_OPERATIONS) and getattr(error,'data',{}).get('executed') is False)
+                known=(operation=='maintenance.acquire' and isinstance(error,Exception) and (self.lease is None or self.lease['released'])) or ((operation.startswith('maintenance.restore.') or operation in CACHE_OPERATIONS | CAPTURE_OPERATIONS) and getattr(error,'data',{}).get('executed') is False)
                 receipt={**receipt,'state':'refused' if known else 'failed' if archive_failure else 'unknown','errorType':type(error).__name__,'settledAt':time.time(),**({'executed':False} if known else {}),**({'settled':True,'canonicalFilesChanged':0} if archive_failure else {})}
                 await self.run(self.save,workspace,signature,receipt)
                 if archive_failure:
@@ -501,4 +519,6 @@ class Maintenance:
     async def close(self):
         self.closing=True
         if self.timer:self.timer.cancel()
-        async with self.lock:await self.run(self.release)
+        async with self.lock:
+            await self.run(self.release)
+            if hasattr(self,'capture_scope'):self.capture_scope.close()

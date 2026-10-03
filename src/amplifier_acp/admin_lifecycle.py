@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio,copy,os,uuid
 from .maintenance_gate import Gate,MaintenanceBusy
 
-READS={'maintenance.cache.page','maintenance.artifact.inspect','maintenance.restore.inspect','permissions.get','permissions.receipt','maintenance.restore.manifest','voice.preferences.receipt','history.import.receipt','maintenance.archive.manifest','voice.configuration','maintenance.receipt','maintenance.artifact.read','maintenance.lease','generations.receipt','generations.inspect','generations.current'}
+READS={'maintenance.capture.inspect','maintenance.cache.page','maintenance.artifact.inspect','maintenance.restore.inspect','permissions.get','permissions.receipt','maintenance.restore.manifest','voice.preferences.receipt','history.import.receipt','maintenance.archive.manifest','voice.configuration','maintenance.receipt','maintenance.artifact.read','maintenance.lease','generations.receipt','generations.inspect','generations.current'}
 CONTEXT={'fenceId','commandId','purpose','instanceId','dataScope'}
 SERVICE_IDENTITY={'installationId','dataScope','ownerId','instanceId','releaseDigest'}
 
@@ -55,7 +55,7 @@ class AdminLifecycle:
         for row in self.requests.values():operations[row['operation']]=operations.get(row['operation'],0)+1
         background=sum(not task.done() for task in self.owner.background_gates)
         maintenance=getattr(self.owner,'maintenance',None)
-        return {'requests':len(self.requests),'operations':operations,'providerSignIns':background,'maintenanceLease':bool(maintenance and maintenance.lease_view().get('active'))}
+        return {'requests':len(self.requests),'operations':operations,'providerSignIns':background,'maintenanceLease':bool(maintenance and maintenance.lease_view().get('active')),'captureLease':bool(maintenance and hasattr(maintenance,'capture_scope') and maintenance.capture_scope.active())}
     def inspect(self):
         return {'version':1,'adminInstanceId':self.instance,'pid':os.getpid(),'intakeClosed':self.fence is not None or self.closing,'lease':dict(self.fence) if self.fence else None,'work':self.work(),'workerStarted':False}
     def enter(self,operation,authorization=None):
@@ -90,7 +90,7 @@ class AdminLifecycle:
                 if all(self.fence[k]==v for k,v in expected.items()):return {'acquired':True,**self.inspect()}
                 return {'acquired':False,'executed':False,'reason':'already-fenced','intakeClosed':True}
             work=self.work()
-            if work['requests'] or work['providerSignIns'] or work['maintenanceLease']:
+            if work['requests'] or work['providerSignIns'] or work['maintenanceLease'] or work['captureLease']:
                 self.waiting_idle=True
                 return {'acquired':False,'executed':False,'reason':'owned-work','intakeClosed':False,'work':work}
             try:gate=AdminGate(self.owner.config,exclusive=True)
@@ -119,7 +119,7 @@ class AdminLifecycle:
                 if proof.get('verified') is not True or proof.get('fenceId')!=self.fence['fenceId'] or proof.get('commandId')!=self.fence['commandId'] or proof.get('dataScope')!=self.fence['dataScope'] or proof.get('outcome')!=args['outcome'] or not isinstance(proof.get('receiptId'),str):raise AdminFenced('Authenticated coordinator release proof required')
                 if args['outcome']=='unchanged' and proof.get('instanceId')!=self.fence['instanceId']:raise AdminFenced('Unchanged release must bind the same host instance')
             work=self.work()
-            if work['requests'] or work['providerSignIns'] or work['maintenanceLease']:raise AdminFenced('Administration still owns work or a native maintenance lease')
+            if work['requests'] or work['providerSignIns'] or work['maintenanceLease'] or work['captureLease']:raise AdminFenced('Administration still owns work or a native maintenance lease')
             old=dict(self.fence);self.gate.release();self.gate=None;self.fence=None
             result={'released':True,'intakeClosed':False,'lease':old,'adminInstanceId':self.instance,'workerStarted':False}
             self.releases[old['leaseId']]=copy.deepcopy({'request':args,'result':result})

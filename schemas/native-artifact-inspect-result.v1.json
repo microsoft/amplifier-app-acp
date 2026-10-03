@@ -137,6 +137,108 @@
         "manifestHashVerified"
       ],
       "additionalProperties": false
+    },
+    "capture": {
+      "type": "object",
+      "properties": {
+        "context": {
+          "type": "object",
+          "properties": {
+            "captureId": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$"
+            },
+            "nonce": {
+              "type": "string",
+              "minLength": 32,
+              "maxLength": 128
+            },
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "adminInstanceId": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$"
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "dataScope": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "stopReceiptSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "acquiredAt": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "captureId",
+            "nonce",
+            "commandId",
+            "adminInstanceId",
+            "instanceId",
+            "dataScope",
+            "stopReceiptSha256",
+            "acquiredAt"
+          ]
+        },
+        "binding": {
+          "type": "object",
+          "properties": {
+            "artifactId": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "manifestDigest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "manifestDigestKind": {
+              "const": "sha256-exact-native-manifest-sqlite3-bytes"
+            },
+            "bytes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "previewHash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "artifactId",
+            "sha256",
+            "manifestDigest",
+            "manifestDigestKind",
+            "bytes",
+            "previewHash"
+          ]
+        },
+        "liveAuthority": {
+          "const": "maintenance.capture.inspect on original connection required"
+        }
+      },
+      "required": [
+        "context",
+        "binding",
+        "liveAuthority"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [

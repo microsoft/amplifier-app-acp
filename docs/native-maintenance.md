@@ -441,3 +441,7 @@ cross-owner private filesystem import and no artifact execution. Mutated archive
 bytes, incorrect manifest digests, unsupported versions and missing writer-policy
 evidence refuse. Inspection is joined and bounded by the configured full-operation
 deadline; transport loss never indicates that native work has stopped.
+
+For an offline product archive that needs exclusion before native preparation
+and through the external seal, negotiate [continuous capture scope](capture-scope.md).
+A prebuilt native artifact remains insufficient evidence of that wider lifetime.
