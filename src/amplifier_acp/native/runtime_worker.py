@@ -663,7 +663,11 @@ class Worker:
                     self.retiring=True
                     self.shutdown.set()
             return
-        if op not in {"send", "retry", "steer", "resume", "control", "worker.steer", "worker.stop", "worker.message", "approval"}:
+        # A correlated approval settles already-admitted work under its original
+        # activation. That work can hold command_lock while awaiting this reply.
+        # Like bridge.result, resolving its exact live future must not acquire
+        # a second admission token or wait behind the operation it unblocks.
+        if op not in {"send", "retry", "steer", "resume", "control", "worker.steer", "worker.stop", "worker.message"}:
             await self._command_serial(data)
             return
         try:

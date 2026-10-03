@@ -54,6 +54,9 @@ ACP connection independently of browser connections.
   not advertised; full-duplex voice belongs to a separate negotiated capability.
 - `session/update` streams public model output, tools and progress. Permissions
   use `session/request_permission`; lost/invalid permission never authorizes work.
+  A reply resolves only its live approval ID and an offered choice. It does not
+  acquire a new execution admission or queue behind the waiting tool control;
+  that original operation retains its native ownership until it settles.
 - MCP stdio servers use `amplifier-module-tool-mcp`; server startup failure fails
   session setup. Client MCP names cannot silently replace configured tools.
 - `session/prompt` returns at native completion, not input admission. Background
