@@ -43,6 +43,9 @@ async def record(controls, args):
         except BaseException:
             await context.set_messages(before)
             raise
-    result={'historyTurnId':'native:'+hashlib.sha256((args['callId']+'\0'+args['itemId']).encode()).hexdigest()[:24],'nativeMessageId':'voice:'+hashlib.sha256((controls.session.session_id+'\0'+args['callId']+'\0'+args['itemId']).encode()).hexdigest()[:32],'text':row['content'],'via':'call','revision':digest,'recorded':True,'callId':args['callId'],'itemId':args['itemId'],'role':args['role'],'commandId':args['commandId'],'executed':False}
+    from .history_revision import context_head
+    from amplifier_acp.history import message_id
+    epoch=context_head(app_home(),controls.session.session_id)
+    result={'historyTurnId':message_id(row,0,epoch),'nativeMessageId':'voice:'+hashlib.sha256((controls.session.session_id+'\0'+(epoch+'\0' if epoch else '')+args['callId']+'\0'+args['itemId']).encode()).hexdigest()[:32],'text':row['content'],'via':'call','revision':digest,'recorded':True,'callId':args['callId'],'itemId':args['itemId'],'role':args['role'],'commandId':args['commandId'],'executed':False}
     write_private(path,json.dumps({'requestHash':digest,'result':result}))
     return {**result,**({'duplicate':True} if already else {})}

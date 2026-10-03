@@ -25,6 +25,10 @@ async def test_native_history_fork_keeps_exact_context_tools_and_configuration_w
         await control('budget.set',{'contextTokens':4321})
         await control('task.create',{'objective':'Source only','maxTurns':3,'commandId':'task','expectedRevision':0})
         await prompt(client,sid,'permission tool turn','turn1');await prompt(client,sid,'Second original turn','turn2')
+        # Lifecycle copy requires confirmed release, not merely prompt completion.
+        async with asyncio.timeout(10):
+            while not (await client.request('_amplifier/retire',{'sessionId':sid}))['result']['retired']:
+                await asyncio.sleep(.01)
         inspected=await action(client,sid,cwd,'inspect');assert 'result' in inspected,inspected
         revision=inspected['result']['historyRevision']
         native=next((tmp_path/'home/projects').glob('*/sessions/'+sid));before=(native/'transcript.jsonl').read_bytes();(native/'events.jsonl').write_text('retained historical log\n')

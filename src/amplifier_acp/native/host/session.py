@@ -26,7 +26,7 @@ from pathlib import Path
 import stat
 
 
-from .config import HostConfig, expand_environment, load_config, merge, write_private
+from .config import app_home, HostConfig, expand_environment, load_config, merge, write_private
 
 
 from .components import HostComponents, ComponentResolver, compose_bundles, imagegen_defaults, installed_package_source
@@ -878,6 +878,9 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
             "application_host": application_host, "config": redact(session.config)}
         continuity = None
         async def checkpoint(status="in_progress"):
+            from ..history_revision import guard_context_clear
+            if not coordinator.get_capability('native.context-clear-writing'):
+                guard_context_clear(app_home(), runtime.session_id)
             if write_guard:
                 write_guard()
             persist_controls = coordinator.get_capability("web.controls.persist")

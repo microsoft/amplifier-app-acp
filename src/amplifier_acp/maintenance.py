@@ -126,7 +126,9 @@ class Maintenance:
         from .native.session_files import project_slug
         for row in spec['sessions']:
             sid=row['nativeSessionId']
-            if 'session-history' in spec['parts']:yield 'history/'+sid,checked(self.home/'projects'/project_slug(row['cwd'])/'sessions'/sid),True
+            if 'session-history' in spec['parts']:
+                yield 'history/'+sid,checked(self.home/'projects'/project_slug(row['cwd'])/'sessions'/sid),True
+                if 'session-state' not in spec['parts']:yield 'history-revisions/'+sid,checked(location(self.app,sid)/'history-revisions'),True
             if 'session-state' in spec['parts']:yield 'state/'+sid,checked(location(self.app,sid)),True
         if 'native-settings' in spec['parts']:
             yield 'settings/shared/settings.yaml',checked(self.home/'settings.yaml'),False
