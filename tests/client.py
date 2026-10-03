@@ -3,7 +3,8 @@ class Client:
     def __init__(self,process):self.process=process;self.counter=0;self.pending={};self.events=[];self.requests=[];self.reader=asyncio.create_task(self.read())
     @classmethod
     async def launch(cls,config):
-        process=await asyncio.create_subprocess_exec(sys.executable,'-m','amplifier_acp','--config',str(config),stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE)
+        # A bounded binary archive chunk grows when encoded as one JSON line.
+        process=await asyncio.create_subprocess_exec(sys.executable,'-I','-B','-m','amplifier_acp','--config',str(config),stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,limit=1048576)
         return cls(process)
     async def read(self):
         while line:=await self.process.stdout.readline():
