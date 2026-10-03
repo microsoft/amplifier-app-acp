@@ -207,7 +207,8 @@ class ArchivePlans:
                     if old is None or json.loads(old[0])!=row:raise ValueError('Native archive selection changed after review')
             if count!=db.execute("SELECT count(*) FROM entries WHERE json_extract(body,'$.source') IS NOT NULL").fetchone()[0]:raise ValueError('Native archive selection changed after review')
     def acquire(self,workspace,args,body,ttl):
-        self.reviewed(workspace,body);held=[];deadline=time.monotonic()+ttl;expires=time.time()+ttl
+        self.reviewed(workspace,body);held=[];full='fullNative' in body
+        deadline=time.monotonic()+(self.owner.full_operation_seconds() if full else ttl);expires=time.time()+ttl
         def check():
             self.owner.ensure_open()
             if time.monotonic()>=deadline:raise ValueError('Native archive acquisition expired')
@@ -219,6 +220,7 @@ class ArchivePlans:
                     for sid,cwd in db.execute("SELECT id,cwd FROM selections WHERE kind='session' ORDER BY id"):
                         check();held.append(SharedSessionStore(cwd,sid).acquire(app='amplifier-acp-archive',pid=os.getpid()))
             self.verify_sources(workspace,body,check)
+            if full:deadline=time.monotonic()+ttl;expires=time.time()+ttl
             self.owner.lease={'leaseId':uuid.uuid4().hex,'previewHash':args['previewHash'],'workspace':workspace,'body':body,'held':held,'released':False,'deadline':deadline,'expiresAt':expires}
             return self.owner.lease_view()
         except BaseException:release_all(held);raise
