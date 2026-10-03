@@ -528,7 +528,8 @@
                   "native-import-records",
                   "native-preference-receipts",
                   "native-maintenance-records",
-                  "native-retained-archives"
+                  "native-retained-archives",
+                  "full-native-authority"
                 ]
               }
             },
@@ -706,6 +707,188 @@
           "required": [
             "previewHash"
           ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "maintenance.restore.preview"
+        },
+        "args": {
+          "type": "object",
+          "required": [
+            "artifactId",
+            "sha256",
+            "destination",
+            "privateContentReviewed"
+          ],
+          "properties": {
+            "artifactId": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "destination": {
+              "type": "object",
+              "required": [
+                "rootId",
+                "name"
+              ],
+              "properties": {
+                "rootId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "name": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$"
+                }
+              },
+              "additionalProperties": false
+            },
+            "privateContentReviewed": {
+              "const": true
+            },
+            "credentialsReviewed": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "maintenance.restore.manifest"
+        },
+        "args": {
+          "type": "object",
+          "required": [
+            "previewHash"
+          ],
+          "properties": {
+            "previewHash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "cursor": {
+              "type": "string",
+              "maxLength": 8192
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "maintenance.restore.apply"
+        },
+        "args": {
+          "type": "object",
+          "required": [
+            "commandId",
+            "previewHash"
+          ],
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "previewHash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "maintenance.restore.reconcile"
+        },
+        "args": {
+          "type": "object",
+          "required": [
+            "commandId",
+            "restoreCommandId"
+          ],
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "restoreCommandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
           "additionalProperties": false
         }
       },

@@ -1,0 +1,170 @@
+{
+  "type": "object",
+  "required": [
+    "format",
+    "version",
+    "previewHash",
+    "manifest",
+    "nativeAuthority"
+  ],
+  "properties": {
+    "format": {
+      "const": "amplifier-native-authority"
+    },
+    "version": {
+      "const": 1
+    },
+    "previewHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "manifest": {
+      "type": "object",
+      "required": [
+        "path",
+        "bytes",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "const": "native-manifest.sqlite3"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 268435456
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "nativeAuthority": {
+      "type": "object",
+      "required": [
+        "format",
+        "version",
+        "roots",
+        "coverage",
+        "cutoff",
+        "inventory",
+        "sourceConfiguration"
+      ],
+      "properties": {
+        "format": {
+          "const": "amplifier-native-authority"
+        },
+        "version": {
+          "const": 1
+        },
+        "roots": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "destination",
+              "path",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "enum": [
+                  "native-home",
+                  "app-home",
+                  "checkpoint",
+                  "events",
+                  "registry",
+                  "sources",
+                  "bundle",
+                  "runtimeManifest",
+                  "workspace-settings"
+                ]
+              },
+              "destination": {
+                "type": "string"
+              },
+              "path": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 8192
+              },
+              "kind": {
+                "enum": [
+                  "file",
+                  "directory",
+                  "collection"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "coverage": {
+          "type": "object",
+          "required": [
+            "completeNativeBackup",
+            "completeProductBackup",
+            "authoritativeOmissions",
+            "credentialsIncluded"
+          ],
+          "properties": {
+            "completeNativeBackup": {
+              "type": "boolean"
+            },
+            "completeProductBackup": {
+              "const": false
+            },
+            "authoritativeOmissions": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "credentialsIncluded": {
+              "type": "boolean"
+            }
+          }
+        },
+        "cutoff": {
+          "type": "object"
+        },
+        "inventory": {
+          "type": "object"
+        },
+        "sourceConfiguration": {
+          "type": "object",
+          "required": [],
+          "properties": {
+            "bundle": {
+              "type": "string"
+            },
+            "registryHome": {
+              "type": "string"
+            },
+            "runtimeManifest": {
+              "type": "string"
+            },
+            "generationProfiles": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsoft.github.io/amplifier-acp/schemas/native-full-archive.v1.json",
+  "description": "Private archive header followed by a paged disk manifest and payload. Native authority only; never full product coverage."
+}

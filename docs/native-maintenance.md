@@ -285,3 +285,99 @@ provider, credential, model-account or live-service calls.
 preservation, cutoff receipt truth, prior archive-byte fidelity, no self-inclusion,
 SQLite image integrity, explicit optional-body omissions, unknown/unsafe source
 refusal and exact failed-command inspection without replay.
+
+### Explicit full native authority and new-destination restore
+
+The separate sole part `full-native-authority` is enabled only by trusted launcher
+`maintenanceFullNative:true`. It requires the exact recovery admin lease, native
+exclusive OS gate and `maintenanceExternalWriters:'stopped'`. No discovery runs at
+startup or during normal chat. Explicit preparation streams an on-disk inventory
+and private immutable copies under byte, entry, depth and elapsed-time limits.
+`maintenanceMaxBytes` permits at most 1 TiB for this opt-in path; the default stays
+256 MiB. `maintenanceMaxManifestEntries` defaults to 100,000 (maximum 1,000,000),
+and `maintenanceFullTimeoutSeconds` defaults to 600 (maximum 7,200).
+
+Native and adapter homes must be disjoint. Exact effective external authority roots
+must be declared in `maintenanceFullNativeRoots`: Foundation `checkpoint`, relocated
+`events`, bundle `registry`, module `sources`, and local `bundle` / `runtimeManifest`
+files when outside the two homes. Effective checkpoint/event/source locations come
+from their existing supported environment variables, never an arbitrary browser
+path. A root already inside a captured home needs no duplicate declaration.
+Unknown top-level home entries, symbolic/hard links, unresolved journals,
+unqualified installed environments and unsupported checkpoint layouts refuse the
+archive. This conservative refusal is visible; no unknown entry silently becomes
+cache. New native owners must add their authority roots deliberately.
+
+The archive includes every native project/child history, events, settings and
+session-state record, even for absent historical workspaces, plus import uploads
+and receipts, voice preference receipts, permission receipts, maintenance records,
+old prepared images and retained archives, generation policy/lock/source receipts,
+and configured native source/registry roots. Every SQLite database becomes a
+standalone backup image with committed WAL contents. OS locks, SQLite coordination
+sidecars, advisory worker leases and Python bytecode are explicit transient/derived
+exclusions. A generation `.venv` is excluded only after its exact recorded graph
+qualifies; lockfiles such as `runtime.lock` and `uv.lock` remain authoritative.
+
+The cold metadata inventory collects known native workspaces into a temporary
+SQLite index. Only existing workspaces authorized by configured admin roots can
+supply `.amplifier` configuration. Their settings/routing/bundle trees and private
+path mapping are included in `workspace-settings`; missing workspace directories
+are recorded. Unreadable/ambiguous metadata or existing workspaces outside allowed
+roots create authoritative omissions, making `completeNativeBackup:false`.
+Unselected credential stores also make that flag false. Explicit credential review
+permits native keys/OAuth records; histories and settings can still contain private
+material regardless of that selection. No inherited environment is serialized.
+`completeProductBackup` is always false. External workspace files, external
+credential services and source dependencies outside native-owned roots remain
+separate owner/installation requirements. The component cannot prove all CLI
+writers stopped: the trusted launcher must establish that prerequisite.
+
+`amplifier-native-authority` version 1 TAR starts with bounded `native-archive.json`,
+then a hashed standalone `native-manifest.sqlite3`, then streamed file payloads.
+The manifest is paged through existing archive APIs; whole history lists/bodies
+never enter hot state or the public preview. Preparation records its pre-seal
+cutoff, excludes its own plan before traversal and captures prior running receipts
+as uncertain evidence. It never recursively captures the current artifact.
+The format is described in `schemas/native-full-archive.v1.json`.
+
+Restore is enabled only with configured `maintenanceRestoreRoots:{rootId:parent}`.
+Each parent must already exist outside the source native/adapter homes. Operations:
+
+- `maintenance.restore.preview`: `{artifactId,sha256,destination:{rootId,name},
+  privateContentReviewed:true,credentialsReviewed?:true}` verifies this owner's
+  exact private artifact and returns immutable `previewHash`, bounded inventory,
+  coverage and review requirements.
+- `maintenance.restore.manifest`: `{previewHash,cursor?,limit?:1..100}` reads its
+  immutable indexed page. This exact passive read remains available while held.
+- `maintenance.restore.apply`: `{commandId,previewHash}` requires the matching
+  held recovery admin authority and creates a **new absent** destination only.
+- `maintenance.restore.reconcile`: `{commandId,restoreCommandId}` may finalize a
+  leftover destination fence only if the original exact receipt is conclusively
+  succeeded. It never repeats extraction or turns unknown into success.
+
+Only this owner's opaque artifact IDs are accepted. There is no arbitrary input
+path, overwrite mode, in-place restore, worker start, dependency install or model
+call. Headers/versions, SQLite schema, member kinds/paths, duplicate and missing
+members, per-file hashes, archive hash, byte/count/depth/time limits and source
+stability are verified. Files stream to new private paths; TAR extraction helpers
+and untrusted SQLite schemas are never executed. A persistent pending marker plus
+OS writer gates protects the new home. Process loss during writing leaves it
+fenced and the original command unknown. Exact repeats inspect receipts only.
+
+After a conclusive durable write, generated `native-launcher.json` and
+`native-environment.json` map captured roots to the new destination. No worker
+commands, admin privileges or unrelated environment values are inherited.
+Project settings remain staged in `workspace-settings` and do not overwrite
+existing workspaces. Absolute references inside original settings, installed
+source policies and old sealed previews remain original evidence: they require
+configuration review/rebinding and fresh runtime qualification. Completion itself
+does not authorize execution. Original archives/histories/receipts remain intact;
+transfer fences, unknown inputs and interrupted work are never converted to work.
+
+Actual Core/Foundation subprocess fixtures qualify full capture and a separately
+requested later resume under the same native identity, with exactly one new input
+and no history replay. Fault fixtures kill separate owner processes during write
+and after receipt persistence, verifying retained fences, no-repeat unknowns and
+exact conclusive reconciliation. Malformed TAR/version/schema/path/digest cases
+refuse before a destination is created. These tests use only owned offline data;
+product aggregation, UI restoration and real-account acceptance are separate.

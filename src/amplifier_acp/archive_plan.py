@@ -1,4 +1,4 @@
-"""Explicit, disk-backed native archive plans; no global discovery or restore."""
+"""Explicit disk-backed native archive plans, including opt-in cold inventory."""
 from __future__ import annotations
 import hashlib,json,os,sqlite3,stat,tarfile,time,uuid
 from contextlib import contextmanager
@@ -10,7 +10,7 @@ from .relocation import write
 from .session_lifecycle import regular
 
 OPERATIONS={'maintenance.archive.create','maintenance.archive.add','maintenance.archive.prepare','maintenance.archive.manifest'}
-PARTS={'session-history','session-state','shared-configuration','workspace-configuration','native-import-records','native-preference-receipts','native-maintenance-records','native-retained-archives'}
+PARTS={'session-history','session-state','shared-configuration','workspace-configuration','native-import-records','native-preference-receipts','native-maintenance-records','native-retained-archives','full-native-authority'}
 OMISSIONS=['unselected native and delegated histories','independent product and client stores','workspace files outside selected .amplifier configuration','module source, caches and runtime generations','external credential stores, environment variables and authentication sessions','Foundation live writer leases and transfer authority','unknown shared-home entries outside the documented native configuration roots']
 EXCLUSIONS=['transient .lock files and SQLite -shm files']
 
@@ -51,11 +51,15 @@ class ArchivePlans:
     def create(self,workspace,args):
         parts=args.get('parts')
         if not isinstance(parts,list) or not parts or len(set(parts))!=len(parts) or set(parts)-PARTS:raise ValueError('Choose explicit native archive parts')
+        if 'full-native-authority' in parts:
+            if parts!=['full-native-authority']:raise ValueError('Full native authority is a separate sole archive selection')
+            from .full_native_archive import roots
+            roots(self.owner)
         if 'native-retained-archives' in parts and 'native-maintenance-records' not in parts:raise ValueError('Retained archive bodies require their maintenance records selection')
         if args.get('privateContentReviewed') is not True:raise ValueError('Private content review is required')
         include=args.get('includeCredentials',False)
         if type(include)is not bool or type(args.get('credentialsReviewed',False))is not bool:raise ValueError('Credential flags must be booleans')
-        if include and (args.get('credentialsReviewed') is not True or 'shared-configuration' not in parts):raise ValueError('keys.env requires explicit credential review and shared configuration')
+        if include and (args.get('credentialsReviewed') is not True or not set(parts)&{'shared-configuration','full-native-authority'}):raise ValueError('keys.env requires explicit credential review and shared configuration')
         plan=uuid.uuid4().hex;value={'planId':plan,'workspace':workspace,'phase':'open','revision':0,'parts':sorted(parts),'includeCredentials':include,'privateContentReviewed':True,'credentialsReviewed':args.get('credentialsReviewed') is True,'externalWriterPolicy':self.owner.config.get('maintenanceExternalWriters','unverified')}
         with self.db(plan,True) as db:self.save(db,value)
         return {'planId':plan,'revision':0,'phase':'open','coverage':'explicit-selected-native-only'}
@@ -79,6 +83,12 @@ class ArchivePlans:
     def roots(self,db,value):
         from .native.session_files import project_slug
         parts=value['parts']
+        if 'full-native-authority' in parts:
+            base=self.root/value['planId']/'full-native/payload'
+            for row in value['fullNative']['roots']:
+                name=row['id'] if row['kind'] in {'directory','collection'} else row['id']+'/source'
+                yield name,checked(base/name)
+            return
         for kind,key,cwd in db.execute('SELECT kind,id,cwd FROM selections ORDER BY kind,id'):
             self.owner.admin.workspace(cwd)
             if kind=='session':
@@ -94,7 +104,7 @@ class ArchivePlans:
             for name in ('settings.yaml','routing','bundles',*(['keys.env'] if value['includeCredentials'] else [])):
                 yield 'shared-configuration/'+name,checked(self.owner.home/name)
             yield 'adapter-configuration/admin-settings.yaml',checked(self.owner.app/'admin-settings.yaml')
-    def walk(self,label,path,check,depth=0):
+    def walk(self,label,path,check,depth=0,transients=True):
         check();checked(path)
         if depth>64:raise ValueError('Native archive directory nesting exceeds64')
         if not path.exists():yield {'path':label,'source':str(path),'status':'missing'};return
@@ -102,10 +112,10 @@ class ArchivePlans:
         if stat.S_ISDIR(info.st_mode):
             yield {'path':label,'source':str(path),'status':'directory','identity':[info.st_dev,info.st_ino]}
             with os.scandir(path) as entries:
-                for entry in entries:yield from self.walk(label+'/'+entry.name,Path(entry.path),check,depth+1)
+                for entry in entries:yield from self.walk(label+'/'+entry.name,Path(entry.path),check,depth+1,transients)
             return
         stamp=file_stamp(path)
-        if path.name.endswith(('.lock','-shm')):return
+        if transients and path.name.endswith(('.lock','-shm')):return
         if stamp[2]>self.owner.maximum:raise ValueError('Native archive file exceeds configured byte limit')
         digest=hashlib.sha256();fd=os.open(path,os.O_RDONLY|getattr(os,'O_NOFOLLOW',0)|getattr(os,'O_NONBLOCK',0))
         try:
@@ -133,22 +143,32 @@ class ArchivePlans:
             if any(p.startswith('session-') for p in value['parts']) and not counts.get('session'):raise ValueError('Explicit sessions required for native session content')
             if 'workspace-configuration' in value['parts'] and not counts.get('workspace'):raise ValueError('Explicit workspaces required for workspace configuration')
             if (set(value['parts'])&{'shared-configuration','workspace-configuration'} or counts.get('session',0)>32) and value['externalWriterPolicy']!='stopped':raise ValueError('Configuration trees or more than32 sessions require launcher-verified stopped external writers')
-            if set(value['parts'])&stores.PARTS:stores.require_admin(self.owner)
+            if set(value['parts'])&(stores.PARTS|{'full-native-authority'}):stores.require_admin(self.owner)
             value['phase']='building';self.save(db,value)
         # Persist building before filesystem inspection. Interrupted seal remains
         # an uncertain immutable plan; a new command must not restart its effects.
         with self.db(args['planId'],mutate=True) as db:
             value=self.meta(db,workspace);count=total=0
-            with Gate(self.owner.config,exclusive=bool(set(value['parts'])&stores.PARTS)):
+            with Gate(self.owner.config,exclusive=bool(set(value['parts'])&(stores.PARTS|{'full-native-authority'}))):
+                if 'full-native-authority' in value['parts']:
+                    from .full_native_archive import prepare as prepare_full
+                    value['fullNative']=prepare_full(self.owner,value['planId'],value['parts'],self.owner.ensure_open,args['commandId'],value['includeCredentials']);self.save(db,value)
                 if set(value['parts'])&stores.PARTS:
                     value['nativeStores']=stores.prepare(self.owner,value['planId'],value['parts'],self.owner.ensure_open,args['commandId']);self.save(db,value)
                 for label,path in self.roots(db,value):
-                    for row in self.walk(label,path,self.owner.ensure_open):
+                    for row in self.walk(label,path,self.owner.ensure_open,transients='fullNative' not in value):
                         count+=1;total+=row.get('bytes',0)
                         if count>self.max_entries or total>self.owner.maximum:raise ValueError('Explicit native archive exceeds configured entry/byte limits')
                         db.execute('INSERT INTO entries VALUES(?,?)',(row['path'],json.dumps(row)))
+            if 'fullNative' in value:
+                with sqlite3.connect(self.root/value['planId']/'full-native/inventory.sqlite3') as inventory:
+                    for name,row in inventory.execute("SELECT path,body FROM entries WHERE json_extract(body,'$.status') IN ('excluded','missing')"):
+                        db.execute('INSERT OR IGNORE INTO entries VALUES(?,?)',(name,row))
             summary=self.summary(db,value)
             body={'version':2,'workspace':workspace,'archivePlanId':value['planId'],'spec':{'sessions':[],'parts':value['parts'],'includeCredentials':value['includeCredentials'],'externalWriterPolicy':value['externalWriterPolicy']},'inventory':summary,'ownerCoverage':stores.coverage(value['parts'],value.get('nativeStores',[])),'omissions':OMISSIONS,'exclusions':EXCLUSIONS,'coverage':'explicit-selected-native-only','containsPrivateContent':True,'authorityHash':fingerprint({'roots':sorted(str(root) for root in self.owner.admin.roots),'home':str(self.owner.home),'app':str(self.owner.app)}),'credentialCoverage':'keys.env included by explicit review' if value['includeCredentials'] else 'keys.env excluded; inline secrets in selected files may remain'}
+            if 'fullNative' in value:
+                body['fullNative']=value['fullNative'];body['coverage']='full-configured-native-authority'
+                body['ownerCoverage']=value['fullNative']['coverage'];body['omissions']=['independent product owners','external workspace files not owned by native'];body['exclusions']=['paged manifest entries explicitly classify derived/transient/authoritative exclusions']
             preview=fingerprint(body);value.update(phase='sealed',previewHash=preview,summary=summary);self.save(db,value)
             write(self.owner.root/'previews'/(preview+'.json'),body)
         write(self.root/value['planId']/'sealed.json',{'previewHash':preview,'stamp':file_stamp(self.root/value['planId']/'manifest.sqlite3')})
@@ -176,13 +196,16 @@ class ArchivePlans:
         value=self.reviewed(workspace,body);count=0
         from .private_store_snapshot import verify
         verify(self.owner,value.get('nativeStores',[]))
+        if 'fullNative' in value:
+            from .private_store_snapshot import require_admin
+            require_admin(self.owner)
         with self.db(value['planId']) as db:
             if self.summary(db,value)!=body['inventory']:raise ValueError('Immutable manifest content changed')
             for label,path in self.roots(db,value):
-                for row in self.walk(label,path,check):
+                for row in self.walk(label,path,check,transients='fullNative' not in value):
                     old=db.execute('SELECT body FROM entries WHERE path=?',(row['path'],)).fetchone();count+=1
                     if old is None or json.loads(old[0])!=row:raise ValueError('Native archive selection changed after review')
-            if count!=body['inventory']['entries']:raise ValueError('Native archive selection changed after review')
+            if count!=db.execute("SELECT count(*) FROM entries WHERE json_extract(body,'$.source') IS NOT NULL").fetchone()[0]:raise ValueError('Native archive selection changed after review')
     def acquire(self,workspace,args,body,ttl):
         self.reviewed(workspace,body);held=[];deadline=time.monotonic()+ttl;expires=time.time()+ttl
         def check():
@@ -200,6 +223,9 @@ class ArchivePlans:
             return self.owner.lease_view()
         except BaseException:release_all(held);raise
     def snapshot(self,workspace,args,lease):
+        if 'fullNative' in lease['body']:
+            from .full_native_archive import snapshot
+            return snapshot(self,workspace,args,lease)
         body=lease['body'];check=lambda:self.owner.valid(lease['leaseId']);self.verify_sources(workspace,body,check)
         artifact=uuid.uuid4().hex;directory=checked(self.owner.root/'artifacts'/artifact);directory.mkdir(mode=0o700,parents=True);partial=directory/'snapshot.partial.tar';target=directory/'snapshot.tar'
         summary={**body,'previewHash':lease['previewHash'],'capturedAt':time.time(),'writerProtection':{'nativeHome':'exclusive-os-gate','externalPolicy':body['spec']['externalWriterPolicy'],'selectedSessions':'stopped-external-writers' if body['spec']['externalWriterPolicy']=='stopped' else 'foundation-v1-exclusive-writer-leases'}}

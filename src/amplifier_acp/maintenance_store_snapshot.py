@@ -84,25 +84,32 @@ def prepare(owner,plan,parts,directory,bounded,remaining,backup,command_id):
 
     # Only known owner roots. Unknown additions require a deliberate versioned
     # policy; do not sweep arbitrary app-home files into a native archive.
-    known(owner.root,{'receipts.sqlite3','receipts.sqlite3-wal','receipts.sqlite3-shm','plans','previews','retained','artifacts'})
+    known(owner.root,{'receipts.sqlite3','receipts.sqlite3-wal','receipts.sqlite3-shm','plans','previews','retained','artifacts','restore-plans'})
     copy(RECORDS,'receipts.sqlite3',owner.root/'receipts.sqlite3',True)
     walk(RECORDS,'previews',owner.root/'previews')
     walk(RECORDS,'retained',owner.root/'retained')
+    walk(RECORDS,'restore-plans',owner.root/'restore-plans')
     for source in children(owner.root/'plans'):
         if source.name==plan:continue
         from .maintenance import identity
         identity(source.name)
         if not source.is_dir():raise ValueError('Invalid maintenance plan directory')
-        known(source,{'manifest.sqlite3','manifest.sqlite3-wal','manifest.sqlite3-shm','sealed.json','native-stores'})
+        known(source,{'manifest.sqlite3','manifest.sqlite3-wal','manifest.sqlite3-shm','sealed.json','native-stores','full-native'})
         copy(RECORDS,'plans/'+source.name+'/manifest.sqlite3',source/'manifest.sqlite3',True)
         copy(RECORDS,'plans/'+source.name+'/sealed.json',source/'sealed.json')
+        if (source/'full-native').exists():
+            known(source/'full-native',{'descriptor.json','inventory.sqlite3','payload'})
+            copy(RECORDS,'plans/'+source.name+'/full-native/descriptor.json',source/'full-native/descriptor.json')
+            copy(RECORDS,'plans/'+source.name+'/full-native/inventory.sqlite3',source/'full-native/inventory.sqlite3',True)
+            if BODIES in selected:walk(BODIES,'plans/'+source.name+'/full-native/payload',source/'full-native/payload')
         if BODIES in selected:walk(BODIES,'plans/'+source.name+'/native-stores',source/'native-stores')
     for source in children(owner.root/'artifacts'):
         from .maintenance import identity
         identity(source.name)
         if not source.is_dir():raise ValueError('Invalid retained maintenance artifact directory')
-        known(source,{'description.json','manifest.json','snapshot.tar','snapshot.partial.tar'})
-        for name in ('description.json','manifest.json'):copy(RECORDS,'artifacts/'+source.name+'/'+name,source/name)
+        known(source,{'description.json','manifest.json','native-archive.json','native-manifest.sqlite3','snapshot.tar','snapshot.partial.tar'})
+        for name in ('description.json','manifest.json','native-archive.json'):copy(RECORDS,'artifacts/'+source.name+'/'+name,source/name)
+        copy(RECORDS,'artifacts/'+source.name+'/native-manifest.sqlite3',source/'native-manifest.sqlite3',True)
         if BODIES in selected:
             for name in ('snapshot.tar','snapshot.partial.tar'):copy(BODIES,'artifacts/'+source.name+'/'+name,source/name)
     result=[]

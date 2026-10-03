@@ -26,8 +26,9 @@ configuration capture and preserve canonical bytes. No personal credentials, mod
 account, external CLI process or live installation is used by these tests.
 
 The stopped-writer assertion is a trusted deployment condition, not a test result
-about every external CLI version. Whole-archive restore, credential reset, managed
-hard delete and reference-aware generation reclamation remain visible gaps. Existing
+about every external CLI version. Restore of the earlier selected archive format,
+credential reset, managed hard delete and reference-aware generation reclamation
+remain visible gaps; the full-native format below adds a separate reviewed restore. Existing
 limits fail explicitly; they never silently truncate the backup.
 
 The explicit `native-import-records` and `native-preference-receipts` parts now
@@ -54,3 +55,18 @@ coordinator writes owner archives and their inclusion manifest to disk, never a
 single in-memory aggregate. A configured owner without this contract is an explicit
 omission and prevents a “full configured-product backup” claim. Independent running
 stores are not an atomic snapshot merely because reads were initiated together.
+
+
+The opt-in `full-native-authority` path now closes the native-owned inventory gap:
+all canonical histories/events, native configurations and receipts, generation
+authority/source roots, Foundation checkpoints, retained archives and permitted
+project configuration are captured by a cold disk-backed inventory. Exact unknown
+roots refuse; authoritative omissions make completeness false. Its versioned
+archive has reviewed new-destination restore with no overwrite or replay and
+persistent process-loss fencing. The selected-format snapshots described above
+remain non-restorable through that route. Native project configuration is staged
+for explicit rebinding, not written into existing workspaces. Full product backup
+and restore still require every independent owner's actual export/adoption proof;
+this adapter never claims that coverage. See `native-maintenance.md` and the actual
+Core/Foundation + killed-owner fixtures in `test_full_native_archive.py` and
+`test_native_restore.py`.

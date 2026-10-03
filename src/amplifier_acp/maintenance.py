@@ -1,7 +1,8 @@
-"""Private selected native snapshots and reversible configuration reset.
+"""Private native archives, reviewed restore and reversible configuration reset.
 
-No global history discovery, arbitrary output path, worker mount, transcript
-rewrite, credential presentation, or inferred cross-owner atomicity lives here.
+Only explicitly enabled full-native maintenance performs a cold global inventory.
+No arbitrary output path, worker mount, transcript rewrite, credential presentation
+or inferred cross-owner atomicity lives here.
 """
 from __future__ import annotations
 import asyncio,base64,hashlib,json,os,sqlite3,stat,tarfile,time,uuid
@@ -16,7 +17,8 @@ from .relocation import write
 OPERATIONS={'maintenance.preview','maintenance.acquire','maintenance.snapshot',
  'maintenance.release','maintenance.lease','maintenance.receipt','maintenance.artifact.read',
  'maintenance.reset.preview','maintenance.reset.apply','maintenance.reset.restore','maintenance.reset.reconcile',
- 'maintenance.archive.create','maintenance.archive.add','maintenance.archive.prepare','maintenance.archive.manifest'}
+ 'maintenance.archive.create','maintenance.archive.add','maintenance.archive.prepare','maintenance.archive.manifest',
+ 'maintenance.restore.preview','maintenance.restore.manifest','maintenance.restore.apply','maintenance.restore.reconcile'}
 PARTS={'session-history','session-state','native-settings'}
 CHUNK=256*1024
 MAX_FILES=2048
@@ -56,7 +58,8 @@ class Maintenance:
         self.root=checked(self.app/'maintenance');self.root.mkdir(parents=True,exist_ok=True,mode=0o700)
         self.lock=asyncio.Lock();self.lease=None;self.timer=None;self.closing=False
         self.maximum=self.config.get('maintenanceMaxBytes',256*1024*1024)
-        if type(self.maximum)is not int or not 1<=self.maximum<=4*1024**3:raise ValueError('maintenanceMaxBytes must be between 1 byte and 4 GiB')
+        limit=1024**4 if self.config.get('maintenanceFullNative') is True else 4*1024**3
+        if type(self.maximum)is not int or not 1<=self.maximum<=limit:raise ValueError('maintenanceMaxBytes exceeds the launcher-authorized disk archive limit')
         with self.db() as db:db.execute('CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY,workspace TEXT,signature TEXT,body TEXT)')
 
     @contextmanager
@@ -163,6 +166,12 @@ class Maintenance:
             from .archive_plan import ArchivePlans
             self.archive_plans=ArchivePlans(self)
         return self.archive_plans
+
+    def restores(self):
+        if not hasattr(self,'restore_plans'):
+            from .native_restore import Restores
+            self.restore_plans=Restores(self)
+        return self.restore_plans
 
     def ensure_open(self):
         if self.closing:raise ValueError('Native maintenance connection is closing; work was not replayed')
@@ -398,6 +407,7 @@ class Maintenance:
           'maintenance.receipt':{'commandId'},'maintenance.artifact.read':{'artifactId','sha256','offset','maxBytes'},
           'maintenance.reset.reconcile':{'commandId','leaseId','previewHash','resetCommandId'},'maintenance.reset.apply':{'commandId','leaseId','previewHash'},'maintenance.reset.restore':{'commandId','leaseId','previewHash','resetCommandId','expectedPostResetHash'}}
         fields.update({'maintenance.archive.create':{'commandId','parts','privateContentReviewed','includeCredentials','credentialsReviewed'},'maintenance.archive.add':{'commandId','planId','expectedRevision','sessions','workspaces'},'maintenance.archive.prepare':{'commandId','planId','expectedRevision'},'maintenance.archive.manifest':{'previewHash','cursor','limit'}})
+        fields.update({'maintenance.restore.preview':{'artifactId','sha256','destination','privateContentReviewed','credentialsReviewed'},'maintenance.restore.manifest':{'previewHash','cursor','limit'},'maintenance.restore.apply':{'commandId','previewHash'},'maintenance.restore.reconcile':{'commandId','restoreCommandId'}})
         if fields[operation] is not None and set(args)-fields[operation]:raise ValueError('Unsupported maintenance operation fields')
         async with self.lock:
             if operation in {'maintenance.preview','maintenance.reset.preview'}:return await self.run(self.preview,workspace,args,operation.endswith('reset.preview'))
@@ -406,6 +416,7 @@ class Maintenance:
             if operation=='maintenance.artifact.read':return await self.run(self.artifact,workspace,args)
             if operation=='maintenance.lease':return self.lease_view()
             if operation=='maintenance.archive.manifest':return await self.run(self.archives().page,workspace,args)
+            if operation in {'maintenance.restore.preview','maintenance.restore.manifest'}:return await self.run(self.restores().preview if operation.endswith('.preview') else self.restores().page,workspace,args)
             if operation=='maintenance.release':return await self.run(self.release,identity(args.get('leaseId')))
             command=args.get('commandId');previous=await self.run(self.receipt,workspace,command);signature=fingerprint({'workspace':workspace,'operation':operation,'args':args})
             if previous:
@@ -431,13 +442,15 @@ class Maintenance:
                 elif operation.startswith('maintenance.archive.'):
                     method={'maintenance.archive.create':'create','maintenance.archive.add':'add','maintenance.archive.prepare':'prepare'}[operation]
                     result=await self.run(getattr(self.archives(),method),workspace,args)
+                elif operation=='maintenance.restore.apply':result=await self.run(self.restores().apply,workspace,args)
+                elif operation=='maintenance.restore.reconcile':result=await self.run(self.restores().reconcile,workspace,args)
                 elif operation=='maintenance.snapshot':result=await self.run(self.snapshot,workspace,args)
                 elif operation=='maintenance.reset.reconcile':result=await self.run(self.reconcile_reset,workspace,args)
                 else:result=await self.run(self.reset,workspace,args,operation=='maintenance.reset.restore')
                 receipt={**receipt,'state':'succeeded','result':result,'settledAt':time.time()}
             except BaseException as error:
                 archive_failure=operation.startswith('maintenance.archive.') and isinstance(error,Exception)
-                known=operation=='maintenance.acquire' and isinstance(error,Exception) and (self.lease is None or self.lease['released'])
+                known=(operation=='maintenance.acquire' and isinstance(error,Exception) and (self.lease is None or self.lease['released'])) or (operation.startswith('maintenance.restore.') and getattr(error,'data',{}).get('executed') is False)
                 receipt={**receipt,'state':'refused' if known else 'failed' if archive_failure else 'unknown','errorType':type(error).__name__,'settledAt':time.time(),**({'executed':False} if known else {}),**({'settled':True,'canonicalFilesChanged':0} if archive_failure else {})}
                 await self.run(self.save,workspace,signature,receipt)
                 if archive_failure:
@@ -449,6 +462,7 @@ class Maintenance:
                 raise
             await self.run(self.save,workspace,signature,receipt)
             if operation in {'maintenance.reset.apply','maintenance.reset.restore'}:await self.run(self.finalize_reset,result,command)
+            if operation=='maintenance.restore.apply':await self.run(self.restores().finalize,result,command)
             return {**result,'receipt':receipt}
 
     async def close(self):

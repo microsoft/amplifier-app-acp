@@ -36,6 +36,7 @@ class Gate:
         try:
             os.set_inheritable(fd,False)
             fcntl.flock(fd,(fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)|fcntl.LOCK_NB)
+            if not exclusive and filename=='.amplifier-acp-maintenance.lock' and (directory/'.amplifier-acp-restore-pending.json').exists():raise MaintenanceBusy('An uncertain restore fences this native home; inspect its original receipt without replay.')
         except BlockingIOError:
             os.close(fd)
             raise MaintenanceBusy('Native maintenance requires quiescent writers; no work was started or replayed.') from None

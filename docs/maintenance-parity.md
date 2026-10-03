@@ -24,7 +24,7 @@ replacement implementation is imported.
 | Active worker currency | `generations.current` reports selected qualified receipts/policy; resident-only `runtime.inspect` reports actual interpreter, installed provenance and mounted root origins. Host inventory/aggregate adoption remains a public callback; absence is explicit. |
 | Distribution self-update / feature installation | Not implemented or advertised here. Requires installed-distribution owner, qualified release manifest, restart/adoption receipts and genuine lifecycle authority. |
 | Automatic background checking/install preferences, included/other application tiers | Not yet implemented in the optional product capability. Explicit native commands work. |
-| Native private snapshot / selected reset | Explicit selected histories/state, paged shared/workspace configuration archive plans, explicit import-original and voice-preference receipt SQLite images, exclusive native-home gate and Foundation writer leases, private streamed artifacts, retained configuration originals and exact undo. Aggregate product snapshot/restore and destructive cleanup remain separate gaps. |
+| Native private backup / restore / selected reset | Selected archive parts remain supported. Explicit full-native authority now streams all native canonical/configuration/receipt/generation roots and stages reviewed restore into a new owned destination, with process-loss fencing and no replay. Native project settings restore as staged evidence; configuration rebinding and runtime qualification remain explicit. Aggregate product backup/restore and destructive cleanup remain separate owner duties. |
 | Environment repair | `generations.repair.preview` binds exact qualified receipts; `generations.repair` reconstructs a separate interpreter, checks provenance and read-only profile mounts, preserving original files and unknown work. Actual 98-distribution current graph passed without a model prompt or promotion. Missing/changed source inputs remain an explicit refusal. |
 | Rollback to an unqualified legacy baseline | Unsupported; qualified-generation rollback remains available. |
 | Retention / reclamation | Existing worker generation leases remain; no automated generation deletion in this owner. |
@@ -61,8 +61,10 @@ interpreter path, native home, or workspace authority from browser arguments.
 - [Selected native maintenance](native-maintenance.md) now implements a writer-fenced
   scoped archive and reversible noncanonical configuration reset. The product owns
   intake fencing, all other stores, approval and archive presentation. Whole-archive
-  restore, unknown partial-reset automatic recovery, broad/destructive reset and
-  generation reclamation remain explicit gaps; no partial native snapshot is a
-  full-product backup.
+  restoration now exists only for the versioned full-native archive into a new
+  owned destination; it never restores over running stores. Product aggregation,
+  automatic recovery of unknown effects, broad/destructive reset and generation
+  reclamation remain separate duties. Native coverage never implies full-product
+  backup.
 
 The [retained recovery audit](recovery-parity-audit.md) records the exact legacy effects, current acceptance and remaining aggregate/destructive boundaries.
