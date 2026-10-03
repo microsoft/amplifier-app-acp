@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsoft.github.io/amplifier-acp/schemas/native-retired-copy.v1.json",
+  "title": "Selected retired duplicate copy operation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sessionId",
+    "cwd",
+    "operation",
+    "args"
+  ],
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "cwd": {
+      "type": "string",
+      "minLength": 1
+    },
+    "operation": {
+      "enum": [
+        "legacyCopy.inventory",
+        "legacyCopy.preview",
+        "legacyCopy.purge",
+        "legacyCopy.receipt"
+      ]
+    },
+    "args": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "legacyCopy.inventory"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [],
+            "properties": {}
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "legacyCopy.preview"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "rootId"
+            ],
+            "properties": {
+              "rootId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "legacyCopy.purge"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "commandId",
+              "previewId",
+              "previewHash",
+              "expectedHistoryRevision"
+            ],
+            "properties": {
+              "commandId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "previewId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "previewHash": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "expectedHistoryRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "legacyCopy.receipt"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "commandId"
+            ],
+            "properties": {
+              "commandId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "rootDeclaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "directory",
+        "format",
+        "writerState"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$"
+        },
+        "directory": {
+          "type": "string",
+          "minLength": 1
+        },
+        "format": {
+          "const": "unified-session-store-v1"
+        },
+        "writerState": {
+          "const": "retired"
+        }
+      }
+    }
+  }
+}

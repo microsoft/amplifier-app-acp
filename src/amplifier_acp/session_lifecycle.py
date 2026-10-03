@@ -141,6 +141,9 @@ class Lifecycle:
         if len(json.dumps(selected).encode())>32768:raise ValueError('Native metadata inspection exceeds its bound')
         return {'sessionId':self.identity,'historyRevision':result['revision'],'metadata':selected,'diagnostics':result['diagnostics'],'location':state(self.server,self.identity,self.cwd),'state':lifecycle_state(self.server,self.identity,self.cwd),'preserved':PRESERVED,'failure':failure(self.server,self.identity),'forkBundles':[{'id':key,'name':key,'revision':fingerprint([key,value])} for key,value in self.fork_bundles().items()]}
     def perform(self,operation,args):
+        if operation.startswith('legacyCopy.'):
+            from .retired_copy import perform
+            return perform(self,operation,args)
         fields={'inspect':set(),'receipt':{'commandId'},'export.read':{'snapshotId','offset','limit'},'delete.preview':set(),'fork':{'commandId','targetSessionId','expectedHistoryRevision','throughMessageId','mode','bundle','bundleRevision','resetModel','descendants'},'export':{'commandId','expectedHistoryRevision','format','scope','fromMessageId','throughMessageId','minimal'},'delete':{'commandId','expectedHistoryRevision','confirmationToken'},'delete.standard':{'commandId','expectedHistoryRevision'},'restore':{'commandId','expectedHistoryRevision'},'retention.hide':{'commandId','expectedHistoryRevision','modifiedBefore','descendants'}}
         if operation not in fields or not isinstance(args,dict) or set(args)-fields[operation]:raise ValueError('Unsupported lifecycle operation or arguments')
         if len(json.dumps(args).encode())>32768:raise ValueError('Lifecycle arguments exceed their bound')

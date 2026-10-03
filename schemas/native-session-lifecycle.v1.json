@@ -28,7 +28,11 @@
         "delete.preview",
         "delete",
         "restore",
-        "retention.hide"
+        "retention.hide",
+        "legacyCopy.inventory",
+        "legacyCopy.preview",
+        "legacyCopy.purge",
+        "legacyCopy.receipt"
       ]
     },
     "args": {
