@@ -963,6 +963,9 @@
         }
       },
       "additionalProperties": false
+    },
+    {
+      "$ref": "native-cache-maintenance.v1.json"
     }
   ]
 }

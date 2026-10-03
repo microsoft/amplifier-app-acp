@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsoft.github.io/amplifier-acp/schemas/native-cache-page.v1.json",
+  "type": "object",
+  "required": [
+    "scanId",
+    "revision",
+    "referenceRevision",
+    "createdAt",
+    "expiresAt",
+    "counts",
+    "coverage",
+    "items",
+    "nextCursor"
+  ],
+  "properties": {
+    "scanId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "referenceRevision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "createdAt": {
+      "type": "number"
+    },
+    "expiresAt": {
+      "type": "number"
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "required": [
+        "sourceRetirement",
+        "canonicalHistoryScanned",
+        "externalUsage",
+        "clearKinds"
+      ],
+      "properties": {
+        "sourceRetirement": {
+          "const": false
+        },
+        "canonicalHistoryScanned": {
+          "const": false
+        },
+        "externalUsage": {
+          "const": "unknown"
+        },
+        "clearKinds": {
+          "const": [
+            "python-bytecode"
+          ]
+        },
+        "referenceIssues": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "string"
+          }
+        },
+        "referenceIssuesTruncated": {
+          "type": "boolean"
+        },
+        "retainedGenerations": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "items": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "label",
+          "location",
+          "usage",
+          "references",
+          "clearable",
+          "reason"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "kind": {
+            "enum": [
+              "cached-source",
+              "source-binding",
+              "unrecognized-cache",
+              "configured-source",
+              "python-bytecode"
+            ]
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "location": {
+            "type": "string"
+          },
+          "usage": {
+            "enum": [
+              "configured",
+              "referenced",
+              "unknown",
+              "derived"
+            ]
+          },
+          "references": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "string"
+            }
+          },
+          "referencesTruncated": {
+            "type": "boolean"
+          },
+          "clearable": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "source": {
+            "type": "object"
+          },
+          "git": {
+            "type": "object"
+          },
+          "diagnostic": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "nextCursor": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false
+}

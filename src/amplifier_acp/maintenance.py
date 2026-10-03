@@ -19,6 +19,8 @@ OPERATIONS={'maintenance.preview','maintenance.acquire','maintenance.snapshot',
  'maintenance.reset.preview','maintenance.reset.apply','maintenance.reset.restore','maintenance.reset.reconcile',
  'maintenance.archive.create','maintenance.archive.add','maintenance.archive.prepare','maintenance.archive.manifest',
  'maintenance.restore.preview','maintenance.restore.manifest','maintenance.restore.apply','maintenance.restore.reconcile','maintenance.restore.inspect'}
+CACHE_OPERATIONS={'maintenance.cache.scan','maintenance.cache.page','maintenance.cache.preview','maintenance.cache.clear'}
+OPERATIONS |= CACHE_OPERATIONS
 PARTS={'session-history','session-state','native-settings'}
 CHUNK=256*1024
 MAX_FILES=2048
@@ -172,6 +174,12 @@ class Maintenance:
             from .native_restore import Restores
             self.restore_plans=Restores(self)
         return self.restore_plans
+
+    def caches(self):
+        if not hasattr(self,'cache_plans'):
+            from .cache_maintenance import Caches
+            self.cache_plans=Caches(self)
+        return self.cache_plans
 
     def ensure_open(self):
         if self.closing:raise ValueError('Native maintenance connection is closing; work was not replayed')
@@ -423,6 +431,8 @@ class Maintenance:
           'maintenance.reset.reconcile':{'commandId','leaseId','previewHash','resetCommandId'},'maintenance.reset.apply':{'commandId','leaseId','previewHash'},'maintenance.reset.restore':{'commandId','leaseId','previewHash','resetCommandId','expectedPostResetHash'}}
         fields.update({'maintenance.archive.create':{'commandId','parts','privateContentReviewed','includeCredentials','credentialsReviewed'},'maintenance.archive.add':{'commandId','planId','expectedRevision','sessions','workspaces'},'maintenance.archive.prepare':{'commandId','planId','expectedRevision'},'maintenance.archive.manifest':{'previewHash','cursor','limit'}})
         fields.update({'maintenance.restore.preview':{'artifactId','sha256','destination','privateContentReviewed','credentialsReviewed'},'maintenance.restore.manifest':{'previewHash','cursor','limit'},'maintenance.restore.apply':{'commandId','previewHash'},'maintenance.restore.reconcile':{'commandId','restoreCommandId'},'maintenance.restore.inspect':{'restoreCommandId'}})
+        from .cache_maintenance import FIELDS as CACHE_FIELDS
+        fields.update(CACHE_FIELDS)
         if fields[operation] is not None and set(args)-fields[operation]:raise ValueError('Unsupported maintenance operation fields')
         async with self.lock:
             if operation in {'maintenance.preview','maintenance.reset.preview'}:return await self.run(self.preview,workspace,args,operation.endswith('reset.preview'))
@@ -433,6 +443,7 @@ class Maintenance:
                 from .full_native_archive import inspect_artifact
                 return await self.run(inspect_artifact,self,workspace,args)
             if operation=='maintenance.lease':return self.lease_view()
+            if operation in {'maintenance.cache.page','maintenance.cache.preview'}:return await self.run(getattr(self.caches(),operation.rsplit('.',1)[1]),workspace,args)
             if operation=='maintenance.archive.manifest':return await self.run(self.archives().page,workspace,args)
             if operation in {'maintenance.restore.preview','maintenance.restore.manifest'}:return await self.run(self.restores().preview if operation.endswith('.preview') else self.restores().page,workspace,args)
             if operation=='maintenance.restore.inspect':return await self.run(self.restores().inspect,workspace,args)
@@ -458,6 +469,7 @@ class Maintenance:
                 if operation=='maintenance.acquire':
                     result=await self.run(self.acquire,workspace,args)
                     self.timer=asyncio.create_task(self.expire(result['leaseId'],max(0,result['expiresAt']-time.time())))
+                elif operation in CACHE_OPERATIONS:result=await self.run(getattr(self.caches(),operation.rsplit('.',1)[1]),workspace,args)
                 elif operation.startswith('maintenance.archive.'):
                     method={'maintenance.archive.create':'create','maintenance.archive.add':'add','maintenance.archive.prepare':'prepare'}[operation]
                     result=await self.run(getattr(self.archives(),method),workspace,args)
@@ -471,7 +483,7 @@ class Maintenance:
                 receipt={**receipt,'state':'succeeded','result':result,'settledAt':time.time()}
             except BaseException as error:
                 archive_failure=operation.startswith('maintenance.archive.') and isinstance(error,Exception)
-                known=(operation=='maintenance.acquire' and isinstance(error,Exception) and (self.lease is None or self.lease['released'])) or (operation.startswith('maintenance.restore.') and getattr(error,'data',{}).get('executed') is False)
+                known=(operation=='maintenance.acquire' and isinstance(error,Exception) and (self.lease is None or self.lease['released'])) or ((operation.startswith('maintenance.restore.') or operation in CACHE_OPERATIONS) and getattr(error,'data',{}).get('executed') is False)
                 receipt={**receipt,'state':'refused' if known else 'failed' if archive_failure else 'unknown','errorType':type(error).__name__,'settledAt':time.time(),**({'executed':False} if known else {}),**({'settled':True,'canonicalFilesChanged':0} if archive_failure else {})}
                 await self.run(self.save,workspace,signature,receipt)
                 if archive_failure:

@@ -68,3 +68,13 @@ interpreter path, native home, or workspace authority from browser arguments.
   backup.
 
 The [retained recovery audit](recovery-parity-audit.md) records the exact legacy effects, current acceptance and remaining aggregate/destructive boundaries.
+
+## Cold source/cache maintenance
+
+The additive `cacheInventory` protocol provides explicit cold indexed source
+inspection and reviewed removal of exactly reconstructible native-owned Python
+bytecode. It preserves every source directory and all unknown, dirty, unpushed,
+shared, retained-generation and unsupported cache roots. This partially covers
+F12.09/F12.21/F17.02; complete source retirement remains unavailable without a
+cross-consumer reference authority. See [the cache contract](cache-maintenance.md)
+for audit revisions, bounds, no-replay receipts and the required held writer gate.

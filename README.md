@@ -269,3 +269,8 @@ Optional launcher-authorized [shared voice preferences](docs/voice-preferences.m
 provide locked compare-and-set updates and exact receipts without credential
 access. [History import](docs/history-import.md) creates reviewed inert native
 histories through bounded chunks; cleanup remains a separate product authority.
+
+Native maintenance also supports [cold source inspection and reviewed derived
+cache clearing](docs/cache-maintenance.md). It never treats unknown use as
+permission to delete source directories; only exact, reconstructible bytecode in
+an owned cache can qualify for a fenced clear operation.
