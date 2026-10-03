@@ -12,7 +12,7 @@ if not __package__:
 
 async def query(request):
     from amplifier_acp.native.host.config import load_config
-    from amplifier_acp.native.host.session import load_root_bundle, is_snapshot, module_source
+    from amplifier_acp.native.host.session import load_root_bundle, is_snapshot, prepare_source_resolver
     from amplifier_acp.native.provider_environment import close_provider, construct_provider, construct_schema_provider, config_schema, materialize_provider_config, provider_class
     from amplifier_acp.native.provider_probe import public
     workspace=Path(request['workspace']).expanduser().resolve()
@@ -35,9 +35,10 @@ async def query(request):
     probe=Bundle(name='draft-provider-defaults',providers=providers,
                  base_path=bundle.base_path,source_base_paths=bundle.source_base_paths)
     snapshot=is_snapshot(bundle)
+    source_resolver=prepare_source_resolver(probe,config,snapshot,getattr(bundle,'_host_components',None))
     await probe.prepare(strict=True,install_deps=os.environ.get('AMPLIFIER_RUNTIME_IMMUTABLE')!='1',
         cache_dir=config.registry_home/'cache',
-        source_resolver=lambda module,source:module_source(config,snapshot,module,source,getattr(bundle,'_host_components',None)))
+        source_resolver=source_resolver)
     rows=[]
     for row in providers:
         if row.get('enabled') is False:continue

@@ -26,7 +26,10 @@ an inherited internal worker override variable. Shared settings, source aliases,
 native history, bundle declarations and unlisted module sources are unchanged.
 
 An exact module override takes precedence in Foundation's public `source_resolver`
-for normal roots, snapshots, preparation and remounts. The same choice reaches
+for normal roots, snapshots, preparation and remounts. Explicit overrides are also
+materialized into in-memory source-less declarations before preparation, because
+Foundation invokes this resolver only for declarations containing a source. The
+on-disk declaration stays unchanged. The same choice reaches
 the prepared resolver for lazily resolved child modules; no repository-wide or
 sibling-module override is inferred. Foundation's cache key resolves the actual
 selected source; we do not bind a different commit beneath a claimed `@main`
@@ -36,7 +39,12 @@ implementations. An override changes code selection, not provider availability,
 model choice or credentials. There is no fallback after failure.
 
 Fresh workers receive only the validated launcher map through the private worker
-environment. Administration/probe subprocesses inherit the same policy. Existing
+environment. Administration/probe subprocesses inherit the same policy. Provider catalog cache
+keys and probe payloads use the effective source, matching the mounted catalog
+identity; changing the override cannot reuse the previous source's model/schema
+metadata. Provider setup rows retain their configured `source` and add redacted
+`sourceSelection` provenance when overridden (originalSource, effectiveSource,
+authority and override). Existing
 workers keep their original map; changing launcher configuration requires a fresh
 ACP/worker lifetime. A mutable local checkout is not an immutable byte attestation:
 operators must retain their reviewed source digest and protect candidate files.
@@ -66,3 +74,8 @@ provider remains mounted. Unit/regression checks cover invalid maps, credential
 redaction, empty-map baseline, exact dynamic-child precedence and independent
 unlisted module sources. Source, installed artifact, loaded-file origin and real
 account acceptance remain separate evidence.
+
+The effective-source regression checks cover both models and the schema metadata
+shortcut, changes during discovery, mounted/admin key equality, unchanged default
+policy, and declared/source-less providers in actual fresh Core/Foundation workers
+and isolated defaults probes. These checks do not use authentication or inference.

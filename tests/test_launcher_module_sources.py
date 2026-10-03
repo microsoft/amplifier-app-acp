@@ -89,3 +89,20 @@ async def test_invalid_launcher_refuses_before_acp_initialization(tmp_path):
     out,err=await asyncio.wait_for(process.communicate(),10)
     assert process.returncode!=0 and out==b''
     assert b'private-value' not in err
+
+
+def test_missing_sources_materialize_only_explicit_overrides_before_prepare():
+    from amplifier_foundation import Bundle
+    from amplifier_acp.native.host.session import prepare_source_resolver
+    from amplifier_acp.native.host.components import declarations
+    config=SimpleNamespace(module_sources={},launcher_module_sources={'provider-test':'/candidate/provider','tool-test':'/candidate/tool'},source_resolutions={},source_resolution_truncated=False)
+    bundle=Bundle.from_dict({'bundle':{'name':'test'},'providers':[{'module':'provider-test'},{'module':'provider-unlisted'}],
+        'tools':[{'module':'tool-test'},{'module':'tool-unlisted','source':'kept'}],
+        'agents':{'child':{'providers':[{'module':'provider-test'}]}}})
+    resolve=prepare_source_resolver(bundle,config,False,HostComponents())
+    rows=list(declarations(bundle.to_mount_plan()))
+    assert all(row['source']==config.launcher_module_sources[row['module']] for row in rows if row['module'] in config.launcher_module_sources)
+    assert next(row for row in rows if row['module']=='provider-unlisted')=={'module':'provider-unlisted'}
+    assert next(row for row in rows if row['module']=='tool-unlisted')['source']=='kept'
+    assert resolve('provider-test','/candidate/provider')=='/candidate/provider'
+    assert list(config.source_resolutions.values())==[{'module':'provider-test','originalSource':None,'effectiveSource':'/candidate/provider','authority':'trusted-launcher','override':True}]

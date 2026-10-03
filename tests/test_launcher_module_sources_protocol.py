@@ -8,7 +8,8 @@ from native_setup import configuration
 MAIN='git+https://github.com/microsoft/amplifier-module-provider-openai-chatgpt@main'
 
 @pytest.mark.asyncio
-async def test_exact_launcher_source_wins_fresh_worker_and_restart(tmp_path,monkeypatch):
+@pytest.mark.parametrize('declared_source',[True,False])
+async def test_exact_launcher_source_wins_fresh_worker_and_restart(tmp_path,monkeypatch,declared_source):
     source=os.environ.get('CHATGPT_PROVIDER_SOURCE')
     if not source:pytest.skip('Set CHATGPT_PROVIDER_SOURCE to qualified1a provider source')
     if source=='installed':source=str(Path(importlib.util.find_spec('amplifier_module_provider_openai_chatgpt').origin).parent.parent)
@@ -16,10 +17,11 @@ async def test_exact_launcher_source_wins_fresh_worker_and_restart(tmp_path,monk
     monkeypatch.setenv('AMPLIFIER_RUNTIME_IMMUTABLE','1')
     config,cwd=configuration(tmp_path)
     values=json.loads(config.read_text());home=Path(values['home']);settings=home/'settings.yaml'
-    settings.write_text(settings.read_text()+'sources:\n  modules:\n    provider-openai-chatgpt: '+MAIN+'\n')
+    if declared_source:
+        settings.write_text(settings.read_text()+'sources:\n  modules:\n    provider-openai-chatgpt: '+MAIN+'\n')
     original_settings=settings.read_bytes()
     bundle=Path(values['bundle'])
-    bundle.write_text(bundle.read_text()+'\n  - module: provider-openai-chatgpt\n    source: '+MAIN+'\n    instance_id: unavailable-chatgpt\n    config:\n      auth_mode: chatgpt_codex\n      login_on_mount: false\n      token_file_path: '+str(tmp_path/'absent-tokens.json')+'\n')
+    bundle.write_text(bundle.read_text()+'\n  - module: provider-openai-chatgpt\n'+('    source: '+MAIN+'\n' if declared_source else '')+'    instance_id: unavailable-chatgpt\n    config:\n      auth_mode: chatgpt_codex\n      login_on_mount: false\n      token_file_path: '+str(tmp_path/'absent-tokens.json')+'\n')
     original_bundle=bundle.read_bytes()
     values['registryHome']=str(tmp_path/'candidate-registry')
     audit=tmp_path/'forbidden-effects';guard=tmp_path/'guard.py'
@@ -59,7 +61,7 @@ runpy.run_module('amplifier_acp.native.runtime_worker',run_name='__main__')
             assert 'result' in inspected,inspected
             result=inspected['result'];proof=result['moduleSourceOverrides']
             assert proof['configuredOverrides']==1 and proof['truncated'] is False
-            assert proof['resolutions']==[{'module':'provider-openai-chatgpt','originalSource':MAIN,'effectiveSource':str(selected),'authority':'trusted-launcher','override':True}]
+            assert proof['resolutions']==[{'module':'provider-openai-chatgpt','originalSource':MAIN if declared_source else None,'effectiveSource':str(selected),'authority':'trusted-launcher','override':True}]
             actual=next(r for r in result['items'] if r['kind']=='providers' and r['id']=='unavailable-chatgpt')
             loaded=Path(actual['implementations'][0]['loadedFrom'])
             assert loaded.is_relative_to(selected),actual

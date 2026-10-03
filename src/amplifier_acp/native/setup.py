@@ -190,6 +190,12 @@ def public_source(value):
     return value
 
 
+def provider_source(config,module,row=None):
+    """Use the same exact source for discovery cache identity and probe loading."""
+    original=getattr(config,'module_sources',{}).get(module) or (row or {}).get('source')
+    return getattr(config,'launcher_module_sources',{}).get(module) or original
+
+
 def validate_matrix(value):
     if not isinstance(value,dict) or not isinstance(value.get('roles'),dict):
         raise ValueError('The routing matrix must contain a roles mapping.')
@@ -255,6 +261,12 @@ class SetupManager:
             if account:configured=connected and (account['authMode']!='chatgpt_plan' or account['planEnabled'])
             rows.append({'credential':credential,'id':identity,'module':value['module'],'source':public_source(value.get('source')),'config':redact(raw),
                 'account':account,'accountConnected':connected,'credentialsConfigured':configured,'keySource':'environment' if (not refs and credential['available']) or any(isinstance(v,str) and v.startswith('${') for v in refs) else ('configuration' if refs else 'provider-managed'), 'enabled':value.get('enabled',True) and identity not in config.settings.get('configurator',{}).get('disabled',{}).get('providers',[])})
+            if value['module'] in getattr(config,'launcher_module_sources',{}):
+                from amplifier_acp.module_sources import public_source as safe_source
+                rows[-1]['sourceSelection']={
+                    'originalSource':safe_source(getattr(config,'module_sources',{}).get(value['module']) or value.get('source')),
+                    'effectiveSource':safe_source(provider_source(config,value['module'],value)),
+                    'authority':'trusted-launcher','override':True}
         return rows
 
     def catalog_key(self,args,workspace):
@@ -263,7 +275,7 @@ class SetupManager:
         row=next((row for row in config.providers if (row.get('id') or row.get('instance_id') or row['module'].removeprefix('provider-'))==args.get('id')),None)
         module=args.get('module') or (row or {}).get('module')
         raw=(row or {}).get('config',{})
-        return configuration_key(workspace,module,raw,getattr(config,'module_sources',{}).get(module) or (row or {}).get('source'),home=self.home)
+        return configuration_key(workspace,module,raw,provider_source(config,module,row),home=self.home)
 
     async def cached_probe(self,action,args,workspace):
         from .provider_catalog import model_key
@@ -308,7 +320,7 @@ class SetupManager:
         stderr_task=asyncio.create_task(stderr_tail(process.stderr))
         try:
             try:
-                output,stderr=await asyncio.wait_for(asyncio.gather(communicate(process,json.dumps({'action':action,'model':args.get('model'),'module':module,'config':config,'source':getattr(configured,'module_sources',{}).get(module) or (row or {}).get('source'),'fallbackSource':KNOWN_PROVIDER_SOURCES.get(module),'registryHome':str(getattr(configured,'registry_home',self.home/'foundation'))}).encode()),stderr_task),90)
+                output,stderr=await asyncio.wait_for(asyncio.gather(communicate(process,json.dumps({'action':action,'model':args.get('model'),'module':module,'config':config,'source':provider_source(configured,module,row),'fallbackSource':KNOWN_PROVIDER_SOURCES.get(module),'registryHome':str(getattr(configured,'registry_home',self.home/'foundation'))}).encode()),stderr_task),90)
             except TimeoutError:
                 raise ValueError('Provider check timed out after 90 seconds. Check connectivity and credentials, then retry.') from None
             try:result=json.loads(output)
@@ -353,7 +365,7 @@ class SetupManager:
         effective=self.config(workspace)
         def signature(config):
             return fingerprint([config.providers,
-                [configuration_key(workspace,row['module'],row.get('config',{}),config.module_sources.get(row['module']) or row.get('source'),home=self.home) for row in config.providers],
+                [configuration_key(workspace,row['module'],row.get('config',{}),provider_source(config,row['module'],row),home=self.home) for row in config.providers],
                 config.settings.get('configurator',{}).get('disabled',{}).get('providers',[])])
         before=signature(effective)
         existing=next((row for row in effective.providers if (row.get('id') or row.get('instance_id') or row['module'].removeprefix('provider-'))==identity),None)

@@ -526,6 +526,32 @@ def module_source(config, snapshot, module, source, components=None):
     return original
 
 
+def prepare_source_resolver(bundle, config, snapshot, components=None):
+    """Expose explicit overrides to Foundation even for source-less declarations.
+
+    Foundation calls source_resolver only for rows with source. Keep the original
+    selection for provenance and leave unlisted declarations unchanged.
+    """
+    overrides = getattr(config, 'launcher_module_sources', {})
+    missing = set()
+    if overrides:
+        from .components import declarations
+        plan = bundle.to_mount_plan()
+        for row in declarations(plan):
+            module = row['module']
+            if module in overrides and not row.get('source'):
+                missing.add(module)
+                row['source'] = overrides[module]
+        if missing:
+            for key in ('providers', 'tools', 'hooks', 'session', 'spawn', 'agents'):
+                if key in plan:
+                    setattr(bundle, key, plan[key])
+    def resolve(module, source):
+        original = None if module in missing and source == overrides[module] else source
+        return module_source(config, snapshot, module, original, components)
+    return resolve
+
+
 async def load_configured_bundle(registry, config, reference):
     """Apply the same source selections to roots and app behaviors as includes."""
     replacement = config.resolve_source(reference)
@@ -715,9 +741,10 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
         preparation_policy["install_overrides"] = Path(install_overrides)
     # Activate modules from the same generation as the bundle registry. The
     # shared AMPLIFIER_HOME still owns history/settings, not app module caches.
+    source_resolver = prepare_source_resolver(loaded, config, snapshot, components)
     prepared = await loaded.prepare(strict=True, install_deps=not (qualification_readonly or os.environ.get("AMPLIFIER_RUNTIME_IMMUTABLE") == "1"), **preparation_policy,
         cache_dir=config.registry_home / "cache",
-        source_resolver=lambda module, source: module_source(config, snapshot, module, source, components),
+        source_resolver=source_resolver,
         progress_callback=progress)
     if getattr(prepared, "resolver", None) is not None:
         prepared.resolver = ComponentResolver(prepared.resolver, components, config.launcher_module_sources)
@@ -741,7 +768,7 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
     session = None
     from ..provider_catalog import mounted_catalog_keys
     catalog_sources={row.get('instance_id') or row.get('id') or row['module'].removeprefix('provider-'):
-        module_source(config,snapshot,row['module'],row.get('source'),components)
+        source_resolver(row['module'],row.get('source'))
         for row in prepared.mount_plan.get('providers',[])}
     catalog_keys=mounted_catalog_keys(config.home,config.workspace,prepared.mount_plan.get('providers',[]),catalog_sources)
     try:
@@ -908,8 +935,9 @@ async def prepare_dependencies(workspace, *, bundle=None, install_overrides=None
     components.apply(loaded)
     from .config import configure_skill_cache
     configure_skill_cache(loaded, config.registry_home)
+    source_resolver = prepare_source_resolver(loaded, config, snapshot, components)
     return await loaded.prepare(strict=True, refresh_dependencies=True,
         **({"dependency_batch": dependency_batch} if dependency_batch is not None else {}),
         **({'install_overrides': Path(install_overrides)} if install_overrides is not None else {}),
         cache_dir=config.registry_home / 'cache',
-        source_resolver=lambda module, source: module_source(config, snapshot, module, source, components))
+        source_resolver=source_resolver)
