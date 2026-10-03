@@ -15,7 +15,7 @@ MAX_FAMILY=100
 def own_descendants(owner,hints):
     from amplifier_foundation.session.shared_state import SharedSessionStore
     from .native.session_files import validate_id
-    from .session_lifecycle import record
+    from .session_lifecycle import record,guard_copy_source
     if not isinstance(hints,list) or len(hints)>MAX_FAMILY:raise ValueError('Selected family exceeds the 100-session ownership bound')
     known={owner.identity:{'sessionId':owner.identity,'cwd':owner.cwd,'parentSessionId':None}}
     def add(value):
@@ -38,6 +38,7 @@ def own_descendants(owner,hints):
                     handle=SharedSessionStore(row['cwd'],sid).acquire(app='amplifier-acp-lifecycle-family');leases.callback(handle.release)
                     metadata=record(owner.server.directory(row['cwd'],sid)/'metadata.json')
                     if metadata.get('session_id')!=sid or metadata.get('parent_id')!=row['parentSessionId']:raise ValueError('Native descendant relationship differs from indexed identity')
+                    guard_copy_source(owner.server,sid)
                 visited.add(sid)
                 with Store(home(owner.server),sid).db() as db:
                     workers=db.execute("SELECT body FROM workers WHERE json_extract(body,'$.kind')='session' LIMIT ?",(MAX_FAMILY+1,)).fetchall() if db else []

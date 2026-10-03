@@ -73,3 +73,20 @@ async def test_recorded_failure_guidance_is_bounded_and_does_not_store_arbitrary
     server=Server(json.loads(config.read_text()),None);save(server,sid,{'type':'generation.failed','error_category':'authentication','error_type':'ProviderError','error':'private-secret-not-recorded','generation_id':'generation'},'one')
     inspected=Lifecycle(server,sid,str(cwd)).inspect();assert inspected['failure']['category']=='authentication' and inspected['failure']['inputId']=='one'
     assert 'private-secret' not in json.dumps(inspected);supersede(server,sid);assert Lifecycle(server,sid,str(cwd)).inspect()['failure']['current'] is False
+
+
+@pytest.mark.asyncio
+async def test_incomplete_creation_or_rewrite_cannot_become_recovery_source_or_descendant(tmp_path):
+    client,sid,cwd,config=await prepared(tmp_path);await prompt(client,sid,'retained source','one');await client.close()
+    server=Server(json.loads(config.read_text()),None);owner=Lifecycle(server,sid,str(cwd));revision=owner.inspect()['historyRevision'];source=(owner.directory/'transcript.jsonl').read_bytes()
+    from amplifier_acp.configuration_clone import location
+    from amplifier_acp.relocation import home,write
+    for name in ('history-fork.json','history-import.json','history-edit-pending.json','maintenance-reset-pending.json'):
+        marker=owner.app/name;write(marker,{'state':'reserved','commandId':'original-unknown'});target=str(uuid.uuid4())
+        with pytest.raises(ValueError,match='unresolved'):owner.perform('fork',{'commandId':name,'targetSessionId':target,'expectedHistoryRevision':revision,'mode':'recovery'})
+        assert marker.exists() and not server.directory(str(cwd),target).exists() and owner.saved(name) is None
+        assert (owner.directory/'transcript.jsonl').read_bytes()==source;marker.unlink()
+    child=str(uuid.uuid4());directory=server.directory(str(cwd),child);directory.mkdir();(directory/'metadata.json').write_text(json.dumps({'session_id':child,'parent_id':sid}));(directory/'transcript.jsonl').write_text('not read by ownership guard')
+    marker=location(home(server),child)/'history-import.json';write(marker,{'state':'reserved'});target=str(uuid.uuid4())
+    with pytest.raises(ValueError,match='unresolved'):owner.perform('fork',{'commandId':'descendant-unknown','targetSessionId':target,'expectedHistoryRevision':revision,'mode':'recovery','descendants':[{'sessionId':child,'cwd':str(cwd),'parentSessionId':sid}]})
+    assert marker.exists() and not server.directory(str(cwd),target).exists() and owner.saved('descendant-unknown') is None

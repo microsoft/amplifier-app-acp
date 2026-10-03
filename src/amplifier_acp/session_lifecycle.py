@@ -33,6 +33,15 @@ def lifecycle_state(server,identity,cwd):
     if value.get('sessionId')!=identity or value.get('historyCwd')!=cwd:raise ValueError('Native lifecycle identity does not match history workspace')
     return value
 
+def guard_copy_source(server,identity):
+    """Copy only a coherent settled authority image; never finish its journals."""
+    app=location(home(server),identity)
+    for name in ('history-edit-pending.json','maintenance-reset-pending.json'):
+        if (app/name).exists():raise ValueError('Canonical native history or configuration is unresolved; source preserved')
+    for name in ('history-fork.json','history-import.json'):
+        path=app/name
+        if path.exists() and record(path).get('state')!='committed':raise ValueError('Native creation outcome is unresolved; source preserved')
+
 def guard_start(server,identity,cwd):
     value=lifecycle_state(server,identity,cwd)
     if value['deleted']:raise ValueError('This native session was removed from discovery; restore it before continuing. Its history is preserved.')
@@ -187,8 +196,7 @@ class Lifecycle:
         if args.get('bundle') is not None and (not isinstance(args['bundle'],str) or args['bundle'] not in self.fork_bundles()):raise ValueError('Choose a launcher-configured fork bundle identity')
         if args.get('bundle') and args.get('bundleRevision')!=fingerprint([args['bundle'],self.fork_bundles()[args['bundle']]]):raise ValueError('Configured fork bundle changed; review a fresh selection')
         if args.get('bundleRevision') is not None and not args.get('bundle'):raise ValueError('Bundle revision requires a selected bundle')
-        for name in ('history-edit-pending.json','maintenance-reset-pending.json'):
-            if (self.app/name).exists():raise ValueError('Canonical native history or configuration is unresolved; source preserved')
+        guard_copy_source(self.server,self.identity)
         target=args.get('targetSessionId')
         if not isinstance(target,str) or str(uuid.UUID(target))!=target:raise ValueError('Reserved target UUID required')
         destination=self.server.directory(self.cwd,target);target_app=location(home(self.server),target)
