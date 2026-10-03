@@ -146,7 +146,9 @@ class Permissions:
             else:
                 # Presentation failure after replacement is uncertain, never a
                 # fabricated pre-effect refusal. Exact marker recovery is passive.
-                receipt.update(status='succeeded',result=self.view(workspace,scope,saved))
+                try:view=self.view(workspace,scope,saved)
+                except Exception as exc:raise RuntimeError('Permission save outcome requires exact receipt inspection; no write was replayed') from exc
+                receipt.update(status='succeeded',result=view)
             con.execute('UPDATE commands SET body=? WHERE id=?',(encoded(receipt).decode(),identity));return receipt
         finally:
             if con.in_transaction:con.execute('ROLLBACK')

@@ -109,7 +109,7 @@ def test_postwrite_projection_failure_is_unknown_not_pre_effect_refusal(tmp_path
  base=owner.perform(str(tmp_path),'permissions.get',{})
  def fail(*args,**kwargs):raise Invalid('fixture projection error after replacement')
  monkeypatch.setattr(owner,'view',fail)
- with pytest.raises(Invalid):owner.perform(str(tmp_path),'permissions.save',{'commandId':'post-write','expectedRevision':base['revision'],'allowed':[],'denied':['private']})
+ with pytest.raises(RuntimeError,match='receipt inspection'):owner.perform(str(tmp_path),'permissions.save',{'commandId':'post-write','expectedRevision':base['revision'],'allowed':[],'denied':['private']})
  with sqlite3.connect(owner.path) as con:assert json.loads(con.execute('SELECT body FROM commands WHERE id=?',('post-write',)).fetchone()[0])['status']=='unknown'
  assert Permissions(config).perform(str(tmp_path),'permissions.receipt',{'commandId':'post-write'})['status']=='succeeded'
 
