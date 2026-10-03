@@ -21,7 +21,8 @@ OPERATIONS={'maintenance.preview','maintenance.acquire','maintenance.snapshot',
  'maintenance.restore.preview','maintenance.restore.manifest','maintenance.restore.apply','maintenance.restore.reconcile','maintenance.restore.inspect'}
 CACHE_OPERATIONS={'maintenance.cache.scan','maintenance.cache.page','maintenance.cache.preview','maintenance.cache.clear'}
 CAPTURE_OPERATIONS={'maintenance.capture.acquire','maintenance.capture.inspect','maintenance.capture.release'}
-OPERATIONS |= CACHE_OPERATIONS | CAPTURE_OPERATIONS
+from .app_reset import FIELDS as APP_RESET_FIELDS
+OPERATIONS |= CACHE_OPERATIONS | CAPTURE_OPERATIONS | set(APP_RESET_FIELDS)
 PARTS={'session-history','session-state','native-settings'}
 CHUNK=256*1024
 MAX_FILES=2048
@@ -446,10 +447,15 @@ class Maintenance:
         fields.update({'maintenance.restore.preview':{'artifactId','sha256','destination','privateContentReviewed','credentialsReviewed'},'maintenance.restore.manifest':{'previewHash','cursor','limit'},'maintenance.restore.apply':{'commandId','previewHash'},'maintenance.restore.reconcile':{'commandId','restoreCommandId'},'maintenance.restore.inspect':{'restoreCommandId'}})
         from .cache_maintenance import FIELDS as CACHE_FIELDS
         fields.update(CACHE_FIELDS)
+        fields.update(APP_RESET_FIELDS)
         from .capture_scope import FIELDS as CAPTURE_FIELDS
         fields.update(CAPTURE_FIELDS)
         if fields[operation] is not None and set(args)-fields[operation]:raise ValueError('Unsupported maintenance operation fields')
         async with self.lock:
+            if operation in APP_RESET_FIELDS and not hasattr(self,'app_reset'):
+                from .app_reset import AppReset
+                self.app_reset=AppReset(self)
+            if operation=='maintenance.appReset.inspect':return await self.run(self.app_reset.perform,workspace,operation,args)
             if operation in {'maintenance.preview','maintenance.reset.preview'}:return await self.run(self.preview,workspace,args,operation.endswith('reset.preview'))
             if operation=='maintenance.receipt':
                 row=await self.run(self.receipt,workspace,args.get('commandId'));return {'receipt':row[1] if row else None}
@@ -483,7 +489,8 @@ class Maintenance:
                 if prior[1]['state']=='refused':result.update(accepted=False,executed=False)
                 return result
             try:
-                if operation=='maintenance.acquire':
+                if operation in APP_RESET_FIELDS:result=await self.run(self.app_reset.perform,workspace,operation,args)
+                elif operation=='maintenance.acquire':
                     result=await self.run(self.acquire,workspace,args)
                     self.timer=asyncio.create_task(self.expire(result['leaseId'],max(0,result['expiresAt']-time.time())))
                 elif operation in CAPTURE_OPERATIONS:result=await self.run(getattr(self.capture(),operation.rsplit('.',1)[1]),workspace,args)
@@ -501,7 +508,7 @@ class Maintenance:
                 receipt={**receipt,'state':'succeeded','result':result,'settledAt':time.time()}
             except BaseException as error:
                 archive_failure=operation.startswith('maintenance.archive.') and isinstance(error,Exception)
-                known=(operation=='maintenance.acquire' and isinstance(error,Exception) and (self.lease is None or self.lease['released'])) or ((operation.startswith('maintenance.restore.') or operation in CACHE_OPERATIONS | CAPTURE_OPERATIONS) and getattr(error,'data',{}).get('executed') is False)
+                known=(operation=='maintenance.acquire' and isinstance(error,Exception) and (self.lease is None or self.lease['released'])) or ((operation.startswith('maintenance.restore.') or operation in CACHE_OPERATIONS | CAPTURE_OPERATIONS | set(APP_RESET_FIELDS)) and getattr(error,'data',{}).get('executed') is False)
                 receipt={**receipt,'state':'refused' if known else 'failed' if archive_failure else 'unknown','errorType':type(error).__name__,'settledAt':time.time(),**({'executed':False} if known else {}),**({'settled':True,'canonicalFilesChanged':0} if archive_failure else {})}
                 await self.run(self.save,workspace,signature,receipt)
                 if archive_failure:

@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Native app-local reset v1",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "const": "maintenance.appReset.prepare"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "parts": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1,
+              "items": {
+                "const": "native.app-bundle-default"
+              }
+            },
+            "privateContentReviewed": {
+              "const": true
+            },
+            "credentialsReviewed": {
+              "const": false
+            },
+            "restoreCommandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "required": [
+            "commandId",
+            "parts",
+            "privateContentReviewed"
+          ]
+        }
+      },
+      "required": [
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "const": "maintenance.appReset.apply"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "preparedId": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{32}$"
+            },
+            "reviewHash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "required": [
+            "commandId",
+            "preparedId",
+            "reviewHash"
+          ]
+        }
+      },
+      "required": [
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "const": "maintenance.appReset.restore"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "preparedId": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{32}$"
+            },
+            "reviewHash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "resetCommandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "expectedPostResetRevision": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{32}$"
+            }
+          },
+          "required": [
+            "commandId",
+            "preparedId",
+            "reviewHash",
+            "resetCommandId",
+            "expectedPostResetRevision"
+          ]
+        }
+      },
+      "required": [
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "const": "maintenance.appReset.inspect"
+        },
+        "args": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "commandId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                }
+              },
+              "required": [
+                "commandId"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "preparedId": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{32}$"
+                },
+                "reviewHash": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "preparedId",
+                "reviewHash"
+              ]
+            }
+          ]
+        }
+      },
+      "required": [
+        "operation",
+        "args"
+      ]
+    }
+  ]
+}
