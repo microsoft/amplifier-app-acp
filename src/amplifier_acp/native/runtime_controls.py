@@ -509,6 +509,8 @@ class RuntimeControls:
                 schema = schema() if callable(schema) else {"fields":getattr(info,"config_fields",[])}
                 if inspect.isawaitable(schema):
                     schema = await schema
+                from .provider_status import authentication_status
+                authentication, auth_status_supported = authentication_status(provider, info)
                 from .provider_catalog import fingerprint
                 mounted=next((row for row in getattr(self.session,'config',{}).get('providers',[]) if (row.get('id') or row.get('instance_id') or row.get('module','').removeprefix('provider-'))==name),{})
                 catalog_key=fingerprint([self.catalog_revision,name,mounted or getattr(provider,'config',{}),public_config(info)])
@@ -519,8 +521,10 @@ class RuntimeControls:
                     current=configuration_key(captured['workspace'],mounted['module'],mounted.get('config',{}),captured['sources'][name],home=captured['home'])
                     if current==captured['keys'][name]:shared['sharedCatalogKey']=current
                 rows.append({"id":name,"module":mounted.get('module'),"catalogKey":catalog_key,**shared,"info":public_config(info),"configSchema":public_config(schema),
+                    **({"authentication":authentication} if authentication is not None else {}),
                     "supports":{"models":callable(getattr(provider,"list_models",None)),
                                 "test":callable(getattr(provider,"list_models",None)),
+                                "authStatus":auth_status_supported,
                                 "login":callable(getattr(provider,"login",None))}})
             loop=self.coordinator.get('orchestrator')
             selected=loop._select_provider(providers) if providers else None

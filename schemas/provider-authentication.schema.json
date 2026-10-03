@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/microsoft/amplifier-app-acp/schemas/provider-authentication.schema.json",
+  "title": "Passive provider authentication observation",
+  "description": "Optional configuration.providers row.authentication. Informational; never an execution readiness, selection or fallback decision.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "source", "observational"],
+  "properties": {
+    "status": {"enum": ["authenticated", "expired", "unauthenticated", "unknown"]},
+    "source": {"const": "provider.auth_status"},
+    "observational": {"const": true},
+    "reason": {"enum": ["status-read-failed", "unsupported-status", "async-status-unsupported"]}
+  }
+}

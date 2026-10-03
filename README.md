@@ -12,6 +12,8 @@ Start with the [native agent vision](docs/VISION.md) and
 [version 1 boundary contract](contracts/native-agent.v1.md) for ownership,
 consumer obligations, executable checks and current limitations. These link
 the upstream protocol and approved family contracts rather than redefining them.
+Mounted provider reads can report [passive authentication observations](docs/provider-authentication.md)
+without changing selection or request-time authentication behavior.
 
 ## Run
 
