@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsoft.github.io/amplifier-acp/schemas/native-configuration-apply.v1.json",
+  "description": "Apply an explicitly reviewed native mount plan with compare-and-swap admission; drafts remain client-owned.",
+  "type": "object",
+  "required": ["config", "expectedConfigurationRevision"],
+  "properties": {
+    "config": {"type": "object"},
+    "whenIdle": {"type": "boolean"},
+    "expectedConfigurationRevision": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  },
+  "additionalProperties": false
+}

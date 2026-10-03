@@ -213,7 +213,10 @@ class Session:
         return options
 
     async def configure(self,identity,value):
-        if self.prompt and not self.prompt.done():raise RpcError(-32000,'Configuration requires an idle turn.')
+        if self.lock.locked():raise RpcError(-32000,'Configuration requires an idle turn.')
+        async with self.lock:return await self.configure_idle(identity,value)
+
+    async def configure_idle(self,identity,value):
         await self.start()
         option=next((r for r in self.config_options if r['id']==identity),None)
         if not option or value not in {r['value'] for r in option['options']}:raise RpcError(-32602,'Unknown session configuration option or value.')
@@ -225,7 +228,16 @@ class Session:
             await self.worker.control('provider.select',selection);self.report['selection']=selection
         return {'configOptions':await self.refresh_options()}
 
+    async def configuration_control(self,operation,args):
+        if self.lock.locked():raise RpcError(-32000,'Configuration requires an idle turn.')
+        async with self.lock:
+            await self.start()
+            return await self.worker.control(operation,args)
+
     async def apply_configuration(self,args):
+        expected=args.get('expectedConfigurationRevision')
+        if not isinstance(expected,str) or len(expected)!=64 or any(c not in '0123456789abcdef' for c in expected):
+            raise RpcError(-32602,'Applying a mount plan requires its inspected expectedConfigurationRevision.')
         if self.config_cancel is not None:raise RpcError(-32000,'A configuration change is already pending.')
         if self.lock.locked() and not args.get('whenIdle'):raise RpcError(-32000,'Configuration requires an idle turn.')
         cancel=self.config_cancel=asyncio.Event()
@@ -237,6 +249,9 @@ class Session:
             if cancel.is_set():return {'cancelled':True,'applied':False}
             if not held:await acquiring;held=True
             self.config_applying=True
+            current=await self.worker.control('configuration.inspect')
+            if current.get('configurationRevision')!=expected:
+                raise RpcError(-32009,'Configuration changed; inspect and review the current plan before applying this draft.',{'reason':'configuration-conflict','configurationRevision':current.get('configurationRevision'),'executed':False,'replayed':False})
             journal=self.configuration_journal()
             paths=[journal.with_name(name) for name in ('configuration.json','control-state.json','effective-configuration.json')]
             saved={path.name:path.read_text() if path.exists() else None for path in paths}
@@ -250,6 +265,9 @@ class Session:
                     result={**result,'requiresRestart':False,'remounted':True,'configuration':await self.worker.control('configuration.inspect')}
                 journal.unlink()
             except (NativeError,ValueError,RpcError) as error:
+                if isinstance(error,NativeError) and error.data.get('reason')=='configuration-conflict':
+                    journal.unlink(missing_ok=True)
+                    raise RpcError(-32009,str(error),error.data) from error
                 await self.worker.close()
                 self.restore_configuration()
                 try:await self.start()
@@ -662,7 +680,9 @@ class Server:
                 if session.config_applying:raise RpcError(-32000,'Configuration changes are already applying.')
                 if session.config_cancel:session.config_cancel.set()
                 return {'cancelled':session.config_cancel is not None}
-            result=await session.apply_configuration(args) if operation=='configuration.apply' else await session.worker.control(operation,args)
+            if operation=='configuration.apply':result=await session.apply_configuration(args)
+            elif operation in {'configuration.toggle','bundle.switch','provider.select','provider.reset','mode.set','mode.clear'}:result=await session.configuration_control(operation,args)
+            else:result=await session.worker.control(operation,args)
             if operation in {'configuration.apply','bundle.switch','provider.select','provider.reset','mode.set','mode.clear'}:
                 if operation in {'provider.select','provider.reset'}:session.report['selection']=result.get('selection');session.report['effective_selection']=None
                 await session.refresh_options()

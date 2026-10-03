@@ -7,6 +7,8 @@ import asyncio
 
 import copy
 
+import hashlib
+
 
 from dataclasses import asdict, is_dataclass
 
@@ -39,6 +41,12 @@ SECTIONS = ("providers", "tools", "hooks")
 
 
 PLAN_KEYS = {*SECTIONS, "session", "agents", "spawn", "context", "instruction"}
+
+
+class ConfigurationConflict(ValueError):
+    def __init__(self, revision):
+        super().__init__('Configuration changed; inspect and review the current plan before applying this draft')
+        self.configuration_conflict = {'reason':'configuration-conflict','configurationRevision':revision,'executed':False,'replayed':False}
 
 
 def public_config(value):
@@ -240,12 +248,14 @@ class RuntimeControls:
                 method = getattr(self.configurator, section + "_list", None)
                 if method:
                     provenance[section] = public_config(method())
-        return {"bundle": plan.get("bundle_name"), "plan": public_config(plan), "modules": modules,
+        exposed = public_config(plan)
+        revision = hashlib.sha256(json.dumps(exposed,sort_keys=True,separators=(',',':'),ensure_ascii=False,allow_nan=False).encode()).hexdigest()
+        return {"bundle": plan.get("bundle_name"), "plan": exposed, "configurationRevision":revision, "modules": modules,
             "disabledModules": {key:value.get("disabled", []) for key,value in snapshot.items()},
             "provenance": provenance, "capabilities": self.capabilities()}
 
     def capabilities(self):
-        return {"configuration": True, "configurationApplyRequiresRestart": True,
+        return {"configuration": True, "configurationApplyRequiresRestart": True,"configurationCompareAndSwap":True,
             "modes": bool(self.coordinator.session_state.get("mode_discovery")),
             "goals": hasattr(self.coordinator.get("orchestrator"), "goal_stall_threshold"),
             "skills": bool(self.coordinator.get_capability("skills_discovery")),
@@ -334,6 +344,8 @@ class RuntimeControls:
             return await self.provider_control(operation,args)
         if operation == "configuration.apply":
             self.require_idle()
+            revision=self.configuration()['configurationRevision']
+            if args.get('expectedConfigurationRevision')!=revision:raise ConfigurationConflict(revision)
             previous=copy.deepcopy(self.coordinator.config)
             stored=override_path(self.session.session_id)
             if stored.exists():

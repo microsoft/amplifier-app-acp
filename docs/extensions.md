@@ -165,6 +165,17 @@ configuration after successful readiness. `whenIdle:true` can wait behind the
 active prompt; `configuration.cancel` cancels only a waiting apply. Once applying,
 it cannot report a successful cancellation. It never replays user input.
 
+`configuration.inspect.configurationRevision` is the SHA-256 of its canonical
+public mount plan. `configuration.apply` requires `expectedConfigurationRevision`
+from the editor's original inspected base, together with `config` and optional
+`whenIdle`. It compares again after waiting for idle, then under the native
+configuration writer's lock. A stale draft returns error `-32009` with
+`{reason:'configuration-conflict',configurationRevision,executed:false,replayed:false}`
+before changing files or remounting. The client retains its draft and explicitly
+reviews the current plan; fetching a new revision is not permission to silently
+rebase and overwrite. Missing revisions are refused. Standard ACP model/mode
+options retain their upstream API and serialize with remount admission.
+
 `voice.transcript.record` accepts exactly `{callId,itemId,role,text,append,commandId}` under `_amplifier/native`. It records spoken user/assistant history through the native context and normal Foundation checkpoint without submitting a prompt. The trusted host verifies the call owner before invoking it. Idle context and native writer ownership are required. A known busy response is `{recorded:false,reason:'busy',retryable:true,executed:false}`; only that permits automatic later retry. A transport loss remains unknown: retain the durable input and inspect the receipt/history before any retry. Reusing an identical command returns its receipt; different content for that identity is rejected. Successful results include stable `historyTurnId` matching the passive history turn-group ID and `nativeMessageId`, `text`, `role`, `via:'call'`, `callId`, `itemId`, and `revision`; the compositor may update its selected voice projection. History updates label `amplifier.dev/history.recordedOnly` and voice identifiers so historical speech cannot imply executed agent work. The native history and fork path retain the metadata. This operation does not alter any Core, context, or provider module class.
 
 Trusted administration also supports `voice.configuration` (sanitized `{available,source,environmentAvailable,privateKeyAvailable,preferredModel,voice,interruptions,reason}`), `voice.configure {source:'environment'|'private',apiKey?}`, and server-only `voice.credential {}` returning `{apiKey,source,available}`. Credential resolution/configuration additionally require launcher `adminVoiceCredentials:true` as well as authorized admin workspace roots. They use the existing SettingsStore and SetupManager key owner, including private keys.env and process-environment precedence; no second secret store exists. The host must check active call/preview ownership before configuration and call these directly over its private admin connection. Never expose credential reads or secret configure arguments in generic capability actions, agent catalogs, durable host receipts, logs, or client records. No native execution worker starts. Voice model/name defaults mirror the existing voice preferences; model execution and validation remain owned by the media component.

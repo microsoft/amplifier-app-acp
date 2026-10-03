@@ -126,19 +126,24 @@ async def run():
             raise AssertionError('Active turn allowed destructive clear')
         except ValueError:pass
         runtime.generation=None
+        try:
+            await controls.perform('configuration.apply',{'config':plan,'expectedConfigurationRevision':'0'*64})
+            raise AssertionError('Stale plan reached native configuration writer')
+        except ValueError as error:
+            assert error.configuration_conflict['executed'] is False
         invalid=dict(plan,providers=[{'module':'provider-fixture','enabled':False}])
         try:
-            await controls.perform('configuration.apply',{'config':invalid})
+            await controls.perform('configuration.apply',{'config':invalid,'expectedConfigurationRevision':controls.configuration()['configurationRevision']})
             raise AssertionError('Disabled all providers')
         except ValueError:pass
         assert not (Path(home)/'sessions/controls-fixture/configuration.json').exists()
-        applied=await controls.perform('configuration.apply',{'config':dict(plan,providers=[{'module':'provider-fixture'}])})
+        applied=await controls.perform('configuration.apply',{'config':dict(plan,providers=[{'module':'provider-fixture'}]),'expectedConfigurationRevision':controls.configuration()['configurationRevision']})
         assert applied['requiresRestart']
         # A disabled provider is absent from the mounted coordinator but its
         # private configuration must survive turning it back on in the editor.
         stored=Path(home)/'sessions/controls-fixture/configuration.json'
         stored.write_text(json.dumps(dict(plan,providers=[{'module':'provider-fixture'},{'module':'provider-disabled','enabled':False,'config':{'api_key':'fixture-private'}}])))
-        await controls.perform('configuration.apply',{'config':dict(plan,providers=[{'module':'provider-fixture'},{'module':'provider-disabled','enabled':True,'config':{'api_key':'[REDACTED]'}}])})
+        await controls.perform('configuration.apply',{'config':dict(plan,providers=[{'module':'provider-fixture'},{'module':'provider-disabled','enabled':True,'config':{'api_key':'[REDACTED]'}}]),'expectedConfigurationRevision':controls.configuration()['configurationRevision']})
         restored=json.loads(stored.read_text())
         assert restored['providers'][1]['config']['api_key']=='fixture-private'
         assert restored['providers'][1]['enabled'] is True

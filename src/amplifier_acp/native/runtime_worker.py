@@ -886,7 +886,9 @@ class Worker:
             if identity:
                 publish({"op": "reply", "id": identity, "result": result})
         except Exception as exc:
-            publish({"op": "reply", "id": identity, "error": f"{type(exc).__name__}: {exc}"})
+            from .runtime_controls import ConfigurationConflict
+            detail=exc.configuration_conflict if isinstance(exc,ConfigurationConflict) else {}
+            publish({"op": "reply", "id": identity, "error": f"{type(exc).__name__}: {exc}",**detail})
 
     async def read(self):
         reader = asyncio.StreamReader(limit=MAX_MESSAGE_BYTES)
