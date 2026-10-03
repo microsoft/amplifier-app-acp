@@ -8,7 +8,7 @@ from .native.host.config import write_private
 from .native.updates import active_release,foundation_home,process,pinned,safe_label,source_key,cache_changes
 from .native import runtime_environment as environments
 
-OPERATIONS={'generations.inspect','generations.check','generations.prepare','generations.promote','generations.rollback','generations.receipt','generations.launcher','generations.ensure'}
+OPERATIONS={'generations.current','generations.inspect','generations.check','generations.prepare','generations.promote','generations.rollback','generations.receipt','generations.launcher','generations.ensure'}
 
 def digest(value):return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':')).encode()).hexdigest()
 def identity(value):
@@ -66,6 +66,9 @@ class Generations:
  async def perform(self,workspace,operation,args):
   if operation not in OPERATIONS:raise ValueError('Unknown generation operation')
   if operation=='generations.inspect':return self.inspect(args)
+  if operation=='generations.current':
+   from .runtime_inspection import current
+   return await asyncio.to_thread(current,self.home,args,self.state())
   if operation=='generations.receipt':
    result=self.receipt(args.get('commandId'));return {'receipt':result}
   if operation=='generations.launcher':return await launcher(self.home,args.get('generation') or active_release(self.home).get('current'))

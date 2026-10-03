@@ -466,7 +466,7 @@ class Server:
             return {'protocolVersion':1,'agentInfo':{'name':'amplifier-acp','title':'Amplifier','version':__version__},
                 'agentCapabilities':{'loadSession':True,'sessionCapabilities':{'resume':{},'close':{},'delete':{}},
                     'promptCapabilities':{'image':True,'audio':False,'embeddedContext':True},
-                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True,'passiveInspect':True},'scheduledTurns':{'version':1,'completion':'settled'},'questionTurns':{'version':1,'completion':'settled','active':False},'observationTurns':{'version':1,'completion':'settled','active':False},'configurationClone':{'version':1},'taskState':{'version':1,'passive':True},'workers':{'version':1,'passiveInspection':True,'residentControls':True},'historyEdits':{'version':1,'completion':'settled','active':False},'sessionLifecycle':{'version':1,'passive':True,'deletion':'preserve-history'},'activeSteering':{'version':1,'mode':'request_boundary','cancellable':False,'runtimeNegotiated':True},'lifecycle':{'version':1,'gracefulRetire':True},'relocation':{'version':1,'passiveInspection':True},**({'transfer':{'version':1,'passiveInspection':True}} if self.config.get('transferAuthorityDirectory') and self.config.get('transferWorkspaceRoots') else {}),**({'admin':{'version':1,**({'generations':{'version':1}} if self.config.get('adminGenerations') else {})}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
+                    '_meta':{NATIVE:{'version':1,'history':{'version':1,'paging':'complete-turns','passive':True,'passiveInspect':True},'scheduledTurns':{'version':1,'completion':'settled'},'questionTurns':{'version':1,'completion':'settled','active':False},'observationTurns':{'version':1,'completion':'settled','active':False},'configurationClone':{'version':1},'taskState':{'version':1,'passive':True},'workers':{'version':1,'passiveInspection':True,'residentControls':True},'runtimeInspection':{'version':1,'residentOnly':True,'passiveStatus':True},'historyEdits':{'version':1,'completion':'settled','active':False},'sessionLifecycle':{'version':1,'passive':True,'deletion':'preserve-history'},'activeSteering':{'version':1,'mode':'request_boundary','cancellable':False,'runtimeNegotiated':True},'lifecycle':{'version':1,'gracefulRetire':True},'relocation':{'version':1,'passiveInspection':True},**({'transfer':{'version':1,'passiveInspection':True}} if self.config.get('transferAuthorityDirectory') and self.config.get('transferWorkspaceRoots') else {}),**({'admin':{'version':1,**({'generations':{'version':1}} if self.config.get('adminGenerations') else {})}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
         if not self.initialized:raise RpcError(-32600,'Initialize this connection first.')
         if method in {'_amplifier/relocation','_amplifier/relocation/reconcile'}:
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
@@ -529,6 +529,17 @@ class Server:
             from .steering import Receipts
             from .relocation import home
             return {'receipt':Receipts(home(self),params['sessionId']).read(params.get('inputId'))}
+        if method=='_amplifier/runtime':
+            if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
+            if set(params)-{'sessionId','cwd','cursor','limit','expectedRevision','refresh','surface'}:raise RpcError(-32602,'Unexpected runtime inspection field.')
+            cwd=Path(params.get('cwd',''))
+            if not cwd.is_absolute() or not cwd.is_dir():raise RpcError(-32602,'Existing native history workspace required.')
+            identity=params.get('sessionId');directory=self.directory(str(cwd.resolve()),identity)
+            if not (directory/'metadata.json').is_file():raise RpcError(-32602,'Native session identity is unavailable.')
+            session=self.sessions.get(identity)
+            if session and session.cwd!=str(cwd.resolve()):raise RpcError(-32602,'Native session belongs to another history workspace.')
+            from .runtime_inspection import resident
+            return await resident(session,{k:v for k,v in params.items() if k not in {'sessionId','cwd'}})
         if method=='_amplifier/workers':
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
             from .coordination import inspect
@@ -628,6 +639,9 @@ class Server:
             if operation=='steer.submit':
                 from .steering import submit
                 return await submit(session,args)
+            if operation=='runtime.inspect':
+                from .runtime_inspection import resident
+                return await resident(session,args)
             if operation=='workers.inspect':
                 from .coordination import inspect
                 return inspect(self,{**args,'sessionId':identity,'cwd':session.cwd})

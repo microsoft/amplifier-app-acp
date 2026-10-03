@@ -52,6 +52,7 @@ def publish(data):
 
 class Worker:
     def __init__(self):
+        self.inspection_instance=str(uuid.uuid4());self.inspection_snapshot=None
         from .history_hints import set_observer
         set_observer(publish)
         self.session = self.runtime = self.execution = None
@@ -745,6 +746,18 @@ class Worker:
                 else:
                     self.shutdown.set()
                 return
+            elif op == "runtime.inspect":
+                if not self.session or not self.execution:
+                    raise ValueError('Resident runtime inspection requires the original ready worker')
+                from amplifier_acp.runtime_inspection import mounted,interpreter,page,validate_args
+                args=data.get('arguments',{})
+                validate_args(args)
+                if args.get('cursor') and (args.get('refresh') or self.inspection_snapshot is None):
+                    raise ValueError('Start a new runtime inspection before paging')
+                if self.inspection_snapshot is None or args.get('refresh'):
+                    mounts=mounted(self.session.coordinator)
+                    self.inspection_snapshot=await asyncio.to_thread(interpreter,mounts,self.inspection_instance)
+                result=page(self.inspection_snapshot,args)
             elif op == "dependencies":
                 if __package__:
                     from .artifact_runtime import discover

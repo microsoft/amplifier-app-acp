@@ -126,6 +126,10 @@ Schema `$id` values express intended public identity, not a claim of deployment.
 
 ## Optional native administration
 
+Bounded generation and actual resident worker source evidence is documented in
+[runtime inspection](runtime-inspection.md). These reads do not start a worker
+or imply adoption from an installation receipt.
+
 The launcher opts in with `adminWorkspaceRoots: ["/authorized/workspace"]`.
 Only then does `agentCapabilities._meta['amplifier.dev/native'].admin` advertise
 `{version:1}`. A peer must also negotiate native version 1. Request:
