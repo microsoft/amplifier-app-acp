@@ -24,9 +24,14 @@ async def test_protocol_app_default_reset_exact_retention_undo_and_no_shared_cha
     client,cwd,home,app=await opened(tmp_path);path=app/'admin-settings.yaml'
     raw=b'bundle:\n  active: fixture\n  other: retained\nprivate-other: never-present-in-reviews\n';path.write_bytes(raw)
     (home/'keys.env').write_text('fixture-secret-preserved');(home/'settings.yaml').write_text('shared: retained')
+    history=home/'projects/fixture/sessions/preserved';history.mkdir(parents=True)
+    canonical={'metadata.json':b'{"session_id":"preserved"}\n','transcript.jsonl':b'{"role":"user","content":"preserved history"}\n','events.jsonl':b'{"event":"fixture:historical"}\n'}
+    for name,body in canonical.items():(history/name).write_bytes(body)
     try:
         denied=await call(client,cwd,'prepare',{'commandId':'unheld','parts':['native.app-bundle-default'],'privateContentReviewed':True});assert denied['error']['data']['executed'] is False
         auth=await hold(client,cwd);review=await prepare(client,cwd,auth,'prepare')
+        retained_receipt='{"commandId":"unrelated","operation":"maintenance.inspect","state":"succeeded","result":{"preserved":true}}'
+        with sqlite3.connect(app/'maintenance/receipts.sqlite3') as db:db.execute('INSERT INTO commands VALUES(?,?,?,?)',('unrelated',str(cwd),'fixture',retained_receipt))
         assert 'never-present' not in json.dumps(review) and 'fixture-secret' not in json.dumps(review)
         args={'commandId':'apply','preparedId':review['preparedId'],'reviewHash':review['reviewHash']}
         changed=(await call(client,cwd,'apply',args,auth))['result'];assert changed['receipt']['state']=='succeeded' and 'active' not in path.read_text() and 'other: retained' in path.read_text()
@@ -35,6 +40,8 @@ async def test_protocol_app_default_reset_exact_retention_undo_and_no_shared_cha
         restore=await prepare(client,cwd,auth,'restore-review',restoreCommandId='apply')
         undo=(await call(client,cwd,'restore',{'commandId':'undo','preparedId':restore['preparedId'],'reviewHash':restore['reviewHash'],'resetCommandId':'apply','expectedPostResetRevision':changed['postResetRevision']},auth))['result'];assert undo['restored'] and path.read_bytes()==raw
         assert (home/'keys.env').read_text()=='fixture-secret-preserved' and (home/'settings.yaml').read_text()=='shared: retained'
+        assert all((history/name).read_bytes()==body for name,body in canonical.items())
+        with sqlite3.connect(app/'maintenance/receipts.sqlite3') as db:assert db.execute('SELECT body FROM commands WHERE id=?',('unrelated',)).fetchone()[0]==retained_receipt
         assert not client.events
     finally:await client.close()
 
