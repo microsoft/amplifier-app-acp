@@ -890,7 +890,8 @@ class Worker:
                 publish({"op": "reply", "id": identity, "result": result})
         except Exception as exc:
             from .runtime_controls import ConfigurationConflict
-            detail=exc.configuration_conflict if isinstance(exc,ConfigurationConflict) else {}
+            from .task_continuity import TaskRefusal
+            detail=exc.configuration_conflict if isinstance(exc,ConfigurationConflict) else exc.data if isinstance(exc,TaskRefusal) else {}
             publish({"op": "reply", "id": identity, "error": f"{type(exc).__name__}: {exc}",**detail})
 
     async def read(self):

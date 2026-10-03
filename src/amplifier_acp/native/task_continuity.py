@@ -14,6 +14,12 @@ import time
 import uuid
 
 
+class TaskRefusal(ValueError):
+    def __init__(self, message):
+        super().__init__(message)
+        self.data = {"executed": False, "replayed": False, "reason": "task-preflight-refused"}
+
+
 class TaskController:
     def __init__(self, controls):
         self.controls = controls
@@ -29,7 +35,7 @@ class TaskController:
 
     def snapshot(self):
         getter = self.coordinator.get_capability("web.continuity.status")
-        return {"task": copy.deepcopy(self.record()), "history": copy.deepcopy(self.history), "goal": copy.deepcopy(self.coordinator.session_state.get("goal")),
+        return {"task": copy.deepcopy(self.record()), "historyCount": len(self.history), "goal": copy.deepcopy(self.coordinator.session_state.get("goal")),
                 "continuity": getter() if getter else {"supported": False},
                 "continuationSupported": bool(self.coordinator.get_capability("live.continuation_guard_supported"))}
 
@@ -83,66 +89,84 @@ class TaskController:
     async def perform(self, operation, args):
         if operation == "task.get":
             return self.snapshot()
+        if operation == "task.history":
+            limit = args.get("limit", 25)
+            before = args.get("before", len(self.history))
+            if type(limit) is not int or not 1 <= limit <= 50 or type(before) is not int or not 0 <= before <= len(self.history):
+                raise TaskRefusal("A bounded task history window is required")
+            start = max(0, before - limit)
+            items = copy.deepcopy(list(reversed(self.history[start:before])))
+            if len(json.dumps(items, ensure_ascii=False).encode()) > 131072:
+                raise TaskRefusal("Task history page exceeds 128 KiB; request a smaller page")
+            return {"items": items, "nextBefore": start if start else None, "historyCount": len(self.history)}
+        if operation == "task.receipt":
+            identity = args.get("commandId")
+            if not isinstance(identity, str) or not identity or len(identity) > 200:
+                raise TaskRefusal("An exact bounded task command identity is required")
+            receipt = self.receipts.get(identity)
+            return {"available": receipt is not None, "commandId": identity,
+                    "receipt": {"state": "succeeded", **copy.deepcopy(receipt)} if receipt else None,
+                    "replayed": False}
         identity = args.get("commandId")
         if not isinstance(identity, str) or not identity:
-            raise ValueError("Task mutations require a stable commandId")
+            raise TaskRefusal("Task mutations require a stable commandId")
         fingerprint = hashlib.sha256(json.dumps([operation, args], sort_keys=True).encode()).hexdigest()
         if identity in self.receipts:
             receipt = self.receipts[identity]
             if receipt["fingerprint"] != fingerprint:
-                raise ValueError("This task command ID already has different contents")
+                raise TaskRefusal("This task command ID already has different contents")
             return {**self.snapshot(), "duplicate": True}
         previous = self.record()
         revision = previous["revision"] if previous else 0
         if type(args.get("expectedRevision")) is not int or args["expectedRevision"] != revision:
-            raise ValueError("The task revision changed; inspect the current task before applying this change")
+            raise TaskRefusal("The task revision changed; inspect the current task before applying this change")
         if operation == "task.create":
             if previous and previous["status"] != "completed":
-                raise ValueError("An unfinished task already exists; update it instead")
+                raise TaskRefusal("An unfinished task already exists; update it instead")
             if not self.controls.capabilities()["goals"] or not self.coordinator.get_capability("live.continuation_guard_supported"):
-                raise ValueError("This orchestrator needs durable task continuation guard support")
+                raise TaskRefusal("This orchestrator needs durable task continuation guard support")
             task = {"id": str(uuid.uuid4()), "createdAt": time.time(), "revision": revision,
                     "appliedRevision": None, "status": "active", "constraints": [], "corrections": [],
                     "questionIds": [], "operationIds": [], "artifactRefs": [], "completionEvidence": [], "goalState": {}}
         elif previous is None:
-            raise ValueError("Create a durable task first")
+            raise TaskRefusal("Create a durable task first")
         else:
             task = copy.deepcopy(previous)
         if task["status"] == "completed" and operation != "task.create":
-            raise ValueError("This task is complete; create a new objective explicitly")
+            raise TaskRefusal("This task is complete; create a new objective explicitly")
         if operation in {"task.create", "task.update"}:
             for key in ("objective", "constraints", "questionIds", "operationIds", "artifactRefs", "maxTurns"):
                 if key in args:
                     task[key] = copy.deepcopy(args[key])
             if not isinstance(task.get("objective"), str) or not task["objective"].strip():
-                raise ValueError("Provide a nonempty objective")
+                raise TaskRefusal("Provide a nonempty objective")
             for key in ("constraints", "questionIds", "operationIds", "artifactRefs"):
                 if not isinstance(task[key], list) or any(not isinstance(value, str) or not value.strip() for value in task[key]):
-                    raise ValueError(f"{key} must contain nonempty text references")
+                    raise TaskRefusal(f"{key} must contain nonempty text references")
             if task.get("maxTurns") is not None and (type(task["maxTurns"]) is not int or task["maxTurns"] < 1):
-                raise ValueError("maxTurns must be a positive integer or null")
+                raise TaskRefusal("maxTurns must be a positive integer or null")
             if args.get("correction"):
                 task["corrections"].append({"text": args["correction"], "revision": revision + 1, "at": time.time(), "origin": args.get("origin")})
         elif operation == "task.pause":
             task["status"] = "paused"
         elif operation == "task.resume":
             if task["status"] not in {"paused", "blocked"}:
-                raise ValueError("Only a paused or blocked task can resume")
+                raise TaskRefusal("Only a paused or blocked task can resume")
             task.update(status="active", blockedReason=None)
         elif operation == "task.block":
             if not isinstance(args.get("reason"), str) or not args["reason"].strip():
-                raise ValueError("Explain what blocks the task")
+                raise TaskRefusal("Explain what blocks the task")
             task.update(status="blocked", blockedReason=args["reason"])
         elif operation == "task.complete":
             if args.get("condition") != task["objective"]:
-                raise ValueError("Completion must refer to the exact current objective")
+                raise TaskRefusal("Completion must refer to the exact current objective")
             if not isinstance(args.get("evidence"), list) or not args["evidence"] or any(not isinstance(e, str) or not e.strip() for e in args["evidence"]):
-                raise ValueError("Completion requires explicit evidence for the current objective")
+                raise TaskRefusal("Completion requires explicit evidence for the current objective")
             task.update(status="completed", blockedReason=None, completionEvidence=copy.deepcopy(args["evidence"]), completedAt=time.time())
         else:
-            raise ValueError("Unknown task operation")
+            raise TaskRefusal("Unknown task operation")
         if task["status"] == "active" and not self.coordinator.get_capability("live.continuation_guard_supported"):
-            raise ValueError("This orchestrator needs durable task continuation guard support")
+            raise TaskRefusal("This orchestrator needs durable task continuation guard support")
         task.update(revision=revision + 1, updatedAt=time.time())
         old_goal = copy.deepcopy(self.coordinator.session_state.get("goal"))
         old_history = copy.deepcopy(self.history)
@@ -155,7 +179,7 @@ class TaskController:
                 task["goalState"] = copy.deepcopy(goal)
             # A paused task must stop even while an older goal evaluation awaits.
             self.coordinator.session_state["goal"] = None
-        self.receipts[identity] = {"fingerprint": fingerprint, "revision": task["revision"]}
+        self.receipts[identity] = {"fingerprint": fingerprint, "revision": task["revision"], "operation": operation, "taskId": task["id"]}
         # Receipts live with existing control state; no second continuation loop.
         try:
             if not getattr(self.controls.runtime, "generation", None):

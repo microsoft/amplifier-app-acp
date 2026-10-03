@@ -744,7 +744,7 @@ NATIVE_CONTROLS=['session.relocate','session.relocation.inspect','configuration.
     'voice.transcript.record','mode.list','mode.set','mode.clear','native.status','native.compact','history.snapshot','history.revise','bundle.preview','bundle.switch',
     'session.naming','steer.submit','question.submit','schedule.submit','observation.submit','memory.consolidate','operations.submit','operations.cancel','operations.write',
     'kernels.create','kernels.execute','kernels.interrupt','kernels.reset','kernels.close','capacity.get','capacity.set','capacity.quota',
-    'task.get','task.create','task.update','task.pause','task.resume','task.block','task.complete']
+    'task.get','task.receipt','task.history','task.create','task.update','task.pause','task.resume','task.block','task.complete']
 
 def main():
     parser=argparse.ArgumentParser(description='Modular Amplifier ACP v1 agent')
