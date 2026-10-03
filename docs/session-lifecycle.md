@@ -141,3 +141,20 @@ ownership are both required; an index snapshot alone is never an idle proof.
 It contains no arbitrary provider exception payload. Starting a newer generation
 marks an older failure non-current; it is retained as evidence. Older sources
 without a recorded descriptor report no inferred diagnosis.
+
+
+### Guarded age retention hide
+
+`sessionLifecycle.retention:{version:1,preservesCanonical:true}` negotiates
+`retention.hide {commandId,expectedHistoryRevision,modifiedBefore,descendants}`.
+The cutoff is an explicit past Unix timestamp. The existing durable lifecycle
+receipt binds the whole request. Under the real source and known-descendant
+Foundation writer leases, the owner refuses new metadata/transcript/event-file
+activity at or after the cutoff, unresolved native creation/rewrite journals,
+changed history, or active native ownership. No transcript/event body is loaded
+for this age check. It then writes the existing preserve-history discovery
+tombstone only. The result records the cutoff, observed latest activity, held
+family coverage, and `canonicalFilesDeleted:0`. Exact receipt recovery never
+repeats an uncertain effect. This is neither legacy presentation-file purge nor
+permanent managed-chat deletion. Host selection/dependent-owner guards are
+separate required authority; the native method never claims those by itself.

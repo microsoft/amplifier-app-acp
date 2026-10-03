@@ -141,7 +141,7 @@ class Lifecycle:
         if len(json.dumps(selected).encode())>32768:raise ValueError('Native metadata inspection exceeds its bound')
         return {'sessionId':self.identity,'historyRevision':result['revision'],'metadata':selected,'diagnostics':result['diagnostics'],'location':state(self.server,self.identity,self.cwd),'state':lifecycle_state(self.server,self.identity,self.cwd),'preserved':PRESERVED,'failure':failure(self.server,self.identity),'forkBundles':[{'id':key,'name':key,'revision':fingerprint([key,value])} for key,value in self.fork_bundles().items()]}
     def perform(self,operation,args):
-        fields={'inspect':set(),'receipt':{'commandId'},'export.read':{'snapshotId','offset','limit'},'delete.preview':set(),'fork':{'commandId','targetSessionId','expectedHistoryRevision','throughMessageId','mode','bundle','bundleRevision','resetModel','descendants'},'export':{'commandId','expectedHistoryRevision','format','scope','fromMessageId','throughMessageId','minimal'},'delete':{'commandId','expectedHistoryRevision','confirmationToken'},'delete.standard':{'commandId','expectedHistoryRevision'},'restore':{'commandId','expectedHistoryRevision'}}
+        fields={'inspect':set(),'receipt':{'commandId'},'export.read':{'snapshotId','offset','limit'},'delete.preview':set(),'fork':{'commandId','targetSessionId','expectedHistoryRevision','throughMessageId','mode','bundle','bundleRevision','resetModel','descendants'},'export':{'commandId','expectedHistoryRevision','format','scope','fromMessageId','throughMessageId','minimal'},'delete':{'commandId','expectedHistoryRevision','confirmationToken'},'delete.standard':{'commandId','expectedHistoryRevision'},'restore':{'commandId','expectedHistoryRevision'},'retention.hide':{'commandId','expectedHistoryRevision','modifiedBefore','descendants'}}
         if operation not in fields or not isinstance(args,dict) or set(args)-fields[operation]:raise ValueError('Unsupported lifecycle operation or arguments')
         if len(json.dumps(args).encode())>32768:raise ValueError('Lifecycle arguments exceed their bound')
         if operation=='inspect':return self.inspect()
@@ -152,20 +152,21 @@ class Lifecycle:
         if lock.is_symlink():raise ValueError('Lifecycle lock cannot be a symlink')
         with FileLock(str(lock),timeout=0):
             if operation=='delete.preview':return self.preview()
-            if operation not in {'fork','export','delete','delete.standard','restore'}:raise ValueError('Unknown native lifecycle operation')
+            if operation not in {'fork','export','delete','delete.standard','restore','retention.hide'}:raise ValueError('Unknown native lifecycle operation')
             command=args.get('commandId');previous=self.saved(command);signature=fingerprint({'operation':operation,'args':args})
             if previous:
                 if previous['signature']!=signature:raise ValueError('Lifecycle commandId conflicts with its original request')
                 return {**previous.get('result',{}),'receipt':previous,'replayed':False}
             from .lifecycle_family import own_descendants
             from contextlib import nullcontext
-            with self.own(), (own_descendants(self,args.get('descendants',[])) if operation=='fork' else nullcontext()) as family:
+            with self.own(), (own_descendants(self,args.get('descendants',[])) if operation in {'fork','retention.hide'} else nullcontext()) as family:
                 inspected=self.inspect()
                 if inspected['location']['blocked']:raise ValueError('Resolve native execution relocation before lifecycle changes')
                 if args.get('expectedHistoryRevision')!=inspected['historyRevision']:raise ValueError('Native history changed; review a fresh revision')
                 if operation=='fork':prepared=self.prepare_fork(args)
                 elif operation=='export':prepared=self.prepare_export(args)
                 elif operation=='delete':prepared=self.validate_delete(args,inspected)
+                elif operation=='retention.hide':prepared=self.validate_retention(args,inspected)
                 else:prepared=None
                 receipt={'commandId':command,'operation':operation,'status':'running','createdAt':time.time(),'replayed':False}
                 self.save(command,signature,receipt)
@@ -173,13 +174,41 @@ class Lifecycle:
                     if operation=='fork':result={**self.fork(args,prepared),'familyGuard':family}
                     elif operation=='export':result=self.export(args,prepared)
                     else:
-                        value={'sessionId':self.identity,'historyCwd':self.cwd,'deleted':operation in {'delete','delete.standard'},'commandId':command,'updatedAt':time.time()}
+                        value={'sessionId':self.identity,'historyCwd':self.cwd,'deleted':operation in {'delete','delete.standard','retention.hide'},'commandId':command,'updatedAt':time.time()}
                         write(self.app/'lifecycle.json',value)
-                        result={**value,'preserved':PRESERVED,'historyRevision':inspected['historyRevision']}
+                        result={**value,'preserved':PRESERVED,'historyRevision':inspected['historyRevision'],**({'retention':prepared,'familyGuard':family} if operation=='retention.hide' else {})}
                     receipt={**receipt,'status':'completed','result':result};self.save(command,signature,receipt)
                     return {**result,'receipt':receipt}
                 except BaseException:
                     self.save(command,signature,{**receipt,'status':'unknown'});raise
+    def validate_retention(self,args,inspected):
+        import math
+        from datetime import datetime
+        cutoff=args.get('modifiedBefore')
+        if type(cutoff) not in (int,float) or not math.isfinite(cutoff) or not 0<cutoff<time.time():raise ValueError('Explicit past retention cutoff required')
+        guard_copy_source(self.server,self.identity)
+        metadata=record(self.directory/'metadata.json')
+        if metadata.get('session_id')!=self.identity:raise ValueError('Canonical source metadata identity is unavailable or different')
+        latest=0
+        for name in ('metadata.json','transcript.jsonl','events.jsonl'):
+            path=self.directory/name
+            if not path.exists():
+                if name!='events.jsonl':raise ValueError('Required native retention source is unavailable')
+                continue
+            info=path.lstat()
+            if not stat.S_ISREG(info.st_mode) or path.is_symlink():raise ValueError('Native retention source must be a regular file')
+            latest=max(latest,info.st_mtime)
+        for field in ('created','created_at','updated_at','modified_at'):
+            value=metadata.get(field)
+            if value is None:continue
+            if isinstance(value,str):
+                try:value=datetime.fromisoformat(value.replace('Z','+00:00')).timestamp()
+                except ValueError:raise ValueError('Native activity timestamp is unavailable') from None
+            if type(value) not in (int,float) or not math.isfinite(value) or value<0:raise ValueError('Native activity timestamp is unavailable')
+            latest=max(latest,value)
+        if latest>=cutoff:raise ValueError('Native activity is newer than the reviewed retention cutoff')
+        return {'modifiedBefore':cutoff,'latestObservedActivity':latest,'canonicalFilesDeleted':0,'behavior':'remove-from-discovery'}
+
     def preview(self):
         inspected=self.inspect();token=uuid.uuid4().hex
         value={'confirmationToken':token,'sessionId':self.identity,'historyCwd':self.cwd,'historyRevision':inspected['historyRevision'],'expiresAt':time.time()+600,'summary':{'behavior':'remove-from-discovery','canonicalFilesDeleted':0},'preserved':PRESERVED}

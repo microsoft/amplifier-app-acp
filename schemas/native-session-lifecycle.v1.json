@@ -27,7 +27,8 @@
         "export.read",
         "delete.preview",
         "delete",
-        "restore"
+        "restore",
+        "retention.hide"
       ]
     },
     "args": {
@@ -115,6 +116,62 @@
           }
         }
       }
+    },
+    "retentionArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commandId",
+        "expectedHistoryRevision",
+        "modifiedBefore",
+        "descendants"
+      ],
+      "properties": {
+        "commandId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expectedHistoryRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "descendants": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "cwd",
+              "parentSessionId"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "sessionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 221
+              },
+              "parentSessionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 221
+              },
+              "cwd": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              }
+            }
+          }
+        },
+        "modifiedBefore": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
     }
   },
   "allOf": [
@@ -130,6 +187,22 @@
         "properties": {
           "args": {
             "$ref": "#/$defs/forkArgs"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "retention.hide"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "args": {
+            "$ref": "#/$defs/retentionArgs"
           }
         }
       }
