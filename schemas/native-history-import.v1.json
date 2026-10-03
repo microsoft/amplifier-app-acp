@@ -1,0 +1,229 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsoft.github.io/amplifier-app-acp/native-history-import.v1.json",
+  "title": "Launcher-authorized staged inert history import v1",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "history.import.begin"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "commandId",
+            "format",
+            "bytes",
+            "sha256"
+          ],
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "format": {
+              "enum": [
+                "json",
+                "jsonl"
+              ]
+            },
+            "bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1048576
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "bundle": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "history.import.chunk"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "commandId",
+            "uploadId",
+            "offset",
+            "contentBase64"
+          ],
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "uploadId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1048576
+            },
+            "contentBase64": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 21848
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "history.import.preview"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "commandId",
+            "uploadId"
+          ],
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "uploadId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "history.import.commit"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "commandId",
+            "previewHash"
+          ],
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "previewHash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "history.import.receipt"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "commandId"
+          ],
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -43,7 +43,10 @@ def guard_start(server,identity,cwd):
     path=location(home(server),identity)/'history-fork.json'
     fork=record(path) if path.exists() else None
     if fork and fork.get('state')!='committed':raise ValueError('History fork creation is unresolved; inspect its original receipt. No work replayed.')
-    return fork.get('bundle') if fork else None
+    import_path=location(home(server),identity)/'history-import.json'
+    imported=record(import_path) if import_path.exists() else None
+    if imported and imported.get('state')!='committed':raise ValueError('History import creation is unresolved; inspect its original receipt. No work replayed.')
+    return imported.get('bundle') if imported else fork.get('bundle') if fork else None
 
 def message_id(row,position):
     digest=hashlib.sha256((str(position)+':'+json.dumps(row,sort_keys=True,separators=(',',':'))).encode()).hexdigest()[:24]
