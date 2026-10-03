@@ -72,6 +72,15 @@ class Administration:
    raise
   finally:self.effects.discard(task);self.requests.discard(request);self.lifecycle.leave(ticket)
  async def execute(self,workspace,operation,args):
+  if operation=='voice.configuration':
+   if args:raise ValueError('Voice configuration reads take no client arguments.')
+   from .native.voice_admin import configuration
+   from .native.preferences import SettingsStore
+   from .maintenance_gate import native_home
+   # Exact passive read: no setup/provider initialization and no writer-gate
+   # reentry while this owner's coordinator holds a native snapshot lease.
+   store=SettingsStore(self.config.get('appHome') or '.',shared_home=native_home(self.config))
+   return configuration(store,workspace,credential_access=self.config.get('adminVoiceCredentials') is True)
   if operation in MAINTENANCE_OPERATIONS:
    if not hasattr(self,'maintenance'):self.maintenance=__import__('amplifier_acp.maintenance',fromlist=['Maintenance']).Maintenance(self)
    return await self.maintenance.perform(workspace,operation,args)

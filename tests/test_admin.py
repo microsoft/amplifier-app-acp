@@ -60,7 +60,10 @@ async def test_voice_admin_existing_key_store_private_boundary_and_restart(tmp_p
  home=tmp_path/'home';home.mkdir();workspace=tmp_path/'workspace';workspace.mkdir();app=tmp_path/'app';config=tmp_path/'agent.json'
  values={'home':str(home),'appHome':str(app),'adminWorkspaceRoots':[str(workspace)],'workerCommand':['/no/worker/allowed']};config.write_text(json.dumps(values))
  client=await Client.launch(config)
- async def initialize():await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
+ async def initialize():
+  response=await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
+  voice=response['result']['agentCapabilities']['_meta']['amplifier.dev/native']['admin']['voice']
+  assert voice=={'version':1,'configuration':True,'credentials':values.get('adminVoiceCredentials') is True}
  async def admin(op,args={}):return await client.request('_amplifier/admin',{'cwd':str(workspace),'operation':op,'args':args})
  try:
   await initialize()
@@ -85,3 +88,36 @@ async def test_voice_admin_existing_key_store_private_boundary_and_restart(tmp_p
  try:
   await initialize();assert (await admin('voice.credential'))['result']['apiKey']=='synthetic-voice-key-not-an-account'
  finally:await client.close()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('enabled,present',[(False,False),(False,True),(True,False),(True,True)])
+async def test_voice_metadata_authorization_presence_and_held_passive_read(tmp_path,monkeypatch,enabled,present):
+ from amplifier_acp.admin import Administration
+ from amplifier_acp.maintenance_gate import Gate
+ from amplifier_acp.native import voice_admin
+ from test_admin_lifecycle import CONTEXT
+ monkeypatch.delenv('OPENAI_API_KEY',raising=False);monkeypatch.delenv('AMPLIFIER_VOICE_API_KEY',raising=False)
+ home=tmp_path/'home';home.mkdir();workspace=tmp_path/'workspace';workspace.mkdir();app=tmp_path/'app'
+ (home/'settings.yaml').write_text('voice:\n  credential_source: private\n  voice: fixture-name\n')
+ if present:(home/'keys.env').write_text('AMPLIFIER_VOICE_API_KEY=synthetic-fixture-no-account\n')
+ if not enabled:
+  monkeypatch.setenv('OPENAI_API_KEY','synthetic-present-but-not-authorized')
+  def forbidden(*args):raise AssertionError('Disabled configuration must not read the secret store')
+  monkeypatch.setattr(voice_admin,'_load_keys',forbidden)
+ owner=Administration({'home':str(home),'appHome':str(app),'adminWorkspaceRoots':[str(workspace)],'adminVoiceCredentials':enabled})
+ try:
+  assert owner.lifecycle.perform('acquire',CONTEXT)['acquired']
+  with Gate(owner.config,exclusive=True):
+   result=await owner.perform(str(workspace),'voice.configuration',{})
+  assert result['available'] is (enabled and present)
+  assert result['credentialAccess']==('enabled' if enabled else 'disabled')
+  assert result['configurable'] is enabled and result['voice']=='fixture-name'
+  assert result['privateKeyAvailable'] is (present if enabled else None)
+  assert result['environmentAvailable'] is (False if enabled else None)
+  assert bool(result['reason']) is (not enabled or not present)
+  assert 'synthetic-' not in json.dumps(result)
+  assert owner.setup is None and not app.exists() and not (home/'projects').exists()
+  with pytest.raises(ValueError):await owner.perform(str(workspace),'voice.credential',{})
+  with pytest.raises(ValueError):await owner.perform(str(workspace),'voice.configure',{'source':'private','apiKey':'must-not-persist'})
+  if present:assert (home/'keys.env').read_text()=='AMPLIFIER_VOICE_API_KEY=synthetic-fixture-no-account\n'
+ finally:await owner.close()

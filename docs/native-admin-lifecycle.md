@@ -42,3 +42,5 @@ Each native transfer request now holds the same shared admin writer gate for its
 whole lifetime, so the one native-home exclusive admin participant also detects
 transfer work in another cooperating ACP process. Its separate transfer intake
 fence must be acquired first; it does not take another exclusive admin gate.
+
+`voice.configuration` is an explicit passive read on the held owner, including during its selected snapshot lease. It uses SettingsStore directly and cannot initialize a provider, configure credentials, or mutate native files. When credential access is disabled, it does not load key files or inspect credential environment; presence fields are null (uninspected), available/configurable are false. Another admin process cannot borrow this lease. `voice.credential` and `voice.configure` remain excluded from held reads.

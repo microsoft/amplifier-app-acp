@@ -15,10 +15,23 @@ def perform(setup,workspace,operation,args):
         if source=='private' and value:setup._keys({PRIVATE_KEY:value})
         setup.store.update(workspace,'global',lambda settings:settings.setdefault('voice',{}).update(credential_source=source))
     elif args:raise ValueError('Voice configuration and credential reads take no client arguments.')
-    settings=setup.store.read(workspace)
-    source=settings.get('voice',{}).get('credential_source','environment')
-    if source not in {'environment','private'}:raise ValueError('Invalid saved voice credential source; settings were preserved.')
-    key=os.environ.get(PRIVATE_KEY if source=='private' else 'OPENAI_API_KEY')
-    if operation=='voice.credential':return {'apiKey':key or None,'source':source,'available':bool(key)}
+    if operation=='voice.credential':
+        source=setup.store.read(workspace).get('voice',{}).get('credential_source','environment')
+        if source not in {'environment','private'}:raise ValueError('Invalid saved voice credential source; settings were preserved.')
+        key=os.environ.get(PRIVATE_KEY if source=='private' else 'OPENAI_API_KEY')
+        return {'apiKey':key or None,'source':source,'available':bool(key)}
+    return configuration(setup.store,workspace,credential_access=True)
+
+
+def configuration(store,workspace,*,credential_access):
+    """Passive settings metadata; unavailable authorization never inspects secrets."""
+    settings=store.read(workspace)
     voice=settings.get('voice',{})
-    return {'preferredModel':voice.get('preferred_model','gpt-live-1'),'voice':voice.get('voice','marin'),'interruptions':voice.get('interruptions',True),'available':bool(key),'source':source,'environmentAvailable':bool(os.environ.get('OPENAI_API_KEY')),'privateKeyAvailable':bool(os.environ.get(PRIVATE_KEY)),'reason':None if key else 'Add an OpenAI API key in Voice settings to enable calls and previews.'}
+    source=voice.get('credential_source','environment')
+    if source not in {'environment','private'}:raise ValueError('Invalid saved voice credential source; settings were preserved.')
+    result={'preferredModel':voice.get('preferred_model','gpt-live-1'),'voice':voice.get('voice','marin'),'interruptions':voice.get('interruptions',True),'source':source,'credentialAccess':'enabled' if credential_access else 'disabled','configurable':credential_access}
+    if not credential_access:
+        return {**result,'available':False,'environmentAvailable':None,'privateKeyAvailable':None,'reason':'Voice credential access is disabled for this installation.'}
+    _load_keys(store.shared_home/'keys.env')
+    key=os.environ.get(PRIVATE_KEY if source=='private' else 'OPENAI_API_KEY')
+    return {**result,'available':bool(key),'environmentAvailable':bool(os.environ.get('OPENAI_API_KEY')),'privateKeyAvailable':bool(os.environ.get(PRIVATE_KEY)),'reason':None if key else 'Add an OpenAI API key in Voice settings to enable calls and previews.'}
