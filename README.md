@@ -8,6 +8,11 @@ steering, naming, approvals, native storage and execution ownership.
 This package does **not** use `microsoft/amplifier-agent`, import Unified's
 `AppService`, or substitute an echo engine. The fixture provider is test-only.
 
+Start with the [native agent vision](docs/VISION.md) and
+[version 1 boundary contract](contracts/native-agent.v1.md) for ownership,
+consumer obligations, executable checks and current limitations. These link
+the upstream protocol and approved family contracts rather than redefining them.
+
 ## Run
 
 ```sh
