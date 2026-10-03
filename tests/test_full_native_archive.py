@@ -25,6 +25,10 @@ async def test_cold_full_native_captures_all_histories_generation_authority_and_
     (app/'updates/worker-leases').mkdir();(app/'updates/worker-leases/stale.json').write_text('{"pid":1}')
     credentials=home/'keys.env';credentials.write_bytes(b'SYNTHETIC_NATIVE_BACKUP_KEY=fixture-only\n')
     before={p:p.read_bytes() for p in [old/'events.jsonl',old/'metadata.json',release/'runtime.lock',credentials]}
+    from amplifier_acp.bundle_commands import BundleCommands
+    commands=BundleCommands(config,str(cwd))
+    async def fixture_saved(effect):return {'saved':{'name':'retained-original'}}
+    await commands.perform('bundle.save',{'commandId':'archived-command'},fixture_saved)
     try:
         from amplifier_foundation.session.shared_state import SharedSessionStore
         writer=SharedSessionStore(cwd,'legacy-root').acquire(app='owned-backup-fixture')
@@ -58,6 +62,11 @@ async def test_cold_full_native_captures_all_histories_generation_authority_and_
             assert tar.extractfile('native-home/projects/-no-longer-existing/sessions/old-child/events.jsonl').read()==before[old/'events.jsonl']
             assert tar.extractfile('app-home/updates/releases/'+('a'*32)+'/runtime.lock').read()==before[release/'runtime.lock']
             assert tar.extractfile('native-home/keys.env').read()==before[credentials]
+            image=tmp_path/'bundle-command-image.sqlite3';image.write_bytes(tar.extractfile('app-home/bundles/command-receipts.sqlite3').read())
+            with sqlite3.connect(image) as receipts:
+                body=json.loads(receipts.execute('SELECT body FROM commands WHERE id=?',('archived-command',)).fetchone()[0])
+                assert body==commands.receipt('archived-command')
+                assert receipts.execute('PRAGMA quick_check').fetchone()==('ok',)
             assert any(name.startswith('checkpoint/') and name.endswith('/checkpoint.json') for name in tar.getnames())
             assert not any('worker-leases' in name or created['planId'] in name or artifact['artifactId'] in name for name in tar.getnames()[2:])
             manifest=tmp_path/'manifest.sqlite3';manifest.write_bytes(tar.extractfile('native-manifest.sqlite3').read())

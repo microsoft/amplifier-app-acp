@@ -293,3 +293,10 @@ The lock records exact resolved Git commits for qualification and rollback; the
 source policy remains moving main. No editable sibling checkout is required.
 Refresh all Foundation distributions together when updating their shared Git
 source (`amplifier-foundation`, hooks-session-naming, and tool-delegate).
+
+### Exact bundle command recovery
+
+Negotiated `bundleCommands` v1 adds native-owned exact receipts for bundle save,
+export, default selection and separate session activation. Receipt reads are
+passive and preserve an independent successful save when activation needs a model
+choice or has an unknown outcome. See [wire and outcome contract](docs/bundle-commands.md).

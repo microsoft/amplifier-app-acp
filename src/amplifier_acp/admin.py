@@ -17,7 +17,7 @@ OPERATIONS=GENERATION_OPERATIONS | MAINTENANCE_OPERATIONS | HISTORY_IMPORT_OPERA
  'providers.save','providers.remove','providers.move','providers.reorder','providers.finishSetup','providers.login','providers.loginStatus','providers.loginCancel',
  'routing.list','routing.show','routing.save','routing.use','modules.list','modules.save','modules.remove','modules.validate',
  'sources.list','sources.save','sources.remove','sources.validate','bundles.list','bundles.add','bundles.remove','bundles.toggle',
- 'bundles.reorder','bundles.move','bundle.discover','bundle.export','bundle.save','bundle.default','configuration.defaults'}
+ 'bundles.reorder','bundles.move','bundle.discover','bundle.export','bundle.save','bundle.default','bundle.receipt','configuration.defaults'}
 
 class Administration:
  def __init__(self,config,on_idle=None):
@@ -80,6 +80,10 @@ class Administration:
    raise
   finally:self.effects.discard(task);self.requests.discard(request);self.lifecycle.leave(ticket)
  async def execute(self,workspace,operation,args):
+  if operation=='bundle.receipt':
+   from .bundle_commands import BundleCommands
+   if set(args)!={'commandId'}:raise ValueError('Exact bundle receipt commandId required')
+   return {'receipt':BundleCommands(self.config,workspace).receipt(args['commandId'])}
   if operation in PERMISSION_OPERATIONS:
    from .permissions import Permissions
    from .maintenance_gate import Gate
@@ -112,7 +116,11 @@ class Administration:
    return await self.maintenance.perform(workspace,operation,args)
   from .maintenance_gate import Gate
   with Gate(self.config):
-   try:return await self.authorized(workspace,operation,args)
+   try:
+    from .bundle_commands import ADMIN_OPERATIONS,BundleCommands
+    if operation in ADMIN_OPERATIONS and 'commandId' in args:
+     return await BundleCommands(self.config,workspace).perform(operation,args,lambda effect:self.authorized(workspace,operation,args,effect=effect))
+    return await self.authorized(workspace,operation,args)
    finally:
     # Interactive sign-in outlives its initial request and can later commit
     # settings. Retain it even if its initial presentation callback failed.
@@ -128,7 +136,7 @@ class Administration:
         release_all(gate)
        self.lifecycle.maybe_idle()
       task.add_done_callback(release)
- async def authorized(self,workspace,operation,args):
+ async def authorized(self,workspace,operation,args,*,effect=lambda:None):
   if operation in GENERATION_OPERATIONS:
    self.initialize()
    from .generations import Generations
@@ -155,6 +163,7 @@ class Administration:
     def update(settings):
      if bundle:settings.setdefault('bundle',{})['active']=bundle.strip()
      else:settings.get('bundle',{}).pop('active',None)
+    effect()
     if scope=='app':
      from .native.shared_settings import update_settings
      update_settings(self.home/'admin-settings.yaml',lambda settings:settings.setdefault('bundle',{}).update(active=bundle.strip() if bundle else None))
@@ -163,7 +172,7 @@ class Administration:
     result={'bundleDefaults':defaults(self.home,workspace,self.app_bundle())}
    else:
     # Session export must supply the already-authorized public mount plan, not invent one.
-    result=await self.bundles.perform(operation,values,effective_config=args.get('effectiveConfig'),root_bundle=args.get('rootBundle'),provenance=args.get('provenance'),resources=args.get('resources'))
+    result=await self.bundles.perform(operation,values,effective_config=args.get('effectiveConfig'),root_bundle=args.get('rootBundle'),provenance=args.get('provenance'),resources=args.get('resources'),effect=effect)
     if operation=='bundles.list':
      from .native.bundle_selection import defaults
      result['bundleDefaults']=defaults(self.home,workspace,self.app_bundle())

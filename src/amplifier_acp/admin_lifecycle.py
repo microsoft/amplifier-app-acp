@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio,copy,os,uuid
 from .maintenance_gate import Gate,MaintenanceBusy
 
-READS={'maintenance.appReset.inspect','maintenance.capture.inspect','maintenance.cache.page','maintenance.artifact.inspect','maintenance.restore.inspect','permissions.get','permissions.receipt','maintenance.restore.manifest','voice.preferences.receipt','history.import.receipt','maintenance.archive.manifest','voice.configuration','maintenance.receipt','maintenance.artifact.read','maintenance.lease','generations.receipt','generations.inspect','generations.current'}
+READS={'bundle.receipt','maintenance.appReset.inspect','maintenance.capture.inspect','maintenance.cache.page','maintenance.artifact.inspect','maintenance.restore.inspect','permissions.get','permissions.receipt','maintenance.restore.manifest','voice.preferences.receipt','history.import.receipt','maintenance.archive.manifest','voice.configuration','maintenance.receipt','maintenance.artifact.read','maintenance.lease','generations.receipt','generations.inspect','generations.current'}
 CONTEXT={'fenceId','commandId','purpose','instanceId','dataScope'}
 SERVICE_IDENTITY={'installationId','dataScope','ownerId','instanceId','releaseDigest'}
 

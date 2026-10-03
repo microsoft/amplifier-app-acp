@@ -122,15 +122,19 @@ class BundleTransaction:
 
 async def switch(worker, args):
     """Called under the worker's command lock and Foundation writer ownership."""
-    worker.controls.require_idle()
-    checked, resolved_root = await inspect_bundle(worker.controls, worker.workspace, args['bundle'])
-    expected = getattr(worker, 'bundle_preview', None)
-    if args.get('previewId') and (not expected or expected['previewId'] != args['previewId'] or any(
-            checked[key] != expected[key] for key in ('bundle', 'fingerprint', 'selection'))):
-        raise ValueError('The bundle selection changed. Preview it again before applying.')
-    if not checked['modelCompatible'] and not args.get('resetModel'):
-        worker.bundle_preview = {**checked, 'previewId': str(uuid.uuid4())}
-        return {'requiresModelChoice': True, 'preview': worker.bundle_preview}
+    from ..bundle_commands import BundlePreflightRefusal
+    try:
+        worker.controls.require_idle()
+        checked, resolved_root = await inspect_bundle(worker.controls, worker.workspace, args['bundle'])
+        expected = getattr(worker, 'bundle_preview', None)
+        if args.get('previewId') and (not expected or expected['previewId'] != args['previewId'] or any(
+                checked[key] != expected[key] for key in ('bundle', 'fingerprint', 'selection'))):
+            raise ValueError('The bundle selection changed. Preview it again before applying.')
+        if not checked['modelCompatible'] and not args.get('resetModel'):
+            worker.bundle_preview = {**checked, 'previewId': str(uuid.uuid4())}
+            return {'requiresModelChoice': True, 'preview': worker.bundle_preview}
+    except ValueError as exc:
+        raise BundlePreflightRefusal('Bundle activation preflight refused; no activation was applied') from exc
     await worker.controls.checkpoint()
     old_config = copy.deepcopy(worker.start_config)
     journal = BundleTransaction(worker.home, worker.workspace, worker.runtime.session_id)

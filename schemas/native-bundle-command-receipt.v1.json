@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsoft.github.io/amplifier-acp/schemas/native-bundle-command-receipt.v1.json",
+  "title": "Passive exact bundle command receipt",
+  "type": "object",
+  "required": [
+    "receipt"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "receipt": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/receipt"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "receipt": {
+      "type": "object",
+      "required": [
+        "version",
+        "commandId",
+        "operation",
+        "status",
+        "createdAt",
+        "replayed"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "commandId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "operation": {
+          "enum": [
+            "bundle.save",
+            "bundle.export",
+            "bundle.default",
+            "bundle.switch"
+          ]
+        },
+        "status": {
+          "enum": [
+            "unknown",
+            "refused",
+            "succeeded"
+          ]
+        },
+        "createdAt": {
+          "type": "number",
+          "minimum": 0
+        },
+        "completedAt": {
+          "type": "number",
+          "minimum": 0
+        },
+        "replayed": {
+          "const": false
+        },
+        "executed": {
+          "const": false
+        },
+        "reason": {
+          "const": "bundle-preflight-refused"
+        },
+        "result": {
+          "type": "object",
+          "description": "Exact original public result, at most 524288 UTF-8 JSON bytes. Activation requiresModelChoice=true/applied=false is confirmed unapplied; applied=true means remount returned successfully."
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "succeeded"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "completedAt",
+              "result"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "executed"
+                  ]
+                },
+                {
+                  "required": [
+                    "reason"
+                  ]
+                }
+              ]
+            }
+          },
+          "else": {
+            "not": {
+              "required": [
+                "result"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "refused"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "completedAt",
+              "executed",
+              "reason"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "unknown"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "completedAt"
+                  ]
+                },
+                {
+                  "required": [
+                    "executed"
+                  ]
+                },
+                {
+                  "required": [
+                    "reason"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

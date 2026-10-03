@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microsoft.github.io/amplifier-acp/schemas/native-bundle-command-request.v1.json",
+  "title": "Bundle command and passive receipt extension parameters",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "enum": [
+            "bundle.save",
+            "bundle.export",
+            "bundle.default"
+          ]
+        },
+        "args": {
+          "type": "object",
+          "required": [
+            "commandId"
+          ],
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "cwd",
+        "operation",
+        "args"
+      ],
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "bundle.receipt"
+        },
+        "args": {
+          "type": "object",
+          "required": [
+            "commandId"
+          ],
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "sessionId",
+        "operation",
+        "args"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "bundle.switch"
+        },
+        "args": {
+          "type": "object",
+          "required": [
+            "commandId",
+            "bundle"
+          ],
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "bundle": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "previewId": {
+              "type": "string"
+            },
+            "resetModel": {
+              "type": "boolean"
+            }
+          }
+        },
+        "_meta": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "sessionId",
+        "cwd",
+        "commandId"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "commandId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

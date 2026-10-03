@@ -906,7 +906,8 @@ class Worker:
         except Exception as exc:
             from .runtime_controls import ConfigurationConflict
             from .task_continuity import TaskRefusal
-            detail=exc.configuration_conflict if isinstance(exc,ConfigurationConflict) else exc.data if isinstance(exc,TaskRefusal) else {}
+            from ..bundle_commands import BundlePreflightRefusal
+            detail=exc.configuration_conflict if isinstance(exc,ConfigurationConflict) else exc.data if isinstance(exc,(TaskRefusal,BundlePreflightRefusal)) else {}
             publish({"op": "reply", "id": identity, "error": f"{type(exc).__name__}: {exc}",**detail})
 
     async def read(self):

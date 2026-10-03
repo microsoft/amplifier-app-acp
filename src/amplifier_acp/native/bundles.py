@@ -315,7 +315,7 @@ class BundleManager:
                 raise ValueError("The bundle source changed after browsing. Browse again before adding it.")
         return copy.deepcopy(review)
 
-    async def perform(self, action: str, args: dict, *, effective_config=None, root_bundle=None, provenance=None, resources=None) -> dict:
+    async def perform(self, action: str, args: dict, *, effective_config=None, root_bundle=None, provenance=None, resources=None, effect=lambda:None) -> dict:
         workspace = args.get("workspace") or str(Path.cwd())
         scope = args.get("scope", "global")
         if action == "bundle.discover":
@@ -326,6 +326,9 @@ class BundleManager:
             exported = self.export_document(settings, effective_plan=plan, root_bundle=root_bundle, name=args.get("name", "custom-amplifier"), description=args.get("description", ""), provenance=provenance, resources=resources)
             if action == "bundle.export":
                 return exported
+            if 'commandId' in args:
+                from ..bundle_commands import encoded, MAX_RESULT
+                if len(encoded(exported)) > MAX_RESULT: raise ValueError('Bundle export exceeds receipt limit')
             from .host.config import write_private
             filename = exported["filename"]
             name = filename.removesuffix(".md")
@@ -335,6 +338,7 @@ class BundleManager:
                 existing = next((row for row in entries if row["role"] == "standalone" and row["name"] == name), None)
                 if existing and existing["uri"] != str(target):
                     raise ValueError("That bundle name is already registered to another source.")
+                effect()
                 write_private(target, exported["content"])
                 if existing:
                     existing["enabled"] = True
