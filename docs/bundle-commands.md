@@ -74,6 +74,50 @@ rollback alone does not convert an existing unknown command into a refusal.
 stale previews, concurrent settings edits, retained history and cold exact
 receipt recovery with actual Core/Foundation and no provider calls.
 
+### Candidate composition and model compatibility
+
+`bundle.preview` additionally reports `composition: "snapshot" | "configured"`.
+`appCapabilities` lists only the app overlays actually composed for this target.
+A snapshot is a self-contained saved plan, including the composition present when
+it was exported. Its list is empty because global app overlays are not reapplied.
+An ordinary root continues to receive its configured overlays. Credentials and
+host safety policy continue to apply to either kind; this change does not alter
+snapshot execution semantics or edit its saved declarations.
+
+`modelCompatibility` is a bounded `{status}` object:
+
+| Status | Meaning |
+| --- | --- |
+| `unpinned` | No explicit saved model pin needs carrying forward. |
+| `advertised` | The exact candidate provider instance advertises the pinned model. |
+| `not-advertised` | The candidate's public model list does not contain that pin. |
+| `provider-missing` | The pinned instance is absent or ambiguous in the candidate. |
+| `unverified` | Discovery is unsupported, invalid, unavailable, oversized or timed out. |
+
+`modelCompatible` is true only for `unpinned` and `advertised`. Provider catalogs
+are not universally exhaustive: Azure can return an empty list, LiteLLM describes
+representative models, and other providers filter or cache discovery. Absence is
+therefore not a claim that a model is invalid. It requires an explicit choice or
+`resetModel:true`, rather than silently carrying an unverified pin into the new
+bundle. No automatic fallback or pin removal occurs. A new switch rechecks the
+candidate; the existing exact command receipt always retains its original outcome.
+
+Only the selected candidate provider is prepared in a separate, bounded probe,
+using the already-composed row, effective source and resource base paths. It uses
+the existing public provider setup/schema/materialization and `list_models` APIs,
+never `complete`, `login`, or a session mount. Discovery may use the provider's
+metadata service. The inherited immutable dependency policy still applies.
+Probes are limited to 45 seconds, 1 MiB request, 4 KiB response, and the existing
+1,000-model/512 KiB discovery bound; timeout/cancellation kills and joins the
+isolated process. No candidate import changes the old mounted worker.
+
+`tests/test_bundle_preview_compatibility.py` covers actual ordinary/snapshot
+composition, same-instance removed model, discovery failure, explicit reset,
+canonical byte preservation, cold original receipt reads and bounded process
+cleanup without inference. `tests/test_bundle_commands.py` retains the distinct
+instance and unknown/no-replay cases. These are source/installed native fixtures,
+not browser, live-account or deployed-runtime acceptance.
+
 ## Storage, backup and scope limits
 
 The native owner stores indexed exact-ID receipts in
