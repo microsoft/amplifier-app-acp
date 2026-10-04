@@ -69,6 +69,40 @@ def identity(row):
     return row.get("instance_id") or row.get("id") or row.get("module")
 
 
+def _redaction_list_identity(row):
+    if not isinstance(row, dict):
+        return None
+    for field, kind in (("instance_id", "instance"), ("id", "instance"),
+                        ("module", "module"), ("name", "name")):
+        key = row.get(field)
+        if isinstance(key, str) and key:
+            return kind, key
+    return None
+
+
+def _redaction_list_previous(row, current, previous):
+    """Match one counterpart, never infer credential ownership from position.
+
+    Retain module instance identities and the CLI's nested-list contract:
+    unique names, or unique public structure in entirely identity-less lists.
+    Ambiguous/missing matches leave no prior value, so redactions refuse below.
+    """
+    key = _redaction_list_identity(row)
+    if key is not None:
+        matches = [item for item in previous if _redaction_list_identity(item) == key]
+        unique = sum(_redaction_list_identity(item) == key for item in current) == 1
+    else:
+        if any(_redaction_list_identity(item) is not None for item in (*current, *previous)):
+            return None
+        def signature(item):
+            # JSON comparison preserves distinctions such as true versus 1.
+            return json.dumps(public_config(item), sort_keys=True, separators=(',', ':'), allow_nan=False)
+        expected = signature(row)
+        matches = [item for item in previous if signature(item) == expected]
+        unique = sum(signature(item) == expected for item in current) == 1
+    return matches[0] if unique and len(matches) == 1 else None
+
+
 def restore_redactions(value, old):
     if value == REDACTED:
         if old is None:
@@ -78,8 +112,8 @@ def restore_redactions(value, old):
         return {key:restore_redactions(item, old.get(key) if isinstance(old, dict) else None)
                 for key,item in value.items()}
     if isinstance(value, list):
-        previous = {identity(row):row for row in old or [] if isinstance(row, dict) and identity(row)} if isinstance(old, list) else {}
-        return [restore_redactions(row, previous.get(identity(row)) if isinstance(row, dict) else None) for row in value]
+        previous = old if isinstance(old, list) else []
+        return [restore_redactions(row, _redaction_list_previous(row, value, previous)) for row in value]
     return copy.deepcopy(value)
 
 
