@@ -47,7 +47,7 @@ Do not point an experiment at another owner's state.
 
 Each loaded native session uses a separate worker subprocess so cwd, provider
 credentials, module imports and native ownership never mix across sessions.
-Settled workers retire after `idleSeconds`; active turns, children, approvals,
+Standalone settled workers retire after `idleSeconds`; active turns, children, approvals,
 bridges and operations prevent retirement. A new explicit prompt remounts from
 native history, without replay. Connection metadata is bounded by `maxSessions`.
 An adapter connection ending cancels its workers; the AHP host must retain its
@@ -180,6 +180,21 @@ rejects new work. The host may then close ACP. A false result or lost transport
 is never permission to kill a possibly active worker. Hosts should hold their
 session admission lock during the handshake. `session/cancel` and explicit
 `session/close` remain user-directed termination paths, separate from idle cleanup.
+
+A private spawning Host can offer
+`clientCapabilities._meta['amplifier.dev/host'].runtimeRetention` as exactly
+`{version:1,owner:'host',lifetime:'connection'}` during `initialize`, with Host
+capability version 1. Native acknowledges the exact tuple plus
+`standaloneIdleSeconds:60` in
+`agentCapabilities._meta['amplifier.dev/native'].lifecycle.runtimeRetention`.
+Only this accepted agreement suppresses the Native autonomous idle timer. The
+Host then owns bounded retention and requests the existing atomic retirement
+handshake. The 60-second marker describes the standalone default; existing
+standalone `idleSeconds` configuration remains effective for unnegotiated peers.
+Missing, unsupported, malformed or extra-key offers receive no retention
+acknowledgement and keep the standalone timer. The agreement is immutable for
+that ACP connection, binds before sessions, and requires no heartbeat. Connection
+loss still cancels workers and preserves the existing no-replay semantics.
 
 Passive history inspection is negotiated by `history.passiveInspect:true`.
 `_amplifier/history/inspect {sessionId,cwd}` returns
