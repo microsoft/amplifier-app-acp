@@ -94,6 +94,43 @@ async def test_lazy_discovery_atomic_standard_commit_effort_and_cold_resume(tmp_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('discovery_fails',[False,True])
+async def test_existing_effort_can_clear_after_model_removes_all_choices(tmp_path,discovery_fails):
+    config,cwd,audit,discovery,catalogs=fixture(tmp_path);client=await Client.launch(config)
+    try:
+        await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{NATIVE:{'version':1}}}})
+        sid=(await client.request('session/new',{'cwd':str(cwd),'mcpServers':[]}))['result']['sessionId']
+        async def control(op,args={}):return await client.request('_amplifier/native',{'sessionId':sid,'operation':op,'args':args})
+        await control('configuration.providerModels',{'provider':'work'})
+        model=choice(updates(client)[-1],'work','work-new')
+        result=await client.request('session/set_config_option',{'sessionId':sid,'configId':'model','value':model})
+        effort=next(row for row in result['result']['configOptions'] if row['id']=='reasoning_effort')
+        thorough=next(row['value'] for row in effort['options'] if row['name']=='thorough')
+        selected=await client.request('session/set_config_option',{'sessionId':sid,'configId':'reasoning_effort','value':thorough})
+        assert 'result' in selected,selected
+        catalogs['work'].write_text(json.dumps([{'id':'work-new','defaults':{'supported_reasoning_efforts':[]}}]))
+        assert 'result' in await control('configuration.providerModels',{'provider':'work','refresh':True})
+        if discovery_fails:
+            catalogs['work'].write_text(json.dumps({'error':True}))
+            assert 'error' in await control('configuration.providerModels',{'provider':'work','refresh':True})
+        option=next(row for row in updates(client)[-1] if row['id']=='reasoning_effort')
+        assert option['currentValue']==thorough
+        assert [row['value'] for row in option['options']]==['__default__',thorough]
+        assert 'not advertised' in option['options'][1]['description']
+        same=await client.request('session/set_config_option',{'sessionId':sid,'configId':'model','value':model})
+        assert 'result' in same,same
+        assert (await control('configuration.providers'))['result']['selection']=={'instance':'work','model':'work-new','effort':'thorough'}
+        reset=await client.request('session/set_config_option',{'sessionId':sid,'configId':'reasoning_effort','value':'__default__'})
+        assert 'result' in reset,reset
+        assert reset['result']['configOptions']==updates(client)[-1]
+        assert not any(row['id']=='reasoning_effort' for row in reset['result']['configOptions'])
+        assert (await control('configuration.providers'))['result']['selection']=={'instance':'work','model':'work-new'}
+        assert not audit.exists(), 'Browsing and clearing a configuration override never invokes a model'
+    finally:await client.close()
+
+
+
+@pytest.mark.asyncio
 async def test_removed_option_and_old_effort_refuse_without_effect_other_client_can_prompt(tmp_path):
     config,cwd,audit,discovery,catalogs=fixture(tmp_path);client=await Client.launch(config)
     try:

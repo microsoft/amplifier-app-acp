@@ -61,8 +61,25 @@ def test_public_provider_field_conditions(condition,model,expected):
 
 def test_no_invented_effort_and_preserved_existing_nonadvertised_effort():
     data=state();data['providers'][0]['modelCatalog']['models'][0]['defaults']={}
+    del data['selection']['effort']
     assert len(project(data)[0])==1
     data=state();data['selection']['effort']='old-effort'
     options,_,efforts=project(data)
     assert options[1]['currentValue']==token('effort','personal','alpha','old-effort')
     assert efforts[options[1]['currentValue']]['effort']=='old-effort'
+
+
+@pytest.mark.parametrize('catalog',[
+    {'state':'available','models':[{'id':'alpha','defaults':{'supported_reasoning_efforts':[]}}]},
+    {'state':'unavailable','models':[]},
+    {'state':'not-loaded','models':[]},
+])
+def test_current_effort_and_default_remain_visible_without_advertised_choices(catalog):
+    data=state();data['providers'][0]['modelCatalog']=catalog
+    options,_,efforts=project(data)
+    option=next(row for row in options if row['id']=='reasoning_effort')
+    current=token('effort','personal','alpha','deep')
+    assert option['currentValue']==current
+    assert [row['value'] for row in option['options']]==[DEFAULT,current]
+    assert list(efforts.values())==[{'instance':'personal','model':'alpha','effort':'deep'}]
+    assert option['options'][1]['description']=='Current effective effort; not advertised for a new selection.'

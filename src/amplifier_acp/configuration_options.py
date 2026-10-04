@@ -121,9 +121,10 @@ def project(state):
     options=[model_option]
     if selected_row and selected_provider:
         efforts, source=effort_choices(selected_provider,selected_row)
-        if efforts:
+        chosen=text(effective.get('effort'),128)
+        if efforts or chosen:
             effort_map={token('effort',selected_instance,selected_model,v):{**selections[token('model',selected_instance,selected_model)],'effort':v} for v in efforts}
-            chosen=effective.get('effort'); current=token('effort',selected_instance,selected_model,chosen) if text(chosen,128) else DEFAULT
+            current=token('effort',selected_instance,selected_model,chosen) if chosen else DEFAULT
             if text(chosen,128) and chosen not in efforts:
                 effort_map[current]={**selections[token('model',selected_instance,selected_model)],'effort':chosen}
             options.append({'id':'reasoning_effort','name':'Reasoning effort','category':'thought_level','type':'select','currentValue':current,

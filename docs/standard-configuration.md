@@ -74,6 +74,9 @@ No model-name heuristics or universal effort list are supplied. Other unknown
 field dependencies hide the selector. The Provider default option removes the
 explicit effort while retaining the pair. A pre-existing unadvertised effective
 effort stays visible as current-only; reselecting it performs no new effect.
+That current-only value and Provider default remain available even when discovery
+fails or the model advertises no reasoning choices. Clearing the override keeps
+the selected provider/model; it does not invent any new supported effort.
 
 Provider metadata is bounded to 64 instances, 512 models per instance and 4,096
 model values per projection. Projected model information allowlists identities,
