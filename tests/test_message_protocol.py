@@ -5,6 +5,16 @@ from client import Client
 from amplifier_acp.native.session_files import project_slug
 from amplifier_acp.history import message_id
 
+
+async def message_cli(config):
+    # Preserve shared dependency fixtures: child is isolated and cannot create
+    # bytecode, and imports exactly the currently qualified package tree.
+    import asyncio,sys,amplifier_acp
+    package=str(Path(amplifier_acp.__file__).resolve().parent.parent)
+    bootstrap="import sys,runpy;sys.path.insert(0,sys.argv.pop(1));runpy.run_module('amplifier_acp',run_name='__main__')"
+    process=await asyncio.create_subprocess_exec(sys.executable,'-I','-B','-c',bootstrap,package,'--config',str(config),stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE)
+    return Client(process)
+
 @pytest.mark.asyncio
 async def test_public_cold_reactions_and_receipts_no_worker(tmp_path):
     from amplifier_acp.server import Server, RpcError
@@ -173,7 +183,7 @@ async def test_actual_cli_principal_handshake_and_cold_message_methods(tmp_path,
     row={'role':'assistant','content':'Earlier answer'};path=directory/'transcript.jsonl';path.write_text(json.dumps(row)+'\n')
     before=path.read_bytes();config=tmp_path/'config.json';config.write_text(json.dumps({'home':str(native),'appHome':str(tmp_path/'app'),'workerCommand':['/must-not-start']}))
     meta={'amplifier.dev/native':{'version':1},'amplifier.dev/messagePrincipal':{'version':1,'account':'server-protected-account'}}
-    client=await Client.launch(config)
+    client=await message_cli(config)
     try:
         init=await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':meta}})
         assert init['result']['agentCapabilities']['_meta']['amplifier.dev/native']['messageInteractions']['version']==1
@@ -198,7 +208,7 @@ async def test_actual_cli_malformed_principal_refuses(tmp_path,monkeypatch,bindi
     import amplifier_acp
     monkeypatch.setenv('PYTHONPATH',str(Path(amplifier_acp.__file__).resolve().parent.parent))
     config=tmp_path/'config.json';config.write_text(json.dumps({'home':str(tmp_path/'native'),'workerCommand':['/must-not-start']}))
-    client=await Client.launch(config)
+    client=await message_cli(config)
     try:
         result=await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1},'amplifier.dev/messagePrincipal':binding}}})
         assert result['error']['code']==-32602 and not client.events
@@ -209,7 +219,7 @@ async def test_actual_cli_absent_binding_unadvertised(tmp_path,monkeypatch):
     import amplifier_acp
     monkeypatch.setenv('PYTHONPATH',str(Path(amplifier_acp.__file__).resolve().parent.parent))
     config=tmp_path/'config.json';config.write_text(json.dumps({'home':str(tmp_path/'native'),'workerCommand':['/must-not-start']}))
-    client=await Client.launch(config)
+    client=await message_cli(config)
     try:
         result=await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
         assert 'messageInteractions' not in result['result']['agentCapabilities']['_meta']['amplifier.dev/native']
