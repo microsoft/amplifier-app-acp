@@ -157,6 +157,12 @@ login/status/cancel controls are available through `_amplifier/native`.
 
 Standalone sign-in attempts belong to the canonical authorized workspace,
 requested write scope (`global`, `project`, or `local`) and provider ID.
+Initialize advertises `native.admin.providerSignIn` as the closed marker
+`{"version":1,"workspaceBound":true,"scopedAttempts":true}` only when launcher
+administration is enabled. Consumers must verify its exact keys and types before
+advertising or sending the optional selectors to this administration route;
+older peers can ignore unknown arguments. This marker does not qualify resident
+provider controls, external accounts, or credential validity.
 `providers.loginStatus` and `providers.loginCancel` accept optional `scope` and
 `loginId` selectors. An attempt ID must match the original flow; an unavailable
 attempt refuses without starting or cancelling another flow. Legacy requests
