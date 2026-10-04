@@ -155,6 +155,29 @@ prepared through Foundation if the sign-in provider has not yet been installed.
 Unsupported standalone login remains explicit; a mounted provider's native
 login/status/cancel controls are available through `_amplifier/native`.
 
+Standalone sign-in attempts belong to the canonical authorized workspace,
+requested write scope (`global`, `project`, or `local`) and provider ID.
+Initialize advertises `native.admin.providerSignIn` as the closed marker
+`{"version":1,"workspaceBound":true,"scopedAttempts":true}` only when launcher
+administration is enabled. Consumers must verify its exact keys and types before
+advertising or sending the optional selectors to this administration route;
+older peers can ignore unknown arguments. This marker does not qualify resident
+provider controls, external accounts, or credential validity.
+`providers.loginStatus` and `providers.loginCancel` accept optional `scope` and
+`loginId` selectors. An attempt ID must match the original flow; an unavailable
+attempt refuses without starting or cancelling another flow. Legacy requests
+without a scope resolve only a unique matching flow in the same workspace;
+multiple scopes require an explicit selector. A different workspace cannot
+inspect or cancel that attempt, including a global-scope attempt. Path aliases
+to the same authorized workspace identify the same flow.
+
+Status and cancellation retain the original association when settings change.
+A new start cannot reuse a pending attempt with different provider/source,
+sign-in method or plan permission. Credential activation still requires the
+original provider and source to remain current. Process restart does not replay
+sign-in: unqualified status/cancel returns idle, while a retained `loginId`
+refuses as unavailable. No credentials are included in these responses.
+
 App bundle defaults are stored separately in private `admin-settings.yaml`;
 workspace/shared defaults retain community settings files. Native saved sessions
 keep their recorded root. `configuration.defaults` prepares a bundle and inspects

@@ -154,8 +154,124 @@ async def test_login_progress_and_cancel_preserve_owned_path(manager,tmp_path):
     assert updates[-1]['login']['url']=='https://auth.openai.com/codex/device'
     cancelled=await manager.perform('providers.loginCancel',{'id':'chatgpt','workspace':str(tmp_path)})
     assert cancelled['login']['status']=='cancelled'
-    assert manager.logins['chatgpt']['process'].returncode is not None
+    assert manager.logins[manager.login_key(tmp_path,'global','chatgpt')]['process'].returncode is not None
     await manager.close()
+
+
+@pytest.fixture
+def waiting_login(manager,tmp_path):
+    import sys
+    script=tmp_path/'scoped-auth.py'
+    script.write_text('import sys,json,time\nr=json.loads(sys.stdin.readline())\nprint(json.dumps({"status":"waiting","instruction":"Open https://auth.openai.com/codex/device"}),flush=True)\ntime.sleep(30)\n')
+    manager.auth_command=[sys.executable,'-I','-B',str(script)]
+    return manager
+
+
+async def wait_login(manager,workspace,scope,identity='same-id'):
+    import asyncio
+    for _ in range(100):
+        result=await manager.perform('providers.loginStatus',{'workspace':str(workspace),'scope':scope,'id':identity})
+        if result['login'].get('url'):return result['login']
+        await asyncio.sleep(.01)
+    raise AssertionError('Owned sign-in fixture did not reach waiting state')
+
+
+@pytest.mark.parametrize('scope',['global','project','local'])
+async def test_login_reads_and_cancel_cannot_cross_workspace_scope_or_attempt(waiting_login,tmp_path,scope):
+    manager=waiting_login
+    first=tmp_path/'first';second=tmp_path/'second';first.mkdir();second.mkdir()
+    original=first/'original.json';original.write_text('{}')
+    await manager.perform('providers.save',{'workspace':str(first),'scope':scope,'id':'same-id','module':'provider-openai-chatgpt','config':{'token_file_path':str(original)}})
+    before=manager.store.read(first,scope)
+    await manager.perform('providers.login',{'workspace':str(first),'scope':scope,'id':'same-id'})
+    try:
+        login=await wait_login(manager,first,scope)
+        for operation in ('providers.loginStatus','providers.loginCancel'):
+            other=await manager.perform(operation,{'workspace':str(second),'scope':scope,'id':'same-id'})
+            assert other['login']['status']=='idle'
+            with pytest.raises(ValueError,match='original sign-in attempt'):
+                await manager.perform(operation,{'workspace':str(second),'scope':scope,'id':'same-id','loginId':login['loginId']})
+        wrong_scope='local' if scope!='local' else 'project'
+        assert (await manager.perform('providers.loginCancel',{'workspace':str(first),'scope':wrong_scope,'id':'same-id'}))['login']['status']=='idle'
+        alias=tmp_path/'alias';alias.symlink_to(first,target_is_directory=True)
+        same=await manager.perform('providers.loginStatus',{'workspace':str(alias),'scope':scope,'id':'same-id','loginId':login['loginId']})
+        assert same['login']['loginId']==login['loginId'] and same['login']['status']=='waiting'
+        assert (await manager.perform('providers.loginStatus',{'workspace':str(first),'id':'same-id'}))['login']['loginId']==login['loginId']
+        cancelled=await manager.perform('providers.loginCancel',{'workspace':str(first),'scope':scope,'id':'same-id','loginId':login['loginId']})
+        assert cancelled['login']['status']=='cancelled'
+        assert manager.logins[manager.login_key(first,scope,'same-id')]['process'].returncode is not None
+        assert manager.store.read(first,scope)==before and original.read_text()=='{}'
+    finally:await manager.close()
+
+
+async def test_login_legacy_lookup_refuses_multiple_write_scopes(waiting_login,tmp_path):
+    manager=waiting_login
+    await manager.perform('providers.save',{'workspace':str(tmp_path),'id':'same-id','module':'provider-openai-chatgpt','config':{}})
+    try:
+        attempts={}
+        for scope in ('global','project','local'):
+            await manager.perform('providers.login',{'workspace':str(tmp_path),'scope':scope,'id':'same-id'})
+            attempts[scope]=await wait_login(manager,tmp_path,scope)
+        assert len({row['loginId'] for row in attempts.values()})==3
+        for op in ('providers.loginStatus','providers.loginCancel'):
+            with pytest.raises(ValueError,match='original sign-in scope'):
+                await manager.perform(op,{'workspace':str(tmp_path),'id':'same-id'})
+        await manager.perform('providers.loginCancel',{'workspace':str(tmp_path),'scope':'project','id':'same-id','loginId':attempts['project']['loginId']})
+        for scope in ('global','local'):
+            assert (await manager.perform('providers.loginStatus',{'workspace':str(tmp_path),'scope':scope,'id':'same-id'}))['login']['status']=='waiting'
+    finally:await manager.close()
+
+
+async def test_login_replacement_retains_original_and_stale_attempt_cannot_cancel_restart(waiting_login,tmp_path):
+    manager=waiting_login
+    args={'workspace':str(tmp_path),'scope':'local','id':'same-id','module':'provider-openai-chatgpt','config':{'default_model':'original'}}
+    await manager.perform('providers.save',args)
+    await manager.perform('providers.login',{'workspace':str(tmp_path),'scope':'local','id':'same-id'})
+    try:
+        original=await wait_login(manager,tmp_path,'local')
+        with pytest.raises(ValueError,match='connection changed'):
+            await manager.perform('providers.login',{'workspace':str(tmp_path),'scope':'local','id':'same-id','authMode':'chatgpt_plan'})
+        await manager.perform('providers.save',{**args,'config':{'default_model':'replacement'}})
+        with pytest.raises(ValueError,match='connection changed'):
+            await manager.perform('providers.login',{'workspace':str(tmp_path),'scope':'local','id':'same-id'})
+        assert (await manager.perform('providers.loginStatus',{'workspace':str(tmp_path),'scope':'local','id':'same-id'}))['login']['loginId']==original['loginId']
+        await manager.perform('providers.loginCancel',{'workspace':str(tmp_path),'scope':'local','id':'same-id','loginId':original['loginId']})
+        await manager.perform('providers.login',{'workspace':str(tmp_path),'scope':'local','id':'same-id'})
+        restarted=await wait_login(manager,tmp_path,'local')
+        assert restarted['loginId']!=original['loginId']
+        for op in ('providers.loginStatus','providers.loginCancel'):
+            with pytest.raises(ValueError,match='original sign-in attempt'):
+                await manager.perform(op,{'workspace':str(tmp_path),'scope':'local','id':'same-id','loginId':original['loginId']})
+        assert (await manager.perform('providers.loginStatus',{'workspace':str(tmp_path),'scope':'local','id':'same-id'}))['login']['status']=='waiting'
+        assert manager.store.read(tmp_path,'local')['config']['providers'][0]['config']['default_model']=='replacement'
+    finally:await manager.close()
+
+
+async def test_login_changed_source_does_not_attach_to_pending_attempt(waiting_login,tmp_path,monkeypatch):
+    manager=waiting_login
+    original_config=manager.config;sources={}
+    def config(workspace):
+        value=original_config(workspace);value.module_sources=dict(sources);return value
+    monkeypatch.setattr(manager,'config',config)
+    await manager.perform('providers.save',{'workspace':str(tmp_path),'id':'same-id','module':'provider-openai-chatgpt','config':{}})
+    await manager.perform('providers.login',{'workspace':str(tmp_path),'id':'same-id'})
+    try:
+        original=await wait_login(manager,tmp_path,'global')
+        sources['provider-openai-chatgpt']='git+https://example.test/replacement@main'
+        with pytest.raises(ValueError,match='connection changed'):
+            await manager.perform('providers.login',{'workspace':str(tmp_path),'id':'same-id'})
+        status=await manager.perform('providers.loginStatus',{'workspace':str(tmp_path),'id':'same-id','loginId':original['loginId']})
+        assert status['login']['loginId']==original['loginId'] and '_binding' not in str(status)
+    finally:await manager.close()
+
+
+async def test_login_unknown_after_manager_restart_is_idle_without_replay(waiting_login,tmp_path):
+    args={'workspace':str(tmp_path),'scope':'local','id':'same-id','loginId':'0'*32}
+    for op in ('providers.loginStatus','providers.loginCancel'):
+        with pytest.raises(ValueError,match='original sign-in attempt'):
+            await waiting_login.perform(op,args)
+        assert (await waiting_login.perform(op,{key:value for key,value in args.items() if key!='loginId'}))['login']['status']=='idle'
+    assert not waiting_login.logins and not list((waiting_login.home/'config').glob('**/*'))
 
 @pytest.mark.asyncio
 async def test_local_routing_shadows_project_without_mutating_it(manager,tmp_path):
@@ -468,7 +584,7 @@ def test_chatgpt_authorization_url_never_exposes_identity_hints_or_tokens():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('outcome',['success','failure','removed','edited','permission-missing','exit-failure','cancel','timeout','adopted','adopted-disabled'])
+@pytest.mark.parametrize('outcome',['success','failure','removed','edited','source-changed','permission-missing','exit-failure','cancel','timeout','adopted','adopted-disabled'])
 @pytest.mark.parametrize('existing_mode',['legacy_codex','chatgpt_plan'])
 async def test_plan_login_commits_only_successful_unchanged_connection(manager,tmp_path,outcome,existing_mode,monkeypatch):
     import asyncio,json,sys
@@ -508,15 +624,20 @@ else:
     manager.progress=progress
     await manager.perform('providers.login',{'id':'chatgpt','workspace':str(tmp_path),'scope':'local','authMode':'chatgpt_plan'})
     for _ in range(100):
-        if manager.login_state('chatgpt').get('url'):break
+        if manager.login_state(manager.login_key(tmp_path,'local','chatgpt')).get('url'):break
         await asyncio.sleep(.01)
     assert manager.store.read(tmp_path,'local')==before
-    candidate=manager.home/'config'/'chatgpt-sign-in'/'chatgpt'/(manager.login_state('chatgpt')['loginId']+'.json')
+    candidate=manager.home/'config'/'chatgpt-sign-in'/'chatgpt'/(manager.login_state(manager.login_key(tmp_path,'local','chatgpt'))['loginId']+'.json')
     assert candidate.exists()
     assert 'private' not in str(updates)
     assert 'id_token_hint' not in str(updates)
     if outcome=='removed':await manager.perform('providers.remove',{'id':'chatgpt','workspace':str(tmp_path),'scope':'local'})
     if outcome=='edited':await manager.perform('providers.save',{**args,'config':{**args['config'],'default_model':'changed'}})
+    if outcome=='source-changed':
+        original_config=manager.config
+        def changed_config(workspace):
+            config=original_config(workspace);config.module_sources={'provider-openai-chatgpt':'git+https://example.test/replacement@main'};return config
+        monkeypatch.setattr(manager,'config',changed_config)
     if outcome=='adopted':await manager.perform('providers.save',{**args,'config':{**args['config'],'token_file_path':str(candidate)}})
     if outcome=='adopted-disabled':
         # Disabled persisted rows still own their referenced credentials and
@@ -524,11 +645,11 @@ else:
         await manager.perform('providers.save',{**args,'id':'another','scope':'global','config':{**args['config'],'token_file_path':str(candidate)}})
         await manager.perform('providers.remove',{**args,'id':'another'})
         await manager.perform('providers.save',{**args,'config':{**args['config'],'default_model':'changed'}})
-    if outcome=='cancel':await manager.cancel_login('chatgpt')
+    if outcome=='cancel':await manager.cancel_login(manager.login_key(tmp_path,'local','chatgpt'))
     else:
         if outcome!='timeout':gate.touch()
-        await asyncio.wait_for(manager.logins['chatgpt']['task'],3)
-    login=manager.login_state('chatgpt')
+        await asyncio.wait_for(manager.logins[manager.login_key(tmp_path,'local','chatgpt')]['task'],3)
+    login=manager.login_state(manager.login_key(tmp_path,'local','chatgpt'))
     saved=manager.store.read(tmp_path,'local')['config']['providers'][0]
     assert json.loads(original.read_text())['access_token']=='legacy-private'
     if outcome in {'success','permission-missing'}:
