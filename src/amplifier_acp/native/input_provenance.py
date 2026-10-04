@@ -14,6 +14,11 @@ class Context:
             with sqlite3.connect(self.path) as db:
                 found=db.execute('SELECT body FROM provenance WHERE id=?',(identity,)).fetchone()
             if found:row={**row,'metadata':{**(row.get('metadata') or {}),**json.loads(found[0])}}
+        if identity and row.get('role') == 'user':
+            from amplifier_acp.message_metadata import input_quote
+            quote = input_quote(self.path.with_name('message-interactions.sqlite3'), identity)
+            if quote:
+                row = {**row, 'metadata': {**(row.get('metadata') or {}), 'replyTo': quote}}
         return await self.previous.add_message(row)
 
 def reserve(path,identity,metadata):

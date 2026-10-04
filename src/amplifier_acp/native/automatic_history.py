@@ -76,7 +76,9 @@ def display_message(row, index, session, *, include_internal=False):
         facts = recovery_facts(metadata, text, provenance)
         if facts:
             observation['observation']['recovery'] = facts
+    quote = metadata.get('replyTo')
+    reply = {'replyTo': quote} if isinstance(quote, dict) and len(json.dumps(quote).encode()) <= 32768 else {}
     return {'id': display_identity(session, index, row['role'], text), 'role': row['role'],
             'text': text, 'via': 'chat', 'source': 'native', 'nativeIndex': index,
             'createdAt': message_time(row) or session.get('createdAt', 0), 'timestampKnown': message_time(row) is not None,
-            **input_identity, **observation}
+            **input_identity, **observation, **reply}
