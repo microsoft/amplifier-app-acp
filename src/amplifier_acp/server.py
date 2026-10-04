@@ -320,7 +320,6 @@ class Session:
     async def send(self,blocks,meta):
         if self.lock.locked():raise RpcError(-32000,'A prompt is already active for this session.')
         async with self.lock:
-            await self.start()
             text=[];attachments=[]
             for block in blocks:
                 if not isinstance(block,dict):raise RpcError(-32602,'Content blocks must be objects.')
@@ -350,6 +349,19 @@ class Session:
             if provenance is not None and (not isinstance(provenance,dict) or set(provenance)!={'inputOrigin'} or provenance.get('inputOrigin')!='coordination'):
                 raise RpcError(-32602,'Prompt provenance supports only the negotiated coordination origin marker; it grants no human authority.')
             self.input_id=command_id or str(uuid.uuid4())
+            reply=(meta or {}).get('amplifier.dev/messageReply')
+            quote=None
+            if reply is not None:
+                if NATIVE not in self.server.extensions or not self.server.message_principal or not command_id:
+                    raise RpcError(-32602,'Quoted input requires negotiated message support and original command identity.',{'executed':False,'replayed':False})
+                from .message_metadata import MessageMetadata,reserve_quote
+                from .relocation import home
+                from .native.history_revision import context_head
+                quote=reserve_quote(MessageMetadata(home(self.server),self.identity,actor_id=self.server.message_principal(self.identity)),
+                    self.server.directory(self.cwd,self.identity),reply,input_id=self.input_id,
+                    input_payload={'text':value,'attachments':attachments,'provenance':provenance},
+                    epoch=context_head(home(self.server),self.identity,self.cwd))
+            await self.start()
             if command_id:
                 previous=await self.worker.command('delivery',input_id=command_id)
                 if previous.get('delivery')=='accepted':
@@ -357,7 +369,10 @@ class Session:
             self.cancelled=False;self.streamed=False;self.had_deltas=False;self.last_model_id=None;self.awaiting_children=False
             self.prompt=asyncio.get_running_loop().create_future()
             try:
-                await self.worker.command('send',text=value,input_id=self.input_id,attachments=attachments,**({'input_provenance':provenance} if provenance is not None else {}))
+                admitted=await self.worker.command('send',text=value,input_id=self.input_id,attachments=attachments,**({'reply_context':quote} if quote is not None else {}),**({'input_provenance':provenance} if provenance is not None else {}))
+                if quote is not None and admitted.get('accepted') is True:
+                    from .message_metadata import quote_admitted
+                    quote_admitted(MessageMetadata(home(self.server),self.identity,actor_id=self.server.message_principal(self.identity)),self.input_id)
                 return await self.prompt
             finally:
                 if self.prompt and not self.prompt.done():self.prompt.cancel()
@@ -434,10 +449,11 @@ class Session:
         if self.worker:await self.worker.close()
 
 class Server:
-    def __init__(self,config,output):
+    def __init__(self,config,output,*,message_principal=None):
         from .module_sources import configure
         configure(config)
         self.config,self.output=config,output
+        self.message_principal=message_principal
         # One ACP process owns one configured native home. Passive Foundation
         # fence/lifecycle APIs must resolve the same canonical files as workers.
         for key,variable in (('home','AMPLIFIER_HOME'),('appHome','AMPLIFIER_WEB_HOME')):
@@ -537,7 +553,7 @@ class Server:
             return {'protocolVersion':1,'agentInfo':{'name':'amplifier-acp','title':'Amplifier','version':__version__},
                 'agentCapabilities':{'loadSession':True,'sessionCapabilities':{'resume':{},'close':{},'delete':{}},
                     'promptCapabilities':{'image':True,'audio':False,'embeddedContext':True},
-                    '_meta':{NATIVE:{'version':1,**({'managedCreation':{'version':1,'passive':True,'configurationScope':'global-and-session','typedSelection':True,'historyCopy':{'version':1,'freshAllocation':True},'configurationCopy':{'version':1,'passive':True},'defaults':{'version':1,'globalOnly':True},'models':{'version':1,'globalOnly':True,'maxPageSize':100,'maxModels':1000,'maxBytes':524288}}} if self.config.get('managedSessionRoots') else {}),'contextClear':__import__('amplifier_acp.native.history_revision',fromlist=['CONTEXT_CLEAR']).CONTEXT_CLEAR,'bundleCommands':__import__('amplifier_acp.bundle_commands',fromlist=['CAPABILITY']).CAPABILITY,'history':{'version':1,'paging':'complete-turns','passive':True,'passiveInspect':True},'scheduledTurns':{'version':1,'completion':'settled'},'questionTurns':{'version':1,'completion':'settled','active':False},'observationTurns':{'version':1,'completion':'settled','active':False},'configurationClone':{'version':1},'taskState':{'version':1,'passive':True},'workers':{'version':1,'passiveInspection':True,'residentControls':True},'runtimeInspection':{'version':1,'residentOnly':True,'passiveStatus':True},'historyEdits':{'version':1,'completion':'settled','active':False},'sessionLifecycle':{'version':1,'passive':True,'deletion':'preserve-history',**({'managedFiles':{'version':1,'preservesCanonical':True,'maxEntries':10000,'maxBytes':268435456}} if self.config.get('managedSessionRoots') and managed_disposal_supported() else {}),'retention':{'version':1,'preservesCanonical':True},**({'retiredCopies':{'version':1,'duplicateFilesOnly':True,'retirementAuthority':'launcher-assertion'}} if self.config.get('retiredSessionCopyRoots') else {}),'recoveryCopy':{'version':1,'mode':'readable-history'},'bundleFork':{'version':1,'configuredOnly':True},'descendantGuard':{'version':1,'maxSessions':100,'coverage':'indexed-and-native-worker-families'}},'activeSteering':{'version':1,'mode':'request_boundary','cancellable':False,'runtimeNegotiated':True},'lifecycle':{'version':1,'gracefulRetire':True},'relocation':{'version':1,'passiveInspection':True},**({'transfer':{'version':1,'passiveInspection':True,'lifecycle':{'version':1,'heldIntake':True,'serviceStop':{'version':1},'nativeAdminWriter':managed_probe(self.config)}}} if self.config.get('transferAuthorityDirectory') and self.config.get('transferWorkspaceRoots') else {}),**({'admin':{'version':1,**({'permissions':{'version':1,'scopes':['global','project','local'],'cas':True,'receipt':True,'pathsPerList':64,'pathChars':4096,'requestBytes':262144,'application':'next-idle-execution'}} if self.config.get('adminPermissions') is True else {}),**({'historyImport':{'version':1,'staged':True,'maxBytes':1048576,'chunkBytes':16384}} if self.config.get('adminHistoryImport') is True else {}),'voice':{'version':1,'configuration':True,'credentials':self.config.get('adminVoiceCredentials') is True,**({'preferences':{'version':1,'cas':True,'receipt':True,'fields':['preferredModel','fallbackModel','voice','interruptions']}} if self.config.get('adminVoicePreferences') is True else {})},'lifecycle':{'version':1,'heldIntake':True,'crossProcessWriterFence':True,'idleNotification':True,'serviceStop':{'version':1}},**({'generations':{'version':1}} if self.config.get('adminGenerations') else {}),**({'maintenance':{'version':1,'selectedOnly':self.config.get('maintenanceFullNative') is not True,'privateArtifacts':True,**({'captureScope':{'version':1,'connectionScoped':True,'beforePrepare':True,'retainsNativeHome':True,'maxArtifacts':16,'expiry':'connection-lifetime'}} if self.config.get('maintenanceFullNative') is True else {}),'appReset':{'version':1,'parts':['native.app-bundle-default'],'retainedUndo':True,'requiresRecoveryAdminLease':True},'cacheInventory':{'version':1,'cold':True,'paged':True,'clearKinds':['python-bytecode'],'sourceRetirement':False,'requiresRecoveryAdminLease':True},'archivePlans':{'version':1,'batchSize':32,'pagedManifest':True,'nativeStores':{'version':1,'parts':['native-import-records','native-preference-receipts','native-maintenance-records','native-retained-archives'],'requiresRecoveryAdminLease':True},**({'fullNative':{'version':1,'part':'full-native-authority','format':'amplifier-native-authority','coldInventory':True,'externalRootsDeclared':True,'artifactInspect':{'version':1},**({'restore':{'version':1,'newDestinationOnly':True,'pagedManifest':True,'receipt':True,'passiveInspect':True}} if self.config.get('maintenanceRestoreRoots') else {})}} if self.config.get('maintenanceFullNative') is True else {})}}} if self.config.get('adminMaintenance') is True else {})}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
+                    '_meta':{NATIVE:{'version':1,**({'messageInteractions':{'version':1,'methods':['reaction','read','receipt'],'quoteMeta':'amplifier.dev/messageReply','maxQuoteChars':4000,'privateReplySelection':True}} if self.message_principal else {}),**({'managedCreation':{'version':1,'passive':True,'configurationScope':'global-and-session','typedSelection':True,'historyCopy':{'version':1,'freshAllocation':True},'configurationCopy':{'version':1,'passive':True},'defaults':{'version':1,'globalOnly':True},'models':{'version':1,'globalOnly':True,'maxPageSize':100,'maxModels':1000,'maxBytes':524288}}} if self.config.get('managedSessionRoots') else {}),'contextClear':__import__('amplifier_acp.native.history_revision',fromlist=['CONTEXT_CLEAR']).CONTEXT_CLEAR,'bundleCommands':__import__('amplifier_acp.bundle_commands',fromlist=['CAPABILITY']).CAPABILITY,'history':{'version':1,'paging':'complete-turns','passive':True,'passiveInspect':True},'scheduledTurns':{'version':1,'completion':'settled'},'questionTurns':{'version':1,'completion':'settled','active':False},'observationTurns':{'version':1,'completion':'settled','active':False},'configurationClone':{'version':1},'taskState':{'version':1,'passive':True},'workers':{'version':1,'passiveInspection':True,'residentControls':True},'runtimeInspection':{'version':1,'residentOnly':True,'passiveStatus':True},'historyEdits':{'version':1,'completion':'settled','active':False},'sessionLifecycle':{'version':1,'passive':True,'deletion':'preserve-history',**({'managedFiles':{'version':1,'preservesCanonical':True,'maxEntries':10000,'maxBytes':268435456}} if self.config.get('managedSessionRoots') and managed_disposal_supported() else {}),'retention':{'version':1,'preservesCanonical':True},**({'retiredCopies':{'version':1,'duplicateFilesOnly':True,'retirementAuthority':'launcher-assertion'}} if self.config.get('retiredSessionCopyRoots') else {}),'recoveryCopy':{'version':1,'mode':'readable-history'},'bundleFork':{'version':1,'configuredOnly':True},'descendantGuard':{'version':1,'maxSessions':100,'coverage':'indexed-and-native-worker-families'}},'activeSteering':{'version':1,'mode':'request_boundary','cancellable':False,'runtimeNegotiated':True},'lifecycle':{'version':1,'gracefulRetire':True},'relocation':{'version':1,'passiveInspection':True},**({'transfer':{'version':1,'passiveInspection':True,'lifecycle':{'version':1,'heldIntake':True,'serviceStop':{'version':1},'nativeAdminWriter':managed_probe(self.config)}}} if self.config.get('transferAuthorityDirectory') and self.config.get('transferWorkspaceRoots') else {}),**({'admin':{'version':1,**({'permissions':{'version':1,'scopes':['global','project','local'],'cas':True,'receipt':True,'pathsPerList':64,'pathChars':4096,'requestBytes':262144,'application':'next-idle-execution'}} if self.config.get('adminPermissions') is True else {}),**({'historyImport':{'version':1,'staged':True,'maxBytes':1048576,'chunkBytes':16384}} if self.config.get('adminHistoryImport') is True else {}),'voice':{'version':1,'configuration':True,'credentials':self.config.get('adminVoiceCredentials') is True,**({'preferences':{'version':1,'cas':True,'receipt':True,'fields':['preferredModel','fallbackModel','voice','interruptions']}} if self.config.get('adminVoicePreferences') is True else {})},'lifecycle':{'version':1,'heldIntake':True,'crossProcessWriterFence':True,'idleNotification':True,'serviceStop':{'version':1}},**({'generations':{'version':1}} if self.config.get('adminGenerations') else {}),**({'maintenance':{'version':1,'selectedOnly':self.config.get('maintenanceFullNative') is not True,'privateArtifacts':True,**({'captureScope':{'version':1,'connectionScoped':True,'beforePrepare':True,'retainsNativeHome':True,'maxArtifacts':16,'expiry':'connection-lifetime'}} if self.config.get('maintenanceFullNative') is True else {}),'appReset':{'version':1,'parts':['native.app-bundle-default'],'retainedUndo':True,'requiresRecoveryAdminLease':True},'cacheInventory':{'version':1,'cold':True,'paged':True,'clearKinds':['python-bytecode'],'sourceRetirement':False,'requiresRecoveryAdminLease':True},'archivePlans':{'version':1,'batchSize':32,'pagedManifest':True,'nativeStores':{'version':1,'parts':['native-import-records','native-preference-receipts','native-maintenance-records','native-retained-archives'],'requiresRecoveryAdminLease':True},**({'fullNative':{'version':1,'part':'full-native-authority','format':'amplifier-native-authority','coldInventory':True,'externalRootsDeclared':True,'artifactInspect':{'version':1},**({'restore':{'version':1,'newDestinationOnly':True,'pagedManifest':True,'receipt':True,'passiveInspect':True}} if self.config.get('maintenanceRestoreRoots') else {})}} if self.config.get('maintenanceFullNative') is True else {})}}} if self.config.get('adminMaintenance') is True else {})}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
         if not self.initialized:raise RpcError(-32600,'Initialize this connection first.')
         if method=='_amplifier/context/receipt':
             from .native.history_revision import passive_context_receipt
@@ -630,6 +646,25 @@ class Server:
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
             from .passive_task import inspect
             return inspect(self,params)
+        if method in {'_amplifier/message/reaction','_amplifier/message/read','_amplifier/message/receipt'}:
+            from .message_metadata import MessageMetadata,handle_message_metadata
+            from .relocation import home
+            from .native.history_revision import context_head
+            identity=params.get('sessionId')
+            actor=self.message_principal(identity) if self.message_principal else None
+            if not actor:raise RpcError(-32601,'Authenticated native message principal is unavailable.',{'executed':False,'replayed':False})
+            identity=params.get('sessionId')
+            session=self.sessions.get(identity)
+            cwd=session.cwd if session else getattr(self,'message_scopes',{}).get(identity)
+            if method.endswith('/reaction') and not cwd:raise RpcError(-32602,'Read the selected canonical history before changing message metadata.',{'executed':False,'replayed':False})
+            store=MessageMetadata(home(self),identity,actor_id=actor)
+            previous=store.receipt(params['commandId'])['receipt'] if method.endswith('/reaction') and params.get('commandId') else None
+            result=handle_message_metadata(store,method,params,
+                directory=self.directory(cwd,identity) if method.endswith('/reaction') else None,
+                epoch=context_head(home(self),identity,cwd) if method.endswith('/reaction') else None)
+            if method.endswith('/reaction') and result['changed'] and previous is None:
+                await self.notify('_amplifier/message/update',result)
+            return result
         if method in {'_amplifier/history','_amplifier/history/inspect'}:
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
             cwd=Path(params.get('cwd','')).expanduser()
@@ -641,7 +676,15 @@ class Server:
             directory=self.directory(str(cwd.resolve()),params.get('sessionId'))
             if method.endswith('/inspect'):return inspect(directory)
             from .relocation import home
-            return page(directory,cursor=params.get('cursor'),limit=params.get('limit',50),expected_revision=params.get('expectedRevision'),app_home=home(self),history_cwd=str(cwd.resolve()))
+            result=page(directory,cursor=params.get('cursor'),limit=params.get('limit',50),expected_revision=params.get('expectedRevision'),app_home=home(self),history_cwd=str(cwd.resolve()))
+            if self.message_principal:
+                scopes=getattr(self,'message_scopes',{})
+                identity=params.get('sessionId');canonical=str(cwd.resolve())
+                if identity in scopes and scopes[identity]!=canonical:raise RpcError(-32602,'Native message scope changed; original history preserved.')
+                scopes.pop(identity,None);scopes[identity]=canonical
+                while len(scopes)>128:scopes.pop(next(iter(scopes)))
+                self.message_scopes=scopes
+            return result
         if method=='_amplifier/session/new':
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
             from .configuration_clone import prepare

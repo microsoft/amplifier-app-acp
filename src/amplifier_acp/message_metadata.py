@@ -155,7 +155,14 @@ class MessageMetadata:
         try:
             if db is None: return {'receipt': None, 'replayed': False}
             row = db.execute('SELECT value FROM receipts WHERE command=? AND json_extract(value,\'$.actorId\')=?', (command_id, self.actor_id)).fetchone()
-            return {'receipt': json.loads(row[0])['result'] if row else None, 'replayed': False}
+            if row:
+                return {'receipt': json.loads(row[0])['result'], 'replayed': False}
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='quotes'").fetchone():
+                quote = db.execute("SELECT value FROM quotes WHERE input=? AND json_extract(value,'$.actorId')=?", (command_id,self.actor_id)).fetchone()
+                if quote:
+                    value=json.loads(quote[0]);value.pop('actorId',None)
+                    return {'receipt':value,'replayed':False}
+            return {'receipt':None,'replayed':False}
         finally:
             if db: db.close()
 
@@ -260,3 +267,73 @@ def handle_message_metadata(store, method, args, *, directory=None, epoch=None):
                               present=args['present'], command_id=args['commandId'], epoch=epoch)
     if method.endswith('/read'): return store.read(args['messageIds'])
     return store.receipt(args['commandId'])
+
+
+def input_quote(path, input_id):
+    """Passive exact-input quote used by accepted native context projection."""
+    path = checked(path)
+    if not path.exists(): return None
+    db = sqlite3.connect(path.as_uri()+'?mode=ro', uri=True)
+    try:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='quotes'").fetchone(): return None
+        row = db.execute('SELECT value FROM quotes WHERE input=?', (token(input_id),)).fetchone()
+        return json.loads(row[0])['quote'] if row else None
+    finally: db.close()
+
+
+def reserve_quote(store, directory, reference, *, input_id, input_payload, epoch=None):
+    """Freeze once before effects. A reservation is never permission to replay."""
+    token(input_id)
+    fingerprint = digest({'reference':reference,'input':input_payload,'actor':store.actor_id})
+    db = store._db()
+    try:
+        if db and db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='quotes'").fetchone():
+            row = db.execute('SELECT fingerprint,value FROM quotes WHERE input=?', (input_id,)).fetchone()
+            if row:
+                if row[0] != fingerprint: raise MessageError('Quoted command identity already has different payload or principal')
+                raise QuotedInputUnknown(input_id, accepted=json.loads(row[1]).get('status')=='accepted')
+    finally:
+        if db:db.close()
+    quote = freeze_quote(directory,store.session_id,reference,input_id=input_id,epoch=epoch)
+    db=store._db(create=True)
+    try:
+        db.execute('CREATE TABLE IF NOT EXISTS quotes(input TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,value TEXT NOT NULL)')
+        db.execute('BEGIN IMMEDIATE')
+        prior=db.execute('SELECT fingerprint,value FROM quotes WHERE input=?',(input_id,)).fetchone()
+        if prior:
+            if prior[0] != fingerprint: raise MessageError('Quoted command identity already has different payload or principal')
+            raise QuotedInputUnknown(input_id,accepted=json.loads(prior[1]).get('status')=='accepted')
+        quote=freeze_quote(directory,store.session_id,reference,input_id=input_id,epoch=epoch)
+        value=encoded({'actorId':store.actor_id,'quote':quote,'status':'reserved','outcome':'unknown','replayed':False})
+        if len(value.encode())>MAX_RECEIPT_BYTES:raise MessageError('Frozen quoted input exceeds its receipt bound')
+        db.execute('INSERT INTO quotes VALUES(?,?,?)',(input_id,fingerprint,value))
+        db.execute('COMMIT');return quote
+    except BaseException:
+        db.execute('ROLLBACK');raise
+    finally:db.close()
+
+
+class QuotedInputUnknown(MessageError):
+    def __init__(self,input_id,accepted=False):
+        super().__init__('Original quoted input was already admitted; no replay' if accepted else 'Original quoted input was already reserved; inspect its delivery without replay')
+        self.data={'outcome':'already-admitted' if accepted else 'unknown','commandId':input_id,'replayed':False}
+
+
+def quote_admitted(store, input_id):
+    """Only an actual worker admission acknowledgement may mark delivery known."""
+    db=store._db()
+    if db is None:raise MessageError('Frozen quoted input receipt is unavailable')
+    db.close()
+    db=store._db(create=True)
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        row=db.execute('SELECT value FROM quotes WHERE input=?',(token(input_id),)).fetchone()
+        if not row:raise MessageError('Frozen quoted input receipt is unavailable')
+        value=json.loads(row[0])
+        if value['actorId']!=store.actor_id:raise MessageError('Quoted input principal changed')
+        value.update(status='accepted',delivery='accepted',outcome='unobserved')
+        db.execute('UPDATE quotes SET value=? WHERE input=?',(encoded(value),input_id))
+        db.execute('COMMIT')
+    except BaseException:
+        db.execute('ROLLBACK');raise
+    finally:db.close()
