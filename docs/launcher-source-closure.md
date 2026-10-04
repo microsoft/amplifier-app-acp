@@ -9,7 +9,7 @@ installation-only policy; `runtimeImmutable` alone does not claim source closure
 A launch claiming qualified source closure must supply this manifest.
 
 The adapter requires the Foundation public `source_resolution_policy` and
-`SourceResolutionDenied` APIs before launch effects. It installs one cached
+`SourceResolutionDenied` and `SOURCE_RESOLUTION_POLICY_VERSION == 1` APIs before launch effects. It installs one cached
 admission callback per manifest/process around preparation, root/include loads,
 and governed passive queries. Nested scopes reuse the same callback. Ordinary
 source declarations, settings URIs, and exported mount plans retain their source
@@ -35,7 +35,9 @@ has exactly these fields:
 
 Include aliases for original requested URIs and effective local URIs emitted by
 `moduleSources`, plus all root, include, resource, and lazy module sources.
-Relative URI bindings must include their exact base. Unbound resolution refuses
+Effective canonical absolute paths and local file URIs are admitted when they
+belong to a declared root and their file/directory membership exists in the
+manifest. Relative URI bindings must include their exact base. Unbound resolution refuses
 without fallback. The document is bounded to 16 MiB and 65,536 file records.
 
 ## Qualification and runtime checks
@@ -54,7 +56,8 @@ outside origins, unbound URIs and mismatched relative bases refuse. It does not
 unload/reimport a conflicting package. The private mounted report contains
 `sourceClosure` origin attestations and the manifest digest.
 
-Foundation must enforce admission on prepared-path/cache reuse and before any
+Native also checks every path in the Foundation public `prepared_sources()`
+readonly snapshot after preparation. Foundation must enforce admission on prepared-path/cache reuse and before any
 activated package code executes. Native checks before scope entry and after
 preparation do not alone prove that internal activation inspected no wrong code.
 The Foundation candidate must qualify that boundary; a source resolver callback

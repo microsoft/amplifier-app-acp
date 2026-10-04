@@ -27,6 +27,7 @@ def foundation(monkeypatch):
         finally: current.reset(token)
     monkeypatch.setattr(sources, 'source_resolution_policy', policy, raising=False)
     monkeypatch.setattr(sources, 'SourceResolutionDenied', RuntimeError, raising=False)
+    monkeypatch.setattr(sources, 'SOURCE_RESOLUTION_POLICY_VERSION', 1, raising=False)
     monkeypatch.setenv(closure.ENV, '{}')
     monkeypatch.delenv(closure.ENV)
     monkeypatch.delenv(preparation.VARIABLE, raising=False)
@@ -75,7 +76,7 @@ async def test_nested_prepare_and_async_child_share_one_callback(tmp_path, found
             assert kwargs['install_deps'] is True
             result = await asyncio.create_task(asyncio.to_thread(lambda: foundation.get()(URI, base_path=tmp_path)))
             assert result.source_root == root
-            return SimpleNamespace()
+            return SimpleNamespace(resolver=SimpleNamespace(prepared_sources=lambda: (('provider-test', URI, root),)))
     @preparation.governed
     async def run():
         callbacks.append(foundation.get())
@@ -157,3 +158,15 @@ def test_relative_uri_is_bound_to_exact_base(tmp_path, foundation):
     assert callback('./bundle.yaml', base_path=tmp_path)
     foreign = tmp_path/'foreign'; foreign.mkdir()
     with pytest.raises(closure.SourceClosureDenied): callback('./bundle.yaml', base_path=foreign)
+
+
+def test_prepared_local_paths_require_declared_manifest_membership(tmp_path, foundation):
+    reference, root = manifest(tmp_path)
+    closure.configure({'sourceResolutionManifest': reference})
+    callback = closure.admission()
+    assert callback(str(root), base_path=tmp_path).active_path == root
+    assert callback((root/'bundle.yaml').as_uri(), base_path=tmp_path).source_root == root
+    outside = tmp_path/'unqualified'; outside.mkdir()
+    bad = SimpleNamespace(resolver=SimpleNamespace(prepared_sources=lambda: (('provider-test', URI, outside),)))
+    with pytest.raises(closure.SourceClosureDenied): closure.attest_prepared(bad)
+    with pytest.raises(RuntimeError, match='prepared_sources'): closure.attest_prepared(SimpleNamespace())

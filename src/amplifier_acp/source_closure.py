@@ -52,11 +52,11 @@ def _uri(value):
 
 def _api():
     try:
-        from amplifier_foundation.sources import source_resolution_policy, SourceResolutionDenied
+        from amplifier_foundation.sources import source_resolution_policy, SourceResolutionDenied, SOURCE_RESOLUTION_POLICY_VERSION
         from amplifier_foundation.paths.resolution import ResolvedSource
     except ImportError:
         raise RuntimeError('Qualified source closure requires Foundation source_resolution_policy support.') from None
-    if not callable(source_resolution_policy) or not issubclass(SourceResolutionDenied, Exception):
+    if SOURCE_RESOLUTION_POLICY_VERSION != 1 or not callable(source_resolution_policy) or not issubclass(SourceResolutionDenied, Exception):
         raise RuntimeError('Unsupported Foundation source resolution policy.')
     return source_resolution_policy, ResolvedSource
 
@@ -136,12 +136,32 @@ class Admission:
         self.verify()
         key = (uri, str(Path(base_path).resolve()))
         row = self.rows.get(key) or self.rows.get((uri, None))
-        if row is None: _deny()
+        active = row['active'] if row is not None else None
+        if row is None:
+            from urllib.parse import unquote, urlsplit
+            parsed = urlsplit(uri)
+            if parsed.scheme == 'file' and parsed.netloc in ('', 'localhost'):
+                path = Path(unquote(parsed.path))
+            elif not parsed.scheme:
+                path = Path(uri)
+            else:
+                _deny()
+            if not path.is_absolute(): _deny()
+            active = _absolute(str(path))
+            candidates = [value for value in self.rows.values() if active.is_relative_to(value['root'])]
+            if not candidates: _deny()
+            row = candidates[0]
+            relative = active.relative_to(row['root']).as_posix()
+            if active.is_file():
+                if relative not in row['files']: _deny()
+                self.check_file(row['root'], relative, row['files'][relative])
+            elif not any(name.startswith(relative + '/') or relative == '.' for name in row['files']):
+                _deny()
         _absolute(str(row['root'])); _absolute(str(row['active']))
         for name in row['admissionFiles']:
             self.check_file(row['root'], name, row['files'][name])
         _, resolved = _api()
-        return resolved(active_path=row['active'], source_root=row['root'])
+        return resolved(active_path=active, source_root=row['root'])
 
     def attest(self):
         """Check configured package origins without importing provider code."""
@@ -205,6 +225,21 @@ def scope():
     with policy(callback):
         yield
         callback.attest()
+
+def attest_prepared(prepared):
+    callback = admission()
+    if callback is None: return {}
+    resolver = getattr(prepared, 'resolver', None)
+    snapshot = getattr(resolver, 'prepared_sources', None)
+    if not callable(snapshot):
+        raise RuntimeError('Qualified source closure requires Foundation prepared_sources readback.')
+    rows = snapshot()
+    if not isinstance(rows, tuple) or len(rows) > 4096: _deny()
+    for module, source, path in rows:
+        # Foundation guards original hint/path correspondence. Native separately
+        # confirms local file membership and records effective imported origins.
+        callback(str(path), base_path=Path.cwd())
+    return callback.attest()
 
 def attest():
     callback = admission()

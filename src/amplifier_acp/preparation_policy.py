@@ -77,8 +77,8 @@ async def prepare(bundle, *, readonly=False, **kwargs):
     restricted = immutable() or readonly
     with scope(readonly=readonly):
         result = await bundle.prepare(install_deps=not restricted, **kwargs)
-        from .source_closure import attest
-        attest()
+        from .source_closure import attest_prepared
+        attest_prepared(result)
         return result
 
 
