@@ -108,16 +108,59 @@ def test_normal_release_identifies_selected_peer_while_other_peer_keeps_global_i
     request={**CTX,'outcome':'unchanged','proof':p};result=peer.control('release',request)
     assert result['ownerId']==CTX['ownerId'] and result['ownerIntakeClosed'] is False and result['intakeClosed'] is True
     assert TransferLifecycle(SimpleNamespace(config=config)).control('release',request)==result
-    assert abort(peer)['status']=='released' and peer.inspect()['intakeClosed'] is True
+    with pytest.raises(AdminFenced):abort(peer)
+    assert peer.inspect()['intakeClosed'] is True
     assert abort(peer,ctx=other)['status']=='released' and peer.inspect()['intakeClosed'] is False
 
-def test_durable_unchanged_release_still_requires_new_distinct_abort_proof(tmp_path):
+@pytest.mark.parametrize('original',['completed','refused','released'])
+def test_old_conclusive_abort_receipt_does_not_clear_same_peer_newer_hold(tmp_path,original):
+    peer,config=owner(tmp_path);old_receipt=None
+    if original=='refused':
+        with Gate(config):assert peer.control('acquire',CTX)['acquired'] is False
+    else:
+        peer.control('acquire',CTX)
+        if original=='completed':old_receipt=abort(peer)
+        else:
+            p={'kind':'admission-refused'}
+            peer.control('release',{**CTX,'outcome':'unchanged','proof':p})
+    newer={**CTX,'fenceId':'newer-fence','commandId':'newer-command'}
+    assert peer.control('acquire',newer)['acquired'] is True
+    replacement=TransferLifecycle(SimpleNamespace(config=config))
+    with Gate(config,exclusive=True):result=abort(replacement)
+    assert result['status']==('not-acquired' if original=='refused' else 'released')
+    if old_receipt:assert result==old_receipt
+    assert replacement.inspect()['fence']=={k:v for k,v in newer.items() if k!='ownerId'}
+    assert replacement.inspect()['intakeClosed'] is True
+    assert abort(replacement)==result
+    with pytest.raises(AdminFenced):abort(replacement,{**PROOF,'receiptId':'different-proof'})
+    assert replacement.inspect()['fence']['fenceId']=='newer-fence'
+
+def test_durable_original_admission_unwind_still_requires_new_distinct_abort_proof(tmp_path):
     peer,config=owner(tmp_path);peer.control('acquire',CTX)
-    old={'verified':True,**{k:v for k,v in CTX.items() if k!='ownerId'},'outcome':'unchanged','receiptId':'original-release'}
+    old={'kind':'admission-refused'}
     peer.control('release',{**CTX,'outcome':'unchanged','proof':old})
     replacement=TransferLifecycle(SimpleNamespace(config=config))
     with pytest.raises(AdminFenced):abort(replacement,old)
     assert abort(replacement)['status']=='released'
+
+def test_generic_authenticated_unchanged_release_is_not_original_admission_unwind(tmp_path):
+    peer,config=owner(tmp_path);peer.control('acquire',CTX)
+    p={'verified':True,**{k:v for k,v in CTX.items() if k!='ownerId'},'outcome':'unchanged','receiptId':'generic-running-release'}
+    assert peer.control('release',{**CTX,'outcome':'unchanged','proof':p})['released'] is True
+    with pytest.raises(AdminFenced):abort(TransferLifecycle(SimpleNamespace(config=config)))
+    with Gate(config,exclusive=True):
+        with pytest.raises(AdminFenced):abort(TransferLifecycle(SimpleNamespace(config=config)))
+    with sqlite3.connect(Path(config['transferAuthorityDirectory'])/'owner.sqlite3') as db:body=json.loads(db.execute('SELECT body FROM commands WHERE scope=?',(ATTEMPTS,)).fetchone()[0])
+    assert body['phase']=='released' and 'abortProof' not in body
+
+def test_completed_original_abort_remains_passive_while_authority_has_another_writer(tmp_path):
+    peer,config=owner(tmp_path);peer.control('acquire',CTX);original=abort(peer)
+    newer={**CTX,'fenceId':'newer-fence','commandId':'newer-command'};peer.control('acquire',newer)
+    with sqlite3.connect(Path(config['transferAuthorityDirectory'])/'owner.sqlite3') as db:
+        db.execute('BEGIN IMMEDIATE')
+        assert abort(TransferLifecycle(SimpleNamespace(config=config)))==original
+        db.rollback()
+    assert peer.inspect()['fence']['fenceId']=='newer-fence'
 
 def test_ready_successor_release_cannot_be_relabelled_as_pre_retirement_abort(tmp_path):
     peer,config=owner(tmp_path);peer.control('acquire',CTX)
@@ -155,11 +198,12 @@ async def test_foreign_cancelled_thread_retains_actual_writer_proof_and_refusal_
         assert await asyncio.to_thread(entered.wait,5)
         task.cancel();await asyncio.sleep(0)
         refused=other.control('acquire',CTX);assert refused['acquired'] is False
-        with pytest.raises(MaintenanceBusy):abort(other)
+        assert other.control('acquire',CTX)==refused
+        assert abort(other)['status']=='not-acquired','Original refusal publication must not touch the still-running unrelated effect'
         for gate in (Gate,AdminGate):
             with pytest.raises(MaintenanceBusy):gate(config,exclusive=True)
         finish.set();await asyncio.gather(task,return_exceptions=True)
-        assert TransferLifecycle(SimpleNamespace(config=config)).control('acquire',CTX)==refused
+        with pytest.raises(AdminFenced):TransferLifecycle(SimpleNamespace(config=config)).control('acquire',CTX)
         assert abort(other)['status']=='not-acquired'
     finally:finish.set();await asyncio.gather(task,return_exceptions=True);await peer.close()
 

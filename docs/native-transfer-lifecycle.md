@@ -66,9 +66,14 @@ Clearing that owner's active pointer and saving its abort receipt is one SQLite
 transaction. A lost reply or replacement process observes the same receipt.
 Changed context, owner, or proof refuses. An original acquired record without its
 active pointer, an orphan uncertain intent, or a missing original disposition
-remains unknown. A durable unchanged original release can be settled only with
-the separately authenticated new abort proof and its original acquisition and
-release records; a post-retirement ready release cannot become abort evidence.
+remains unknown. A durable original admission-only rollback can be settled only
+with the separately authenticated new abort proof and the original acquisition
+plus exact `releaseRequest={outcome:"unchanged",proof:{kind:"admission-refused"}}`
+records. Generic verified unchanged/ready lifecycle release keeps its ordinary
+semantics and cannot become first admission-abort evidence. An old completed
+receipt or conclusive original refusal/rollback is published without requesting
+a native writer lock or changing a newer active pointer, including a newer
+fence for the same stable owner.
 
 Every transfer effect first holds its existing shared maintenance writer lease,
 then checks the durable admission pointer, and retains its lease through the

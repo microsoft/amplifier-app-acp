@@ -182,29 +182,50 @@ class TransferAdmission:
             self.save(db,ACTIVE,self.home_id,digest(self.identity),active);self.save(db,ATTEMPTS,key,signature,row)
             return result
 
+    def publish_abort(self,db,row,key,signature,ctx,owner,p,status):
+        result={'ownerId':owner,**{k:ctx[k] for k in BINDING},'status':status,'receiptId':'native-transfer-abort:'+digest([self.identity,owner,ctx,p,status])}
+        row.update(phase='aborted',abortProof=p,abortResult=result)
+        self.save(db,ATTEMPTS,key,signature,row)
+        return result
+
+    def conclusive_abort(self,db,row,active,key,signature,ctx,owner,p):
+        if not row:raise AdminFenced('Durable original transfer attempt required; legacy outcome remains unknown')
+        selected=active['owners'].get(owner)==ctx
+        if row['phase']=='aborted':
+            if row.get('abortProof')!=p or selected:raise AdminFenced('Original abort proof or intake changed')
+            return row['abortResult']
+        if row['phase']=='refused' and row.get('result',{}).get('acquired') is False and row['result'].get('executed') is False and not selected:
+            return self.publish_abort(db,row,key,signature,ctx,owner,p,'not-acquired')
+        # Only the original admission-only unwind proves this pre-retirement
+        # disposition. Ordinary verified lifecycle release retains its normal
+        # meaning and cannot be repurposed as admission rollback evidence.
+        if row['phase']=='released' and row.get('result',{}).get('acquired') is True and row.get('releaseRequest')=={'outcome':'unchanged','proof':{'kind':'admission-refused'}} and row.get('releaseResult',{}).get('released') is True and not selected:
+            return self.publish_abort(db,row,key,signature,ctx,owner,p,'released')
+        if row['phase']=='acquired' and selected:return None
+        raise AdminFenced('Original transfer disposition is uncertain; abort remains closed')
+
     def abort(self,args,*,busy=False):
         admission_request(args,abort=True)
         ctx,owner,key,signature=self.selectors(args,('proof',));p=args['proof']
         with closing(self.connection()) as db:
-            row=self.original(db,key,signature,ctx,owner);active=self.active(db)
+            row=self.original(db,key,signature,ctx,owner)
             if row and row['phase']=='aborted':
-                if row.get('abortProof')!=p or owner in active['owners']:raise AdminFenced('Original abort proof or intake changed')
-                return row['abortResult']
+                return self.conclusive_abort(db,row,self.active(db),key,signature,ctx,owner,p)
+        with closing(self.connection()) as db,db:
+            db.execute('BEGIN IMMEDIATE');row=self.original(db,key,signature,ctx,owner);active=self.active(db)
+            # Completed, originally refused, and genuinely unwound attempts
+            # publish only their own receipt. They never request a writer lock
+            # or rewrite another command's active pointer, even for same owner.
+            result=self.conclusive_abort(db,row,active,key,signature,ctx,owner,p)
+            if result is not None:return result
         if busy:raise AdminFenced('Native transfer work remains active; abort remains closed')
         # This checks original effects in OTHER ACP processes and readiness
         # children. It never requests the Admin exclusive gate, avoiding the
         # later general Admin participant's retained-lock deadlock.
         with Gate(self.config,exclusive=True),closing(self.connection()) as db,db:
             db.execute('BEGIN IMMEDIATE');row=self.original(db,key,signature,ctx,owner);active=self.active(db)
-            if not row:raise AdminFenced('Durable original transfer attempt required; legacy outcome remains unknown')
-            if row['phase']=='aborted':
-                if row.get('abortProof')!=p or owner in active['owners']:raise AdminFenced('Original abort proof or intake changed')
-                return row['abortResult']
-            if row['phase']=='acquired' and active['owners'].get(owner)==ctx:status='released';del active['owners'][owner]
-            elif row['phase']=='refused' and row.get('result',{}).get('acquired') is False and row['result'].get('executed') is False and owner not in active['owners']:status='not-acquired'
-            elif row['phase']=='released' and row.get('result',{}).get('acquired') is True and row.get('releaseRequest',{}).get('outcome')=='unchanged' and row.get('releaseResult',{}).get('released') is True and owner not in active['owners']:status='released'
-            else:raise AdminFenced('Original transfer disposition is uncertain; abort remains closed')
-            result={'ownerId':owner,**{k:ctx[k] for k in BINDING},'status':status,'receiptId':'native-transfer-abort:'+digest([self.identity,owner,ctx,p,status])}
-            row.update(phase='aborted',abortProof=p,abortResult=result)
-            self.save(db,ACTIVE,self.home_id,digest(self.identity),active);self.save(db,ATTEMPTS,key,signature,row)
-            return result
+            result=self.conclusive_abort(db,row,active,key,signature,ctx,owner,p)
+            if result is not None:return result
+            del active['owners'][owner]
+            self.save(db,ACTIVE,self.home_id,digest(self.identity),active)
+            return self.publish_abort(db,row,key,signature,ctx,owner,p,'released')
