@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio,os,sys,uuid
 from .admin_lifecycle import AdminGate,AdminFenced,context,service_release
 from .maintenance_gate import Gate
+from .transfer_admission import TransferAdmission
 
 def managed_probe(config):
     """Only the built-in probe owns independent child-process writer leases."""
@@ -13,15 +14,26 @@ class TransferLifecycle:
     def __init__(self,server):
         self.server=server;self.instance=uuid.uuid4().hex;self.fence=None;self.requests=set();self.closing=False;self.releases={}
     def inspect(self):
-        return {'version':1,'processId':self.instance,'pid':os.getpid(),'intakeClosed':self.closing or self.fence is not None,'fence':self.fence,'requests':len(self.requests),'workerStarted':False}
+        held=self.durable().held() if self.server.config.get('transferAuthorityDirectory') else None
+        return {'version':1,'processId':self.instance,'pid':os.getpid(),'intakeClosed':self.closing or self.fence is not None or held is not None,'fence':self.fence or held,'requests':len(self.requests),'workerStarted':False}
+    def durable(self):return TransferAdmission(self.server.config)
     def control(self,operation,args):
         if operation=='inspect':
             if args:raise ValueError('Transfer lifecycle inspection takes no selectors')
             return self.inspect()
         expected=context(args)
+        if operation in {'acquire','release','abortAdmission'} and 'ownerId' in args:
+            if self.fence:raise AdminFenced('Legacy process-local transfer admission has no durable original attempt')
+            journal=self.durable();busy=self.closing or bool(self.requests)
+            if operation=='acquire':
+                return journal.acquire(args,busy=busy,managed=managed_probe(self.server.config),inspection={'version':1,'processId':self.instance,'pid':os.getpid(),'requests':len(self.requests),'workerStarted':False})
+            if operation=='release':return journal.release(args,busy=busy)
+            return journal.abort(args,busy=busy)
+        if operation=='abortAdmission':raise AdminFenced('Exact durable transfer owner identity required')
         if operation=='acquire':
             if not managed_probe(self.server.config):return {'acquired':False,'executed':False,'intakeClosed':False,'reason':'custom-probe-lifetime-unproven'}
             if set(args)!=set(expected):raise ValueError('Unexpected transfer fence selectors')
+            if self.server.config.get('transferAuthorityDirectory'):self.durable().assert_open()
             if self.fence and self.fence!=expected:raise AdminFenced('Transfer intake belongs to another fence')
             if self.closing or self.requests:return {'acquired':False,'executed':False,'intakeClosed':bool(self.fence) or self.closing,'reason':'native-transfer-work'}
             if expected['fenceId'] in self.releases:raise ValueError('Released transfer fence cannot acquire again')
@@ -51,6 +63,13 @@ class TransferLifecycle:
         admin=AdminGate(self.server.config)
         try:maintenance=Gate(self.server.config)
         except BaseException:admin.release();raise
+        try:
+            # Obtain the existing shared writer lease first. A distribution
+            # acquisition uses a transient exclusive maintenance lease, so a
+            # successful open observation cannot race its durable close.
+            if self.server.config.get('transferAuthorityDirectory'):self.durable().assert_open()
+        except BaseException:
+            maintenance.release();admin.release();raise
         request=asyncio.current_task();self.requests.add(request)
         effect=asyncio.create_task(self.execute(params))
         try:return await asyncio.shield(effect)
