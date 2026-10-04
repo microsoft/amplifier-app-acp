@@ -161,3 +161,58 @@ def test_actual_native_fork_retains_frozen_quote(tmp_path,monkeypatch):
     from amplifier_acp.history import page
     copied=page(SessionStore.for_app(tmp_path/'app',cwd).directory('target'))
     assert next(u for u in copied['updates'] if u['sessionUpdate']=='user_message_chunk')['_meta']['amplifier.dev/history']['replyTo']==quote
+
+@pytest.mark.asyncio
+async def test_actual_cli_principal_handshake_and_cold_message_methods(tmp_path,monkeypatch):
+    import amplifier_acp
+    # Launch the exact currently imported package (source or wheel consumer),
+    # while retaining the immutable fixture interpreter's dependency paths.
+    monkeypatch.setenv('PYTHONPATH',str(Path(amplifier_acp.__file__).resolve().parent.parent))
+    native=tmp_path/'native';cwd=tmp_path/'cwd';cwd.mkdir();sid='existing'
+    directory=native/'projects'/project_slug(cwd)/'sessions'/sid;directory.mkdir(parents=True)
+    row={'role':'assistant','content':'Earlier answer'};path=directory/'transcript.jsonl';path.write_text(json.dumps(row)+'\n')
+    before=path.read_bytes();config=tmp_path/'config.json';config.write_text(json.dumps({'home':str(native),'appHome':str(tmp_path/'app'),'workerCommand':['/must-not-start']}))
+    meta={'amplifier.dev/native':{'version':1},'amplifier.dev/messagePrincipal':{'version':1,'account':'server-protected-account'}}
+    client=await Client.launch(config)
+    try:
+        init=await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':meta}})
+        assert init['result']['agentCapabilities']['_meta']['amplifier.dev/native']['messageInteractions']['version']==1
+        assert 'error' in await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':meta}})
+        await client.request('_amplifier/history',{'sessionId':sid,'cwd':str(cwd),'limit':1})
+        ref={'sessionId':sid,'messageId':message_id(row,0),'position':0,'historyEpoch':None}
+        args={'sessionId':sid,'reference':ref,'emoji':'✅','present':True,'commandId':'exact'}
+        assert 'error' in await client.request('_amplifier/message/reaction',{**args,'actorId':'forged'})
+        result=(await client.request('_amplifier/message/reaction',args))['result']
+        assert result['mine']==['✅'] and result['counts']=={'✅':1}
+        assert (await client.request('_amplifier/message/reaction',args))['result']==result
+        assert (await client.request('_amplifier/message/read',{'sessionId':sid,'messageIds':[ref['messageId']]}))['result']['items'][0]['mine']==['✅']
+        assert (await client.request('_amplifier/message/receipt',{'sessionId':sid,'commandId':'exact'}))['result']['receipt']==result
+        assert path.read_bytes()==before and len(client.events)==1
+        assert client.events[0]['method']=='_amplifier/message/update'
+    finally:await client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('binding',[{'version':1,'account':'account','actorId':'forged'},{'version':True,'account':'account'},{'version':1,'account':''},{'version':1,'account':'x\ny'}])
+async def test_actual_cli_malformed_principal_refuses(tmp_path,monkeypatch,binding):
+    import amplifier_acp
+    monkeypatch.setenv('PYTHONPATH',str(Path(amplifier_acp.__file__).resolve().parent.parent))
+    config=tmp_path/'config.json';config.write_text(json.dumps({'home':str(tmp_path/'native'),'workerCommand':['/must-not-start']}))
+    client=await Client.launch(config)
+    try:
+        result=await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1},'amplifier.dev/messagePrincipal':binding}}})
+        assert result['error']['code']==-32602 and not client.events
+    finally:await client.close()
+
+@pytest.mark.asyncio
+async def test_actual_cli_absent_binding_unadvertised(tmp_path,monkeypatch):
+    import amplifier_acp
+    monkeypatch.setenv('PYTHONPATH',str(Path(amplifier_acp.__file__).resolve().parent.parent))
+    config=tmp_path/'config.json';config.write_text(json.dumps({'home':str(tmp_path/'native'),'workerCommand':['/must-not-start']}))
+    client=await Client.launch(config)
+    try:
+        result=await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
+        assert 'messageInteractions' not in result['result']['agentCapabilities']['_meta']['amplifier.dev/native']
+        denied=await client.request('_amplifier/message/read',{'sessionId':'native','messageIds':['native:id']})
+        assert denied['error']['code']==-32601 and not client.events
+    finally:await client.close()
