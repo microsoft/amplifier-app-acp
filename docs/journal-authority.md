@@ -15,6 +15,9 @@ permissions, managed disposal, steering, coordination, message adjuncts and inpu
 provenance/outcomes. The last two files have cooperating writers: message quote
 and reaction paths share one layout; input provenance and terminal outcomes share
 another. Every initializer of those files uses the same admission path.
+Maintenance receipts also share their file with the cache inventory and app-reset
+owners; both constructors enroll their complete fixed table groups through that
+same initialization lock and transaction.
 
 Each existing file is checked through SQLite read-only mode, including committed
 WAL state, **before any writable SQLite connection**. Main and sidecar paths must
@@ -56,6 +59,24 @@ publishes both its table and marker; all writer peers preserve that enrollment.
 Once marked, removing the table refuses instead of returning an absent receipt.
 An unknown family/version marker or a marker/layout disagreement refuses.
 
+Maintenance adds two optional bits: cache inventory (`cache_scans`,
+`cache_entries`, `cache_previews`) and app reset (`app_reset_revision`,
+`app_reset_previews`). Each complete group and its bit commit together; a writer
+preserves the other group's bit. Removing any table of an enrolled group refuses
+before writable access. The app-reset pending-command index is derived and may
+be rebuilt after admission. Archive-plan and full-native manifest databases are
+separate files, not optional tables of the receipt journal.
+
+The earlier maintenance constructors appended these tables after the base
+initializer had published its base-only marker. Exact complete historical groups
+are therefore accepted with either no marker or that known base-only marker;
+the next write enrolls every group present. A passive read does not migrate the
+marker. Partial or malformed groups refuse, as do unknown table names and marked
+namespace loss. Entirely absent groups in these older files remain ambiguous:
+there is no evidence that can distinguish never-used from already-lost optional
+authority. This compatibility exception does not reconstruct prior records or
+grant replay of an original command.
+
 Unversioned absence can be indistinguishable from an older legitimate profile;
 the guard does not invent historical enrollment. It also cannot detect a valid
 record deletion, a coherent database replacement, or deletion of the main file
@@ -77,3 +98,10 @@ receipts, duplicate identity binding and deterministic connection closure.
 No model, provider, bundle,
 import, reset, disposal, generation build, live service or user-history effect is
 needed for these tests.
+
+`test_maintenance_namespaces.py` additionally covers both actual maintenance
+constructors, all complete historical combinations, original unknown receipts
+across restart, failed enrollment rollback, concurrent group enrollment and
+committed namespace loss in a crash-left WAL. Separate cache/app-reset protocol
+tests exercise their existing held-admission, stale-review and exact-receipt
+behavior with disposable fixture files; these are not live-service acceptance.
