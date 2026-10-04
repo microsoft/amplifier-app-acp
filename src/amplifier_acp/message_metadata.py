@@ -114,24 +114,9 @@ class MessageMetadata:
         self.actor_id = token(actor_id)
         self.path = checked(Path(app_home) / 'sessions' / self.session_id / 'message-interactions.sqlite3')
 
-    def _db(self, create=False):
-        checked(self.path)
-        if not self.path.exists() and not create:
-            return None
-        if create:
-            self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            db = sqlite3.connect(self.path, timeout=5, isolation_level=None)
-            self.path.chmod(0o600)
-            db.execute('PRAGMA journal_mode=WAL')
-            db.execute('PRAGMA synchronous=FULL')
-            db.executescript('''CREATE TABLE IF NOT EXISTS annotations(
-              message TEXT NOT NULL, actor TEXT NOT NULL, emoji TEXT NOT NULL,
-              PRIMARY KEY(message,actor,emoji));
-              CREATE TABLE IF NOT EXISTS revisions(message TEXT PRIMARY KEY,value INTEGER NOT NULL);
-              CREATE TABLE IF NOT EXISTS receipts(command TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,value TEXT NOT NULL);''')
-        else:
-            db = sqlite3.connect(self.path.as_uri() + '?mode=ro', uri=True, isolation_level=None)
-        return db
+    def _db(self, create=False, *, quotes=False):
+        from .journal_schema import connect
+        return connect(self.path,'messages',write=create,enroll=quotes,isolation_level=None)
 
     def _projection(self, db, identity):
         counts = {} if db is None else dict(db.execute('SELECT emoji,count(*) FROM annotations WHERE message=? GROUP BY emoji', (identity,)))
@@ -276,8 +261,9 @@ def handle_message_metadata(store, method, args, *, directory=None, epoch=None):
 def input_quote(path, input_id):
     """Passive exact-input quote used by accepted native context projection."""
     path = checked(path)
-    if not path.exists(): return None
-    db = sqlite3.connect(path.as_uri()+'?mode=ro', uri=True)
+    from .journal_schema import connect
+    db=connect(path,'messages')
+    if db is None:return None
     try:
         if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='quotes'").fetchone(): return None
         row = db.execute('SELECT value FROM quotes WHERE input=?', (token(input_id),)).fetchone()
@@ -300,9 +286,8 @@ def reserve_quote(store, directory, reference, *, input_id, input_payload, epoch
         if db:db.close()
     guard_input_identity(store.path,input_id,reference=reference,input_payload=input_payload,actor_id=store.actor_id)
     quote = freeze_quote(directory,store.session_id,reference,input_id=input_id,epoch=epoch)
-    db=store._db(create=True)
+    db=store._db(create=True,quotes=True)
     try:
-        db.execute('CREATE TABLE IF NOT EXISTS quotes(input TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,value TEXT NOT NULL)')
         db.execute('BEGIN IMMEDIATE')
         if db.execute('SELECT 1 FROM receipts WHERE command=?',(input_id,)).fetchone():
             raise MessageError('Command identity is already reserved for a reaction')
@@ -358,8 +343,9 @@ def guard_input_identity(path, input_id, *, reference=None, input_payload=None, 
     reaction command become an input. This passive guard creates no storage.
     """
     path=checked(path);token(input_id)
-    if not path.exists():return
-    db=sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)
+    from .journal_schema import connect
+    db=connect(path,'messages')
+    if db is None:return
     try:
         if db.execute('SELECT 1 FROM receipts WHERE command=?',(input_id,)).fetchone():
             raise MessageError('Command identity is already reserved for a reaction')

@@ -56,19 +56,8 @@ class BundleCommands:
         self.scope = {'workspace': str(Path(workspace).expanduser().resolve()), 'sessionId': session_id}
 
     def connect(self, write=False):
-        from .maintenance_gate import checked
-        checked(self.path)
-        for suffix in ('-wal', '-shm', '-journal'): checked(Path(str(self.path)+suffix))
-        if not write and not self.path.exists(): return None
-        if write: self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        db = sqlite3.connect(self.path if write else self.path.as_uri()+'?mode=ro', uri=not write, timeout=0, isolation_level=None)
-        db.execute('PRAGMA trusted_schema=OFF')
-        if write:
-            os.chmod(self.path, 0o600)
-            db.execute('PRAGMA journal_mode=WAL'); db.execute('PRAGMA synchronous=FULL')
-            db.execute('CREATE TABLE IF NOT EXISTS commands (id TEXT PRIMARY KEY, binding TEXT NOT NULL, scope TEXT NOT NULL, body TEXT NOT NULL)')
-        else: db.execute('PRAGMA query_only=ON')
-        return db
+        from .journal_schema import connect
+        return connect(self.path, 'bundle', write=write, timeout=0, isolation_level=None)
 
     @staticmethod
     def decode(body):

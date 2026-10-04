@@ -85,19 +85,9 @@ class HistoryImport:
         self.app=checked(Path(config.get('appHome') or os.environ.get('AMPLIFIER_WEB_HOME') or Path.home()/'.amplifier-unified').expanduser().resolve())
         self.root=checked(self.app/'history-imports');self.path=self.root/'imports.sqlite3'
     def db(self,create=True):
-        if not create:
-            if not self.path.exists():return None
-            checked(self.path)
-            con=sqlite3.connect(self.path.as_uri()+'?mode=ro',uri=True,timeout=0,isolation_level=None);con.row_factory=sqlite3.Row
-            return con
-        self.root.mkdir(parents=True,exist_ok=True,mode=0o700);checked(self.path)
-        con=sqlite3.connect(self.path,timeout=0,isolation_level=None);os.chmod(self.path,0o600);con.row_factory=sqlite3.Row
-        con.executescript('''PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
-        CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY,cwd TEXT NOT NULL,signature TEXT NOT NULL,body TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS uploads(id TEXT PRIMARY KEY,cwd TEXT NOT NULL,spec TEXT NOT NULL,received INTEGER NOT NULL DEFAULT 0,body BLOB NOT NULL,prepared BLOB,preview TEXT UNIQUE,consumed TEXT,target TEXT);
-        ''')
-        if 'target' not in {row[1] for row in con.execute('PRAGMA table_info(uploads)')}:con.execute('ALTER TABLE uploads ADD COLUMN target TEXT')
-        con.execute('CREATE INDEX IF NOT EXISTS uploads_command ON uploads(consumed)')
+        from .journal_schema import connect
+        con=connect(self.path,'history-import',write=create,timeout=0,isolation_level=None)
+        if con is not None:con.row_factory=sqlite3.Row
         return con
     def receipt(self,cwd,identity):
         con=self.db(False)
@@ -156,8 +146,9 @@ class HistoryImport:
                 return failed
             raise
         finally:
-            if con.in_transaction:con.execute('ROLLBACK')
-            con.close()
+            try:
+                if con.in_transaction:con.execute('ROLLBACK')
+            finally:con.close()
     def upload(self,con,cwd,identity):
         token(identity,'uploadId',64);row=con.execute('SELECT * FROM uploads WHERE id=?',(identity,)).fetchone()
         if not row or row['cwd']!=cwd:raise ValueError('Upload is unavailable in this authorized workspace')

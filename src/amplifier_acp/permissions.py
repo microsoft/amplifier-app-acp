@@ -83,14 +83,10 @@ class Permissions:
                 'effective':{'allowed':list(dict.fromkeys([workspace,*effective.get('allowed',[])])),'denied':effective.get('denied',[]),'sources':sources,'revision':digest(layers),'coverage':'module-default-settings-only','deniedTakesPrecedence':True},
                 'detail':'Saved scopes are merged global, shared workspace, then private workspace. The execution directory remains allowed by default. Bundle, session and tool-instance policies can add restrictions; this is not an inspection of a running tool. Idle sessions reload changed settings before their next input; active work keeps its mounted policy.'}
     def db(self,create=False):
-        if not create:
-            if not self.path.exists():return None
-            checked(self.path);con=sqlite3.connect(self.path.as_uri()+'?mode=ro',uri=True,timeout=0,isolation_level=None)
-        else:
-            self.root.mkdir(parents=True,exist_ok=True,mode=0o700);checked(self.path)
-            con=sqlite3.connect(self.path,timeout=5,isolation_level=None);os.chmod(self.path,0o600)
-            con.executescript('PRAGMA journal_mode=WAL;PRAGMA synchronous=FULL;CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY,signature TEXT NOT NULL,workspace TEXT NOT NULL,scope TEXT NOT NULL,body TEXT NOT NULL);')
-        con.row_factory=sqlite3.Row;return con
+        from .journal_schema import connect
+        con=connect(self.path,'permissions',write=create,timeout=5 if create else 0,isolation_level=None)
+        if con is not None:con.row_factory=sqlite3.Row
+        return con
     def receipt(self,workspace,identity):
         con=self.db()
         if con is None:return None
@@ -154,5 +150,6 @@ class Permissions:
                 receipt.update(status='succeeded',result=view)
             con.execute('UPDATE commands SET body=? WHERE id=?',(encoded(receipt).decode(),identity));return receipt
         finally:
-            if con.in_transaction:con.execute('ROLLBACK')
-            con.close()
+            try:
+                if con.in_transaction:con.execute('ROLLBACK')
+            finally:con.close()

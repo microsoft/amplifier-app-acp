@@ -64,19 +64,20 @@ class Maintenance:
         self.maximum=self.config.get('maintenanceMaxBytes',256*1024*1024)
         limit=1024**4 if self.config.get('maintenanceFullNative') is True else 4*1024**3
         if type(self.maximum)is not int or not 1<=self.maximum<=limit:raise ValueError('maintenanceMaxBytes exceeds the launcher-authorized disk archive limit')
-        with self.db() as db:db.execute('CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY,workspace TEXT,signature TEXT,body TEXT)')
+        with self.db(write=False):pass
 
     @contextmanager
-    def db(self):
-        path=checked(self.root/'receipts.sqlite3');db=sqlite3.connect(path)
-        os.chmod(path,0o600);db.execute('PRAGMA journal_mode=WAL');db.execute('PRAGMA synchronous=FULL')
+    def db(self,write=True):
+        from .journal_schema import connect
+        db=connect(self.root/'receipts.sqlite3','maintenance',write=write)
+        if db is None:yield None;return
         try:
             with db:yield db
         finally:db.close()
 
     def receipt(self,workspace,command):
         if not isinstance(command,str) or not 1<=len(command)<=200:raise ValueError('Bounded original commandId required')
-        with self.db() as db:row=db.execute('SELECT workspace,signature,body FROM commands WHERE id=?',(command,)).fetchone()
+        with self.db(write=False) as db:row=db.execute('SELECT workspace,signature,body FROM commands WHERE id=?',(command,)).fetchone() if db else None
         if row is None:return None
         if row[0]!=workspace:raise ValueError('Maintenance receipt belongs to another authorized workspace')
         result=json.loads(row[2])

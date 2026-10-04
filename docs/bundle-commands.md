@@ -182,3 +182,10 @@ The scoped binding and source-root metadata are read only through a nonblocking,
 no-follow regular-file descriptor with size and before/after identity checks.
 Special files, replaced metadata, non-object JSON and platforms without those
 safe-open flags retain the selected source.
+# Journal damage
+
+Exact bundle receipts use the [native journal admission guard](journal-authority.md).
+An existing journal with missing command authority, an unknown schema marker, or
+an orphan sidecar refuses before write initialization. It is never repaired into
+an empty command table or used to re-enter an original unknown command. This does
+not reconstruct lost receipts from current bundle/settings files.

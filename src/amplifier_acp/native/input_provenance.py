@@ -1,6 +1,7 @@
 """Adapter-owned input provenance, persisted before admission without module patches."""
 import json
-import sqlite3
+from contextlib import closing
+from amplifier_acp.journal_schema import connect
 from pathlib import Path
 
 class Context:
@@ -9,11 +10,11 @@ class Context:
     def __getattr__(self,name):return getattr(self.previous,name)
     async def add_message(self,row):
         identity=(row.get('metadata') or {}).get('amplifier_input',{}).get('id')
-        if identity and self.path.exists():
-            if self.path.is_symlink():raise ValueError('Input provenance storage cannot be a symlink')
-            with sqlite3.connect(self.path) as db:
-                found=db.execute('SELECT body FROM provenance WHERE id=?',(identity,)).fetchone()
-            if found:row={**row,'metadata':{**(row.get('metadata') or {}),**json.loads(found[0])}}
+        if identity:
+            db=connect(self.path,'inputs')
+            if db is not None:
+                with closing(db):found=db.execute('SELECT body FROM provenance WHERE id=?',(identity,)).fetchone()
+                if found:row={**row,'metadata':{**(row.get('metadata') or {}),**json.loads(found[0])}}
         if identity and row.get('role') == 'user':
             from amplifier_acp.message_metadata import input_quote
             quote = input_quote(self.path.with_name('message-interactions.sqlite3'), identity)
@@ -26,15 +27,13 @@ def reserve(path,identity,metadata):
     if path.is_symlink():raise ValueError('Input provenance storage cannot be a symlink')
     body=json.dumps(metadata,sort_keys=True,separators=(',',':'),ensure_ascii=False,allow_nan=False)
     if len(body.encode())>16384:raise ValueError('Input provenance exceeds its bound')
-    with sqlite3.connect(path) as db:
-        db.execute('PRAGMA journal_mode=WAL');db.execute('PRAGMA synchronous=FULL')
-        db.execute('CREATE TABLE IF NOT EXISTS provenance(id TEXT PRIMARY KEY,body TEXT NOT NULL)')
-        if db.execute('SELECT 1 FROM provenance WHERE id=?',(identity,)).fetchone():raise ValueError('This input was already reserved; uncertain work is not replayed')
-        db.execute('INSERT INTO provenance VALUES (?,?)',(identity,body));db.commit()
+    with closing(connect(path,'inputs',write=True)) as db:
+        with db:
+            if db.execute('SELECT 1 FROM provenance WHERE id=?',(identity,)).fetchone():raise ValueError('This input was already reserved; uncertain work is not replayed')
+            db.execute('INSERT INTO provenance VALUES (?,?)',(identity,body))
 
 
 def reserved(path,identity):
-    path=Path(path)
-    if not path.exists():return False
-    if path.is_symlink():raise ValueError('Input provenance storage cannot be a symlink')
-    with sqlite3.connect(path) as db:return db.execute('SELECT 1 FROM provenance WHERE id=?',(identity,)).fetchone() is not None
+    db=connect(path,'inputs')
+    if db is None:return False
+    with closing(db):return db.execute('SELECT 1 FROM provenance WHERE id=?',(identity,)).fetchone() is not None

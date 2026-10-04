@@ -14,17 +14,12 @@ def signature(args):return hashlib.sha256(json.dumps(args,sort_keys=True,separat
 class Receipts:
     def __init__(self,home,session_id):self.path=Path(home)/'sessions'/session_id/'steering-receipts.sqlite3'
     @contextmanager
-    def db(self,create=False):
-        for part in (self.path,*self.path.parents):
-            if part.is_symlink():raise ValueError('Steering receipts cannot traverse symlinks')
-        if create:self.path.parent.mkdir(parents=True,exist_ok=True)
-        if not self.path.exists() and not create:yield None;return
-        db=sqlite3.connect(self.path);db.execute('PRAGMA journal_mode=WAL');db.execute('PRAGMA synchronous=FULL')
+    def db(self,create=False,*,write=False):
+        from .journal_schema import connect
+        db=connect(self.path,'steering',write=create or write,create=create)
+        if db is None:yield None;return
         try:
-            with db:
-                if create:db.execute('CREATE TABLE IF NOT EXISTS receipts(id TEXT PRIMARY KEY,signature TEXT NOT NULL,body TEXT NOT NULL)')
-                db.execute("CREATE INDEX IF NOT EXISTS receipts_disposition ON receipts(json_extract(body,'$.disposition'),json_extract(body,'$.generationId'))")
-                yield db
+            with db:yield db
         finally:db.close()
     def read(self,identity,args=None):
         with self.db() as db:row=db.execute('SELECT signature,body FROM receipts WHERE id=?',(identity,)).fetchone() if db else None
@@ -35,7 +30,7 @@ class Receipts:
         with self.db(create=True) as db:db.execute('INSERT INTO receipts VALUES (?,?,?)',(args['inputId'],signature(args),json.dumps(value)))
         return value
     def update(self,identity,values):
-        with self.db() as db:
+        with self.db(write=True) as db:
             if not db:return None
             row=db.execute('SELECT body FROM receipts WHERE id=?',(identity,)).fetchone()
             if not row:return None

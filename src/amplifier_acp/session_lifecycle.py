@@ -121,19 +121,16 @@ class Lifecycle:
         if not self.directory.is_dir():raise ValueError('Native session does not exist in this history workspace')
         lifecycle_state(server,identity,self.cwd)
     @contextmanager
-    def receipts(self):
-        self.app.mkdir(parents=True,exist_ok=True,mode=0o700)
-        path=self.app/'lifecycle-receipts.sqlite3'
-        if path.is_symlink():raise ValueError('Lifecycle receipt cannot be a symlink')
-        db=sqlite3.connect(path);db.execute('PRAGMA journal_mode=WAL');db.execute('PRAGMA synchronous=FULL')
+    def receipts(self,write=True):
+        from .journal_schema import connect
+        db=connect(self.app/'lifecycle-receipts.sqlite3','lifecycle',write=write)
+        if db is None:yield None;return
         try:
-            with db:
-                db.execute('CREATE TABLE IF NOT EXISTS receipts(id TEXT PRIMARY KEY,signature TEXT,body TEXT)')
-                yield db
+            with db:yield db
         finally:db.close()
     def saved(self,command):
         if not isinstance(command,str) or not 1<=len(command)<=200:raise ValueError('Bounded original commandId required')
-        with self.receipts() as db:row=db.execute('SELECT signature,body FROM receipts WHERE id=?',(command,)).fetchone()
+        with self.receipts(write=False) as db:row=db.execute('SELECT signature,body FROM receipts WHERE id=?',(command,)).fetchone() if db else None
         if not row:return None
         value=json.loads(row[1]);value['signature']=row[0]
         if value['status']=='running':value['status']='unknown'
