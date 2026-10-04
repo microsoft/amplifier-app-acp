@@ -2,6 +2,7 @@
 from __future__ import annotations
 import asyncio,copy,os,uuid
 from .maintenance_gate import Gate,MaintenanceBusy
+from .admin_admission import AdmissionJournal
 
 READS={'bundle.receipt','maintenance.appReset.inspect','maintenance.capture.inspect','maintenance.cache.page','maintenance.artifact.inspect','maintenance.restore.inspect','permissions.get','permissions.receipt','maintenance.restore.manifest','voice.preferences.receipt','history.import.receipt','maintenance.archive.manifest','voice.configuration','maintenance.receipt','maintenance.artifact.read','maintenance.lease','generations.receipt','generations.inspect','generations.current'}
 CONTEXT={'fenceId','commandId','purpose','instanceId','dataScope'}
@@ -49,7 +50,7 @@ def service_release(expected,outcome,proof):
 
 class AdminLifecycle:
     def __init__(self,owner):
-        self.owner=owner;self.instance=uuid.uuid4().hex;self.requests={};self.fence=None;self.gate=None;self.closing=False;self.waiting_idle=False;self.releases={}
+        self.owner=owner;self.instance=uuid.uuid4().hex;self.requests={};self.fence=None;self.gate=None;self.closing=False;self.waiting_idle=False;self.releases={};self.admission=AdmissionJournal(owner.config)
     def work(self):
         operations={}
         for row in self.requests.values():operations[row['operation']]=operations.get(row['operation'],0)+1
@@ -57,7 +58,7 @@ class AdminLifecycle:
         maintenance=getattr(self.owner,'maintenance',None)
         return {'requests':len(self.requests),'operations':operations,'providerSignIns':background,'maintenanceLease':bool(maintenance and maintenance.lease_view().get('active')),'captureLease':bool(maintenance and hasattr(maintenance,'capture_scope') and maintenance.capture_scope.active())}
     def inspect(self):
-        return {'version':1,'adminInstanceId':self.instance,'pid':os.getpid(),'intakeClosed':self.fence is not None or self.closing,'lease':dict(self.fence) if self.fence else None,'work':self.work(),'workerStarted':False}
+        return {'version':1,'adminInstanceId':self.instance,'pid':os.getpid(),'intakeClosed':self.fence is not None or self.closing or self.admission.intake() is not None,'lease':dict(self.fence) if self.fence else None,'work':self.work(),'workerStarted':False}
     def enter(self,operation,authorization=None):
         if self.closing:raise AdminFenced('Native administration is closing')
         gate=None
@@ -65,7 +66,11 @@ class AdminLifecycle:
             permit=authorization if isinstance(authorization,dict) else {}
             matching=all(permit.get(key)==self.fence[key] for key in ('fenceId','commandId','leaseId'))
             if operation not in READS and not (matching and self.fence['purpose']=='recovery' and operation.startswith('maintenance.')):raise AdminFenced()
-        else:gate=AdminGate(self.owner.config)
+        else:
+            gate=AdminGate(self.owner.config)
+            try:
+                if operation not in READS and self.admission.intake():raise AdminFenced()
+            except BaseException:gate.release();raise
         identity=uuid.uuid4().hex;self.requests[identity]={'operation':operation,'gate':gate};return identity
     def maybe_idle(self):
         work=self.work()
@@ -82,6 +87,47 @@ class AdminLifecycle:
         if operation=='inspect':
             if args:raise ValueError('Administration lifecycle inspection takes no selectors')
             return self.inspect()
+        if operation in {'abortAdmission','admissionReceipt','refuseAdmission'}:
+            expected=context(args)
+            if expected['purpose']!='distribution-update':raise AdminFenced('Admission abort requires the original distribution admission')
+            if operation=='abortAdmission':
+                if set(args)!=CONTEXT|{'proof'}:raise ValueError('Exact admission abort request required')
+                proof=args['proof']
+                if not isinstance(proof,dict) or set(proof)!=CONTEXT|{'kind','verified','receiptId'} or proof.get('kind')!='distribution-admission-abort' or proof.get('verified') is not True or any(proof.get(k)!=v for k,v in expected.items()) or not isinstance(proof.get('receiptId'),str) or not 1<=len(proof['receiptId'])<=200 or any(ord(c)<32 for c in proof['receiptId']):raise AdminFenced('Exact authenticated admission abort proof required')
+                work=self.work()
+                if self.closing or any(work.values()):raise AdminFenced('Native administration still owns work')
+                row=self.admission.receipt(expected)
+                if row.get('abortProof') is not None and row['abortProof']!=proof:raise AdminFenced('Admission abort binds different proof')
+                if row['state']=='aborted':return copy.deepcopy(row['abortReceipt'])
+                if row['state']=='released':
+                    acquired=row.get('result',{});released=row.get('releaseResult',{});request=row.get('releaseRequest',{});lease=acquired.get('lease',{})
+                    if acquired.get('acquired') is not True or any(lease.get(k)!=v for k,v in expected.items()) or released.get('released') is not True or released.get('lease')!=lease or request.get('outcome')!='unchanged' or any(request.get(k)!=lease.get(k) for k in ('fenceId','commandId','leaseId')):raise AdminFenced('Original unchanged release evidence is unavailable')
+                elif row['state'] not in {'pending','acquired','refused'}:raise AdminFenced('Original admission cannot establish pre-retirement abort')
+                durable=self.admission.intake()
+                if durable and durable['context']!=expected:raise AdminFenced('Another native admission owns intake')
+                if self.fence and any(self.fence.get(k)!=v for k,v in expected.items()):raise AdminFenced()
+                try:gate=self.gate or AdminGate(self.owner.config,exclusive=True)
+                except MaintenanceBusy:raise AdminFenced('Another native writer remains active') from None
+                try:
+                    row=self.admission.receipt(expected)
+                    if row.get('abortProof') is not None and row['abortProof']!=proof:raise AdminFenced('Admission abort binds different proof')
+                    if row['state']=='aborted':return copy.deepcopy(row['abortReceipt'])
+                    row=self.admission.update(expected,abortProof=proof)
+                    result={'ownerId':'native-admin','status':'not-acquired' if row['state']=='refused' else 'released','receiptId':row.get('abortReceiptId') or uuid.uuid4().hex,**{k:expected[k] for k in ('commandId','fenceId','instanceId','dataScope')}}
+                    # Persist intent before unlocking. A lost final transaction retains
+                    # durable intake, so replacement writers still cannot enter.
+                    self.admission.update(expected,abortReceiptId=result['receiptId'])
+                    gate.release();self.gate=None;self.fence=None
+                    self.admission.update(expected,state='aborted',abortReceipt=result)
+                    return result
+                finally:
+                    if gate is not self.gate:gate.release()
+            if set(args)!=CONTEXT:raise ValueError('Exact original admission selectors required')
+            if operation=='admissionReceipt':return self.admission.receipt(expected)
+            refusal={'acquired':False,'executed':False,'intakeClosed':False,'reason':'node-no-dispatch'}
+            row,created=self.admission.begin(expected,refusal)
+            if row['state']!='refused':raise AdminFenced('Original admission already dispatched or unresolved')
+            return copy.deepcopy(row['result'])
         if operation=='acquire':
             expected=context(args)
             if set(args)!=set(expected):raise ValueError('Unexpected administration acquisition field')
@@ -89,15 +135,29 @@ class AdminLifecycle:
             if self.fence:
                 if all(self.fence[k]==v for k,v in expected.items()):return {'acquired':True,**self.inspect()}
                 return {'acquired':False,'executed':False,'reason':'already-fenced','intakeClosed':True}
+            distribution=expected['purpose']=='distribution-update'
+            if distribution:
+                row,created=self.admission.begin(expected)
+                if not created:
+                    if row['state']=='refused':return copy.deepcopy(row['result'])
+                    raise AdminFenced('Original admission remains durable; inspect or abort without reacquisition')
+            elif self.admission.intake():raise AdminFenced()
             work=self.work()
             if work['requests'] or work['providerSignIns'] or work['maintenanceLease'] or work['captureLease']:
                 self.waiting_idle=True
-                return {'acquired':False,'executed':False,'reason':'owned-work','intakeClosed':False,'work':work}
+                result={'acquired':False,'executed':False,'reason':'owned-work','intakeClosed':False,'work':work}
+                if distribution:self.admission.update(expected,state='refused',result=result)
+                return result
             try:gate=AdminGate(self.owner.config,exclusive=True)
-            except MaintenanceBusy:return {'acquired':False,'executed':False,'reason':'other-native-admin-writer','intakeClosed':False,'work':work}
+            except MaintenanceBusy:
+                result={'acquired':False,'executed':False,'reason':'other-native-admin-writer','intakeClosed':False,'work':work}
+                if distribution:self.admission.update(expected,state='refused',result=result)
+                return result
             # No await occurs between checking native-owned activity and closing intake.
             self.gate=gate;self.fence={**expected,'leaseId':uuid.uuid4().hex,'adminInstanceId':self.instance}
-            return {'acquired':True,**self.inspect()}
+            result={'acquired':True,**self.inspect()}
+            if distribution:self.admission.update(expected,state='acquired',result=result)
+            return result
         if operation=='release':
             if set(args)-{'fenceId','commandId','leaseId','outcome','proof'}:raise ValueError('Unexpected administration release field')
             prior=self.releases.get(args.get('leaseId'))
@@ -122,6 +182,7 @@ class AdminLifecycle:
             if work['requests'] or work['providerSignIns'] or work['maintenanceLease'] or work['captureLease']:raise AdminFenced('Administration still owns work or a native maintenance lease')
             old=dict(self.fence);self.gate.release();self.gate=None;self.fence=None
             result={'released':True,'intakeClosed':False,'lease':old,'adminInstanceId':self.instance,'workerStarted':False}
+            if old['purpose']=='distribution-update':self.admission.update({k:old[k] for k in CONTEXT},state='released',releaseRequest=args,releaseResult=result)
             self.releases[old['leaseId']]=copy.deepcopy({'request':args,'result':result})
             if len(self.releases)>256:self.releases.pop(next(iter(self.releases)))
             return result
