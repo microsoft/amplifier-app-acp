@@ -133,6 +133,7 @@ local/custom sources, changed files, extra files and escaping symlinks continue
 through their selected resolver and Core validation; no import cache is purged.
 This repairs the Work boundary-context to Foundation simple-context transition
 without weakening Core's source identity checks.
-The scoped binding is read only through a nonblocking, no-follow regular-file
-descriptor with size and before/after identity checks. Special files, replaced
-bindings and platforms without those safe-open flags retain the selected source.
+The scoped binding and source-root metadata are read only through a nonblocking,
+no-follow regular-file descriptor with size and before/after identity checks.
+Special files, replaced metadata, non-object JSON and platforms without those
+safe-open flags retain the selected source.

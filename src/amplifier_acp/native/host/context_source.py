@@ -170,8 +170,9 @@ def equivalent_context_source(module_id, hint, source):
             return source
         root = selected.parent if selected.name == _PACKAGE else selected
         package = root / _PACKAGE
-        metadata = json.loads((root / '.amplifier_cache_meta.json').read_text())
-        if (metadata.get('commit') != installed_commit
+        metadata = _read_binding(root / '.amplifier_cache_meta.json')
+        if (not isinstance(metadata, dict)
+                or metadata.get('commit') != installed_commit
                 or _repository(metadata.get('git_url', '')) != requested_repo
                 or (metadata.get('ref') != revision and revision != installed_commit
                     and not _shared_binding_matches(root, hint, metadata, installed_commit))):

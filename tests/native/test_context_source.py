@@ -273,3 +273,54 @@ async def test_actual_shared_resolver_preserves_dirty_legacy_precedence(copies, 
     assert resolved.active_path == legacy
     source = SimpleNamespace(resolve=lambda: resolved.active_path)
     assert policy.equivalent_context_source('context-simple', HINT, source) is source
+
+
+@pytest.mark.parametrize('swapped', [False, True])
+def test_source_metadata_fifo_does_not_block_equivalence(tmp_path, swapped):
+    """Exercise the real public proof path with actual installed provenance."""
+    import os
+    import sys
+    if not hasattr(os, 'mkfifo'):
+        pytest.skip('POSIX named-pipe regression')
+    root = tmp_path/'selected'
+    root.mkdir()
+    metadata = root/'.amplifier_cache_meta.json'
+    if swapped: metadata.write_text('{}')
+    else: os.mkfifo(metadata)
+    script = '''import os, json, importlib.metadata
+from pathlib import Path
+from types import SimpleNamespace
+from amplifier_acp.native.host.context_source import equivalent_context_source
+installed = json.loads(importlib.metadata.distribution('amplifier-module-context-simple').read_text('direct_url.json'))
+assert installed['vcs_info']['vcs'] == 'git'
+if {swapped!r}:
+    original_open = os.open
+    def swapped_open(path, flags, *args, **kwargs):
+        if str(path) == {metadata!r}:
+            Path(path).unlink()
+            os.mkfifo(path)
+        return original_open(path, flags, *args, **kwargs)
+    os.open = swapped_open
+seen = []
+def resolve():
+    seen.append(True)
+    return Path({root!r})
+source = SimpleNamespace(resolve=resolve)
+assert equivalent_context_source('context-simple', {hint!r}, source) is source
+assert seen == [True]
+'''.format(swapped=swapped, metadata=str(metadata), root=str(root), hint=HINT)
+    result = subprocess.run([sys.executable, '-I', '-B', '-c', script], capture_output=True, text=True, timeout=3)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize('shape', ['array', 'null', 'oversized', 'symlink'])
+def test_source_metadata_without_bounded_regular_object_proof_preserves_source(copies, shape):
+    metadata = copies.root/'.amplifier_cache_meta.json'
+    if shape == 'array': metadata.write_text('[]')
+    elif shape == 'null': metadata.write_text('null')
+    elif shape == 'oversized': metadata.write_text(json.dumps(copies.metadata) + ' '*16385)
+    elif shape == 'symlink':
+        saved = metadata.with_suffix('.saved')
+        metadata.rename(saved)
+        metadata.symlink_to(saved)
+    assert policy.equivalent_context_source('context-simple', HINT, copies.source) is copies.source
