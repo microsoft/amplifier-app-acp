@@ -78,7 +78,8 @@ class Session:
         self.worker=NativeWorker(self.identity,self.cwd,config,self.observe,self.bridge)
         self.report=await self.worker.start(self.server.host_info if HOST in self.server.extensions else None,self.mcp_servers)
         self.cancelled=False
-        await self.refresh_options(notify=False)
+        if await self.refresh_options(notify=False):
+            await self.update('config_option_update',configOptions=self.config_options)
         self.schedule_retirement()
 
     def schedule_retirement(self):
