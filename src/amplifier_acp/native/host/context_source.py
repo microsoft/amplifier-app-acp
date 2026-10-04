@@ -22,6 +22,7 @@ import re
 
 import subprocess
 
+import stat
 
 from urllib.parse import urlsplit
 
@@ -81,6 +82,61 @@ class _InstalledSource:
         return self.package
 
 
+def _read_binding(path):
+    # Refuse unsupported safe-open semantics instead of blocking on a special
+    # file swapped in after lstat. Never follow the final path's symlink.
+    if not hasattr(os, 'O_NONBLOCK') or not hasattr(os, 'O_NOFOLLOW'):
+        return None
+    def identity(value):
+        return (value.st_dev, value.st_ino, value.st_mode, value.st_size,
+                value.st_mtime_ns, value.st_ctime_ns)
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode) or before.st_size > 16_384:
+        return None
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode) or identity(opened) != identity(before):
+            return None
+        raw = os.read(fd, 16_385)
+        if (len(raw) != opened.st_size or len(raw) > 16_384
+                or identity(os.fstat(fd)) != identity(opened)
+                or identity(path.lstat()) != identity(opened)):
+            return None
+        return json.loads(raw)
+    finally:
+        os.close(fd)
+
+
+def _shared_binding_matches(root, hint, metadata, commit):
+    """A shared object records its commit; its scoped binding records the ref.
+
+    Inspect exactly that binding without resolving a branch, creating a cache,
+    or importing code. The caller still verifies HEAD, cleanliness and every
+    package byte before substituting the installed source.
+    """
+    store_home = os.environ.get('AMPLIFIER_SOURCE_STORE')
+    if not store_home or metadata.get('immutable') is not True or metadata.get('ref') != commit:
+        return False
+    from amplifier_foundation.sources.shared import SharedSourceStore, source_id, binding_root
+    from .config import app_home
+    from ..updates import foundation_home
+    store = SharedSourceStore(store_home)
+    url = metadata['git_url']
+    if store.checkout(url, commit).resolve() != root:
+        return False
+    registry = Path(os.environ.get('AMPLIFIER_ACP_REGISTRY_HOME') or foundation_home(app_home()))
+    parsed = urlsplit(hint[4:])
+    repo_path, _, revision = parsed.path.rpartition('@')
+    requested_url = parsed._replace(path=repo_path).geturl()
+    binding = binding_root(registry / 'cache') / '.source-bindings' / (source_id(requested_url, revision) + '.json')
+    value = _read_binding(binding)
+    if not isinstance(value, dict):
+        return False
+    return (value.get('commit') == commit and value.get('ref') == revision
+            and _repository(value.get('git_url', '')) == _repository(requested_url))
+
+
 def equivalent_context_source(module_id, hint, source):
     """Return the installed package only after proving the selected source equal.
 
@@ -114,10 +170,12 @@ def equivalent_context_source(module_id, hint, source):
             return source
         root = selected.parent if selected.name == _PACKAGE else selected
         package = root / _PACKAGE
-        metadata = json.loads((root / '.amplifier_cache_meta.json').read_text())
-        if (metadata.get('commit') != installed_commit
+        metadata = _read_binding(root / '.amplifier_cache_meta.json')
+        if (not isinstance(metadata, dict)
+                or metadata.get('commit') != installed_commit
                 or _repository(metadata.get('git_url', '')) != requested_repo
-                or (metadata.get('ref') != revision and revision != installed_commit)):
+                or (metadata.get('ref') != revision and revision != installed_commit
+                    and not _shared_binding_matches(root, hint, metadata, installed_commit))):
             return source
         head = _git(root, 'rev-parse', 'HEAD')
         if head.returncode or head.stdout.strip() != installed_commit:
@@ -133,7 +191,7 @@ def equivalent_context_source(module_id, hint, source):
         if not (package / '__init__.py').is_file() or _files(package) != _files(installed):
             return source
         return _InstalledSource(installed)
-    except (OSError, ValueError, TypeError, AttributeError, importlib.metadata.PackageNotFoundError,
+    except (OSError, ValueError, TypeError, AttributeError, ImportError,
             subprocess.TimeoutExpired):
         # Missing/unverifiable provenance is not permission to switch sources.
         return source

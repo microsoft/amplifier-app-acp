@@ -11,6 +11,8 @@ from urllib.parse import urlsplit,urlunsplit
 MAX_RECORDS=5000
 MAX_RECEIPT=8*1024*1024
 
+from amplifier_acp import preparation_policy as runtime_preparation
+
 def digest(value):return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False,allow_nan=False).encode()).hexdigest()
 def safe_url(value):
     if not isinstance(value,str):return None
@@ -122,7 +124,7 @@ def interpreter(mounts,instance,module_source_overrides=None):
         rows.append(public_distribution({'name':name,'version':dist.version,'directUrl':json.loads(direct)}))
         if len(rows)>MAX_RECORDS:raise ValueError('Interpreter distributions exceed inspection bound')
     rows.sort(key=lambda row:row['name'])
-    value={'version':1,'scope':'resident-native-worker','available':True,'resident':True,'instanceId':instance,'capturedAt':time.time(),'generation':os.environ.get('AMPLIFIER_UNIFIED_RELEASE') or None,'python':{'executable':sys.executable,'version':platform.python_version(),'prefix':sys.prefix},'mounts':mounts,'mountedCount':len(mounts),'coverage':{'installedDistributions':True,'selectedRootMounts':True,'hooksRegistration':'not_inspected','delegatedSessions':'not_inspected','loadedCodeBytesVerified':False},'items':rows}
+    value={**runtime_preparation.metadata(),'version':1,'scope':'resident-native-worker','available':True,'resident':True,'instanceId':instance,'capturedAt':time.time(),'generation':os.environ.get('AMPLIFIER_UNIFIED_RELEASE') or None,'python':{'executable':sys.executable,'version':platform.python_version(),'prefix':sys.prefix},'mounts':mounts,'mountedCount':len(mounts),'coverage':{'installedDistributions':True,'selectedRootMounts':True,'hooksRegistration':'not_inspected','delegatedSessions':'not_inspected','loadedCodeBytesVerified':False},'items':rows}
     if len(json.dumps(value).encode())>MAX_RECEIPT:raise ValueError('Runtime inspection exceeds8MiB')
     value['moduleSourceOverrides'] = module_source_overrides or {}
     return {**value,'revision':digest(value)}

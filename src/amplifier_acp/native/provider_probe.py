@@ -22,6 +22,8 @@ from amplifier_acp.native.provider_environment import (
 )
 
 
+from amplifier_acp import preparation_policy as runtime_preparation
+
 def public(value):
     if hasattr(value, 'model_dump'): value=value.model_dump(mode='json')
     if isinstance(value, dict):
@@ -32,6 +34,7 @@ def public(value):
     return value
 
 
+@runtime_preparation.governed
 async def query(request):
     from amplifier_acp.module_sources import from_environment
     source=from_environment().get(request['module']) or request.get('source')
@@ -42,7 +45,7 @@ async def query(request):
         from amplifier_foundation import Bundle
         os.environ['AMPLIFIER_HOME']=request['registryHome']
         bundle=Bundle.from_dict({'bundle':{'name':'provider-setup'},'providers':[{'module':request['module'],'source':source}]})
-        await bundle.prepare(strict=True)
+        await runtime_preparation.prepare(bundle, strict=True)
     cls=provider_class(request['module'])
     # Metadata gets no credentials/config, except the saved endpoint when the
     # public constructor requires it. No model-list or inference call is made.

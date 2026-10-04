@@ -6,9 +6,12 @@ from pathlib import Path
 import sys
 
 
+from amplifier_acp import preparation_policy as runtime_preparation
+
 def emit(**event):
     print(json.dumps(event),flush=True)
 
+@runtime_preparation.governed
 async def main():
     request=json.loads(sys.stdin.readline())
     if request.get('module')!='provider-openai-chatgpt':
@@ -27,7 +30,7 @@ async def main():
             if not source:raise ValueError('No configured source for this provider.')
             os.environ['AMPLIFIER_HOME']=request['registryHome']
             bundle=Bundle.from_dict({'bundle':{'name':'provider-sign-in'},'providers':[{'module':request['module'],'source':source}]})
-            await bundle.prepare(strict=True)
+            await runtime_preparation.prepare(bundle, strict=True)
         mode=request.get('authMode','chatgpt_codex')
         if mode=='chatgpt_plan':
             from amplifier_module_provider_openai_chatgpt.plan_auth import login

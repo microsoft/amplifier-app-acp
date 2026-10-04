@@ -40,6 +40,8 @@ from ..provider_environment import iter_provider_rows, materialize_bundle_provid
 LOOP_SOURCE = "git+https://github.com/microsoft/amplifier-module-loop-live@main"
 
 
+from amplifier_acp import preparation_policy as runtime_preparation
+
 def redact(value):
     if isinstance(value, dict):
         return {key: "[REDACTED]" if any(term in key.lower() for term in ("api_key", "token", "secret", "password", "authorization", "cookie")) else redact(item)
@@ -681,6 +683,7 @@ def apply_runtime_plan(loaded, edited, config, execution_workspace):
             setattr(loaded, key, _expand_module_configuration(getattr(loaded, key)))
     return loaded
 
+@runtime_preparation.governed
 async def prepare_manager(workspace, *, runtime=None, bundle=None, background_delegate=True,
                           ask=None, report_dir=None, resume=False, selection=None,
                           application_host="Amplifier ACP", shared_handle=None,
@@ -788,7 +791,7 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
     # Activate modules from the same generation as the bundle registry. The
     # shared AMPLIFIER_HOME still owns history/settings, not app module caches.
     source_resolver = prepare_source_resolver(loaded, config, snapshot, components)
-    prepared = await loaded.prepare(strict=True, install_deps=not (qualification_readonly or os.environ.get("AMPLIFIER_RUNTIME_IMMUTABLE") == "1"), **preparation_policy,
+    prepared = await runtime_preparation.prepare(loaded, strict=True, readonly=qualification_readonly, **preparation_policy,
         cache_dir=config.registry_home / "cache",
         source_resolver=source_resolver,
         progress_callback=progress)
@@ -967,6 +970,7 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
             "module_load_failures": failures}
         from amplifier_acp.module_sources import provenance
         report["moduleSourceOverrides"] = provenance(config)
+        report.update(runtime_preparation.metadata())
         report["config_inputs"] = config_inputs
         report["history_source"] = history_source
         report["execution_workspace"] = str(execution_workspace)
@@ -988,6 +992,8 @@ async def prepare_dependencies(workspace, *, bundle=None, install_overrides=None
     already imported wheel runtime with an editable cache in one interpreter.
     No conversation, history store, job recovery or model execution is opened.
     """
+    from amplifier_acp.preparation_policy import require_mutable
+    require_mutable()
     config = load_config(workspace, global_only=global_only)
     from .config import prepare_registry
     prepare_registry(config)
@@ -1006,7 +1012,7 @@ async def prepare_dependencies(workspace, *, bundle=None, install_overrides=None
     from .config import configure_skill_cache
     configure_skill_cache(loaded, config.registry_home)
     source_resolver = prepare_source_resolver(loaded, config, snapshot, components)
-    prepared = await loaded.prepare(strict=True, refresh_dependencies=True,
+    prepared = await runtime_preparation.prepare(loaded, strict=True, refresh_dependencies=True,
         **({"dependency_batch": dependency_batch} if dependency_batch is not None else {}),
         **({'install_overrides': Path(install_overrides)} if install_overrides is not None else {}),
         cache_dir=config.registry_home / 'cache',

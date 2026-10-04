@@ -126,9 +126,22 @@ class BundleTransaction:
         if state.exists(): write_private(state, json.dumps(reset_controls(json.loads(state.read_text()), reset_model=reset_model)))
 
 
+def _failure_reference(error, session_id):
+    from .worker_diagnostics import StartupCapture, diagnostic_reference
+    reference = diagnostic_reference(error)
+    if reference:
+        return reference
+    capture = StartupCapture()
+    try:
+        path = capture.save(error, session_id)
+        return {'diagnosticReceipt': path.name} if path else {}
+    finally:
+        capture.close()
+
+
 async def switch(worker, args):
     """Called under the worker's command lock and Foundation writer ownership."""
-    from ..bundle_commands import BundlePreflightRefusal
+    from ..bundle_commands import BundlePreflightRefusal, BundleActivationFailure
     try:
         worker.controls.require_idle()
         checked, resolved_root = await inspect_bundle(worker.controls, worker.workspace, args['bundle'])
@@ -139,8 +152,12 @@ async def switch(worker, args):
         if not checked['modelCompatible'] and not args.get('resetModel'):
             worker.bundle_preview = {**checked, 'previewId': str(uuid.uuid4())}
             return {'requiresModelChoice': True, 'preview': worker.bundle_preview}
-    except ValueError as exc:
-        raise BundlePreflightRefusal('Bundle activation preflight refused; no activation was applied') from exc
+    except Exception as exc:
+        diagnostic = _failure_reference(exc, worker.runtime.session_id)
+        if isinstance(exc, ValueError):
+            raise BundlePreflightRefusal('Bundle activation preflight refused; no activation was applied', diagnostic=diagnostic) from exc
+        # Cache, module or transport errors are evidence, not a no-effect proof.
+        raise BundleActivationFailure(diagnostic=diagnostic) from exc
     await worker.controls.checkpoint()
     old_config = copy.deepcopy(worker.start_config)
     journal = BundleTransaction(worker.home, worker.workspace, worker.runtime.session_id)
@@ -168,12 +185,18 @@ async def switch(worker, args):
         worker.bundle_preview = None
         return {'bundle': args['bundle'], 'configuration': worker.controls.configuration(),
                 'providers': await worker.controls.perform('configuration.providers'), 'historyPreserved': True}
-    except BaseException:
+    except BaseException as exc:
+        diagnostic = _failure_reference(exc, worker.runtime.session_id)
         try:
-            await dispose()
-        finally:
-            journal.restore()
-        await worker.start(old_config, raise_errors=True, recover_bundle=False)
+            try:
+                await dispose()
+            finally:
+                journal.restore()
+            await worker.start(old_config, raise_errors=True, recover_bundle=False)
+        except Exception as rollback_error:
+            raise BundleActivationFailure(diagnostic=diagnostic) from rollback_error
+        if isinstance(exc, Exception):
+            raise BundleActivationFailure(diagnostic=diagnostic) from exc
         raise
     finally:
         worker.remounting = False

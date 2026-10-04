@@ -223,6 +223,7 @@ async def ensure(home, generation, session, *, shared_home=None):
         from .runtime_qualification import freeze, prepare_overrides, verify_recorded
         from .update_sources import store_environment
 
+        from amplifier_acp.preparation_policy import staging_environment
         uv = shutil.which("uv")
         await process(
             uv,
@@ -232,6 +233,7 @@ async def ensure(home, generation, session, *, shared_home=None):
             str(project),
             "--python",
             "3.13",
+            env=staging_environment(os.environ, project, Path(home)/"runtime", prepared=False),
             timeout=900,
         )
         overrides = await prepare_overrides(
@@ -246,6 +248,7 @@ async def ensure(home, generation, session, *, shared_home=None):
             "AMPLIFIER_INSTALL_PREPARATION": uuid.uuid4().hex,
             "UV_OVERRIDE": str(overrides),
         }
+        env = staging_environment(env, project, Path(home)/'runtime')
         command = [
             uv,
             "run",
@@ -282,6 +285,7 @@ async def ensure(home, generation, session, *, shared_home=None):
         final = await freeze(manager, selected, project)
         overrides = stage / "runtime-install-overrides.txt"
         command[command.index("--project") + 1] = str(final)
+        env = staging_environment(env, final, Path(home)/"runtime", readonly=True)
         await process(
             *command,
             str(workspace),

@@ -39,6 +39,8 @@ except ImportError:  # Executed directly inside the isolated runtime.
 _PROTOCOL = None
 
 
+from amplifier_acp import preparation_policy as runtime_preparation
+
 def configure_protocol():
     global _PROTOCOL
     _PROTOCOL = os.fdopen(os.dup(sys.stdout.fileno()), "w", buffering=1)
@@ -456,7 +458,7 @@ class Worker:
             # Keep absolute module sources and full mount plans on disk. The UI
             # gets a compact capability report, not credentials or config blobs.
             public = {key: report.get(key) for key in ("bundle", "root_bundle", "workspace", "session_id", "resumed", "providers",
-                "tools", "agents", "provider_choices", "selection", "effective_selection", "delegationRouting", "steering", "capabilities", "fork_context_messages", "standalone", "settings_file")}
+                "tools", "agents", "provider_choices", "selection", "effective_selection", "delegationRouting", "steering", "capabilities", "runtimePreparation", "fork_context_messages", "standalone", "settings_file")}
             publish({"type": "runtime.ready", "report": public})
         except asyncio.CancelledError:
             raise
@@ -952,10 +954,10 @@ class Worker:
         except Exception as exc:
             from .runtime_controls import ConfigurationConflict
             from .task_continuity import TaskRefusal
-            from ..bundle_commands import BundlePreflightRefusal
+            from ..bundle_commands import BundlePreflightRefusal, BundleActivationFailure
             from .history_revision import ContextClearError
             from .host.model_selection import ProviderSelectionRefusal
-            detail=exc.configuration_conflict if isinstance(exc,ConfigurationConflict) else exc.data if isinstance(exc,(TaskRefusal,BundlePreflightRefusal,ContextClearError,ProviderSelectionRefusal)) else {}
+            detail=exc.configuration_conflict if isinstance(exc,ConfigurationConflict) else exc.data if isinstance(exc,(TaskRefusal,BundlePreflightRefusal,BundleActivationFailure,ContextClearError,ProviderSelectionRefusal)) else {}
             publish({"op": "reply", "id": identity, "error": f"{type(exc).__name__}: {exc}",**detail})
 
     async def read(self):
@@ -981,6 +983,7 @@ class Worker:
             transport.close()
             self.shutdown.set()
 
+    @runtime_preparation.governed
     async def run(self):
         read = asyncio.create_task(self.read())
         try:

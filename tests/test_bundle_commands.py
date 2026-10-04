@@ -267,3 +267,38 @@ async def test_corrupt_oversized_receipt_refuses_before_payload_materialization(
     with pytest.raises(BundleCommandError) as oversized:owner.receipt('bounded')
     assert oversized.value.data['reason']=='bundle-command-receipt-oversized'
     with pytest.raises(BundleCommandError):await owner.perform('bundle.save',{'commandId':'bounded'},original)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('refused', [False, True])
+async def test_private_diagnostic_reference_is_durable_without_reclassifying_outcome(tmp_path, refused):
+    from amplifier_acp.bundle_commands import BundleActivationFailure, BundlePreflightRefusal
+    owner = BundleCommands({'appHome': str(tmp_path/'app')}, str(tmp_path))
+    args = {'commandId': 'diagnosed'}
+    reference = {'diagnosticReceipt': 'startup-' + 'a'*32 + '.log'}
+    calls = []
+    async def invoke(effect):
+        calls.append(1)
+        effect()
+        if refused: raise BundlePreflightRefusal('Private failure', diagnostic=reference)
+        raise BundleActivationFailure(diagnostic=reference)
+    for _ in range(2):
+        with pytest.raises(BundleCommandError) as error:
+            await owner.perform('bundle.switch', args, invoke)
+        assert error.value.data['diagnosticReceipt'] == reference['diagnosticReceipt']
+        assert (error.value.data.get('executed') is False) == refused
+    receipt = owner.receipt(args['commandId'])
+    assert calls == [1]
+    assert receipt['status'] == ('refused' if refused else 'unknown')
+    assert receipt['diagnosticReceipt'] == reference['diagnosticReceipt']
+    if not refused:
+        assert not {'completedAt','executed','reason','result'} & receipt.keys()
+    from jsonschema import validate
+    validate({'receipt': receipt}, json.loads((Path(__file__).parents[1]/'schemas/native-bundle-command-receipt.v1.json').read_text()))
+
+
+@pytest.mark.parametrize('reference', ['../startup-'+'a'*32+'.log', '/private/key', 'secret text', 'startup-'+'a'*33+'.log', None, 12])
+def test_bundle_diagnostics_reject_unowned_or_unbounded_references(reference):
+    from amplifier_acp.bundle_commands import BundleActivationFailure
+    error = BundleActivationFailure(diagnostic={'diagnosticReceipt': reference, 'private': 'secret'})
+    assert error.data == {'outcome': 'unknown', 'replayed': False}

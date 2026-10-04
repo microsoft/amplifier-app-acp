@@ -312,3 +312,9 @@ receipts after a lost reply. Archived viewing references never grant canonical
 fork/edit/export authority.
 
 Exact failed-input settlement and passive recovery are documented in [input outcomes](docs/input-outcomes.md); terminal failure never means no effects or replay permission.
+
+Trusted launchers can bind [`runtimeImmutable: true`](docs/runtime-preparation-policy.md)
+to prohibit dependency installation throughout native worker and probe lifetimes.
+Configured modules stay configured; changed dependencies require a separate
+owned staging environment. Initialize and resident inspection expose the actual
+`runtimePreparation` binding only when the required public Foundation policy is available.

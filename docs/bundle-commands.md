@@ -110,3 +110,30 @@ provider, loop, context, hook and tool implementations are unchanged. The existi
 settings mutator/lock, Foundation ownership, remount and rollback remain their
 owners. Other registration/provider/module controls do not gain this receipt
 contract implicitly.
+
+## Private failure evidence
+
+Version 1 receipts may add `diagnosticReceipt` only for `refused` or `unknown`
+commands. It is an opaque private worker-log basename matching
+`^startup-[a-f0-9]{32}\.log$` (44 characters). It contains no path, exception text
+or credential. Consumers with closed receipt validators must accept this
+additive field before adopting this native artifact; successful receipts retain
+their original shape. Native error data and duplicate exact-command inspection
+preserve the same reference. A diagnostic does not establish completion, restore
+an earlier outcome, or authorize a retry. Existing historical unknowns remain
+unknown and are not rewritten. Private diagnostics use the existing bounded,
+redacted owner log writer; a log-write failure must not replace the command error.
+
+Foundation shared-source objects identify a commit while their per-registry
+bindings identify branches. The `context-simple` compatibility check verifies
+both before reusing an installed package: selected object location, requested
+repository and scoped branch binding, installed commit and import origin, clean
+Git tree including dependency declarations, and every package file. Other refs,
+local/custom sources, changed files, extra files and escaping symlinks continue
+through their selected resolver and Core validation; no import cache is purged.
+This repairs the Work boundary-context to Foundation simple-context transition
+without weakening Core's source identity checks.
+The scoped binding and source-root metadata are read only through a nonblocking,
+no-follow regular-file descriptor with size and before/after identity checks.
+Special files, replaced metadata, non-object JSON and platforms without those
+safe-open flags retain the selected source.
