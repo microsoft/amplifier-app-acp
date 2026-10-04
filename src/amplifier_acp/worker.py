@@ -82,7 +82,14 @@ class NativeWorker:
         try:
             self.report = await asyncio.wait_for(asyncio.shield(self.ready), self.config.get('startupTimeout',180))
             expected_policy=preparation_metadata(env).get('runtimePreparation')
-            if expected_policy and self.report.get('runtimePreparation')!=expected_policy:
+            reported_policy=self.report.get('runtimePreparation')
+            if expected_policy and not (
+                    type(reported_policy) is dict
+                    and reported_policy.keys()==expected_policy.keys()
+                    and type(reported_policy.get('version')) is int
+                    and reported_policy.get('immutable') is True
+                    and reported_policy.get('dependencyInstallation') is False
+                    and reported_policy==expected_policy):
                 raise NativeError('Native worker did not confirm the launcher immutable preparation policy; use the qualified native worker package.')
         except BaseException:
             await self.close()

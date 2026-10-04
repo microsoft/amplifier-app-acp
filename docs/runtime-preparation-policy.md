@@ -24,7 +24,8 @@ Initialize's native metadata, native worker readiness, and resident `runtime.ins
 
 This describes the actual native process binding, not a sandbox or an attestation
 of loaded code bytes. Version 1 is the native binding contract, not a guessed
-Foundation package version. A worker lacking the exact requested readiness
+Foundation package version. Readiness requires exact keys and field types;
+Python's boolean/numeric equality does not establish compatibility. A worker lacking the exact requested readiness
 marker is closed and cannot be used. The trusted launcher must still bind the
 qualified executable/package; a JSON option cannot sandbox an arbitrary
 replacement worker or attest its pre-handshake behavior. The absence of this marker does not prove that a

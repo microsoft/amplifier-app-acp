@@ -136,16 +136,34 @@ async def login(token_file_path, print_fn):
 
 
 @pytest.mark.asyncio
-async def test_immutable_launcher_refuses_worker_without_runtime_readiness_proof(tmp_path, monkeypatch):
+@pytest.mark.parametrize('change, accepted', [
+    ({}, True),
+    ({'version': True}, False),
+    ({'version': 1.0}, False),
+    ({'immutable': 1}, False),
+    ({'dependencyInstallation': 0}, False),
+    ({'extra': True}, False),
+    ({'policy': 'unsupported'}, False),
+    (None, False),
+])
+async def test_immutable_launcher_checks_exact_runtime_readiness_types(tmp_path, monkeypatch, change, accepted):
     from amplifier_acp.worker import NativeWorker, NativeError
     from unittest.mock import AsyncMock
     import uuid
     monkeypatch.setenv('AMPLIFIER_RUNTIME_IMMUTABLE', '0')
     script = tmp_path/'unqualified-worker.py'
-    script.write_text("import sys,json\njson.loads(sys.stdin.readline())\nprint(json.dumps({'type':'runtime.ready','report':{}}),flush=True)\njson.loads(sys.stdin.readline())\n")
+    marker = {'version': 1, 'immutable': True, 'dependencyInstallation': False,
+              'policy': 'foundation-dependency-installation'}
+    report = {} if change is None else {'runtimePreparation': {**marker, **change}}
+    script.write_text("import sys,json\njson.loads(sys.stdin.readline())\nprint("+
+        repr(json.dumps({'type': 'runtime.ready', 'report': report}))+",flush=True)\njson.loads(sys.stdin.readline())\n")
     worker = NativeWorker(str(uuid.uuid4()), str(tmp_path), {'runtimeImmutable': True,
         'home': str(tmp_path/'home'), 'appHome': str(tmp_path/'app'),
         'workerCommand': [sys.executable, '-I', '-B', str(script)]}, AsyncMock(), AsyncMock())
-    with pytest.raises(NativeError, match='did not confirm'):
-        await worker.start()
+    if accepted:
+        assert await worker.start() == report
+        await worker.close()
+    else:
+        with pytest.raises(NativeError, match='did not confirm'):
+            await worker.start()
     assert worker.closed and worker.process.returncode == 0
