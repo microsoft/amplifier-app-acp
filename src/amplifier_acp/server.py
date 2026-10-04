@@ -227,36 +227,45 @@ class Session:
                 'currentValue':state.get('active') or '__default__',
                 'options':[{'value':'__default__','name':'Bundle default'}]+[
                     {'value':r['name'],'name':r['name'],'description':r.get('description','')} for r in state['modes']]})
-        # Configured choices are not a remote model catalog and never trigger model calls.
-        choices=[r for r in self.report.get('provider_choices',[]) if r.get('model')]
-        selection=self.report.get('selection') or self.report.get('effective_selection') or {}
-        selected_id=selection.get('instance') or selection.get('id')
-        if selected_id and selection.get('model') and not any(r.get('id')==selected_id and r.get('model')==selection['model'] for r in choices):
-            choices.append({'id':selected_id,'model':selection['model'],'display_name':selected_id})
-        self.model_choices=choices
-        if choices:
-            current=next((str(i) for i,r in enumerate(choices) if r.get('id')==selected_id and r.get('model')==selection.get('model')),'__default__')
-            options.append({'id':'model','name':'Configured model','category':'model','type':'select','currentValue':current,
-                'options':[{'value':'__default__','name':'Bundle default'}]+[{'value':str(i),'name':str(r.get('display_name') or r['id'])+' / '+r['model']} for i,r in enumerate(choices)]})
+        from .configuration_options import project
+        provider_state=await self.worker.control('configuration.providers',{'includeAuthentication':False})
+        model_options,self.model_choices,self.effort_choices=project(provider_state)
+        self.provider_state=provider_state
+        options.extend(model_options)
         self.config_options=options
         if notify:await self.update('config_option_update',configOptions=options)
         return options
 
     async def configure(self,identity,value):
         if self.lock.locked():raise RpcError(-32000,'Configuration requires an idle turn.',
-            {'executed':False,'replayed':False,'reason':'provider-selection-busy'} if identity=='model' else None)
+            {'executed':False,'replayed':False,'reason':'provider-selection-busy'} if identity in {'model','reasoning_effort'} else None)
         async with self.lock:return await self.configure_idle(identity,value)
 
     async def configure_idle(self,identity,value):
         await self.start()
+        # Validate against current owner state, not a stale client/private draft.
+        await self.refresh_options(notify=False)
         option=next((r for r in self.config_options if r['id']==identity),None)
-        if not option or value not in {r['value'] for r in option['options']}:raise RpcError(-32602,'Unknown session configuration option or value.')
+        choices=[item for row in (option or {}).get('options',[]) for item in row.get('options',[row])]
+        if not option or value not in {r['value'] for r in choices}:raise RpcError(-32602,'Unknown session configuration option or value.')
         if identity=='mode':await self.worker.control('mode.clear' if value=='__default__' else 'mode.set',{} if value=='__default__' else {'name':value})
-        elif value=='__default__':await self.worker.control('provider.reset');self.report['selection']=None;self.report['effective_selection']=None
-        else:
-            choice=self.model_choices[int(value)]
-            selection={'instance':choice['id'],'model':choice['model']}
-            await self.worker.control('provider.select',selection);self.report['selection']=selection
+        elif identity=='model':
+            if value=='__default__':await self.worker.control('provider.reset')
+            else:
+                selected=self.model_choices[value]
+                effective=self.provider_state.get('selection') or self.provider_state.get('effective') or {}
+                # Re-selecting the current pair is a no-op, not an effort reset.
+                if not self.provider_state.get('pinned') or any(selected[k]!=effective.get(k) for k in ('instance','model')):
+                    await self.worker.control('provider.select',selected)
+        elif identity=='reasoning_effort':
+            if value=='__default__':
+                effective=self.provider_state.get('selection') or self.provider_state.get('effective') or {}
+                selected={key:effective[key] for key in ('instance','model')}
+            else:selected=self.effort_choices[value]
+            effective=self.provider_state.get('selection') or self.provider_state.get('effective') or {}
+            if any(selected.get(k)!=effective.get(k) for k in ('instance','model','effort')):
+                await self.worker.control('provider.select',selected)
+        else:raise RpcError(-32602,'Unknown session configuration option.')
         return {'configOptions':await self.refresh_options()}
 
     async def configuration_control(self,operation,args):
@@ -873,10 +882,16 @@ class Server:
             if operation=='configuration.cancel':return session.cancel_configuration(args)
             if operation=='configuration.apply':result=await session.apply_configuration(args)
             elif operation in {'configuration.toggle','bundle.switch','provider.select','provider.reset','mode.set','mode.clear'}:result=await session.configuration_control(operation,args)
-            else:result=await session.worker.control(operation,args)
+            else:
+                try:result=await session.worker.control(operation,args)
+                except NativeError:
+                    # Discovery failure must not conceal the existing effective pin.
+                    # Publish cache availability without retrying discovery/effects.
+                    if operation=='configuration.providerModels':await session.refresh_options()
+                    raise
             if operation=='configuration.inspect':result={**result,'pendingConfiguration':session.pending_configuration()}
             if operation=='configuration.apply' and isinstance(result.get('configuration'),dict):result={**result,'configuration':{**result['configuration'],'pendingConfiguration':None}}
-            if operation in {'configuration.apply','bundle.switch','provider.select','provider.reset','mode.set','mode.clear'}:
+            if operation in {'configuration.apply','bundle.switch','provider.select','provider.reset','mode.set','mode.clear','configuration.providerModels'}:
                 if operation in {'provider.select','provider.reset'}:session.report['selection']=result.get('selection');session.report['effective_selection']=None
                 await session.refresh_options()
             return result

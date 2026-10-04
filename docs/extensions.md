@@ -18,7 +18,7 @@ Client request `_amplifier/native`:
 
 `capabilities` returns supported operation names and the mounted report. Other
 operations use the existing native runtime argument/result contracts. Standard
-`configOptions` covers configured model choices and modes. The extension retains
+`configOptions` covers [provider-grouped model choices, supported reasoning](standard-configuration.md) and modes. The extension retains
 composition/configuration, goals, budgets, provider inspection, native provider
 controls, child messaging/steering/stopping, root steering, naming, scheduling,
 observations, memory, kernels, history editing and generic tool invocation.

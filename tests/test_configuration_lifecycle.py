@@ -14,7 +14,7 @@ async def test_apply_remount_and_cancel_queued_configuration(tmp_path):
   assert 'result' in selected,selected
   configs=[e['params']['update']['configOptions'] for e in client.events if e.get('method')=='session/update' and e['params']['update']['sessionUpdate']=='config_option_update']
   model=next(row for row in configs[-1] if row['id']=='model')
-  assert next(row for row in model['options'] if row['value']==model['currentValue'])['name'].endswith(' / custom-fixture-model')
+  assert next(row for group in model['options'] for row in group['options'] if row['value']==model['currentValue'])['name']=='custom-fixture-model'
   inspected=await control('configuration.inspect');plan=inspected['result']['plan'];plan['session']['context']['config']={'max_tokens':4321}
   applied=await control('configuration.apply',{'config':plan,'expectedConfigurationRevision':inspected['result']['configurationRevision']});assert applied['result']['remounted'],applied
   inspected=await control('configuration.inspect');assert inspected['result']['plan']['session']['context']['config']['max_tokens']==4321

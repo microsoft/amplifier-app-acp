@@ -545,7 +545,7 @@ class RuntimeControls:
                 if inspect.isawaitable(schema):
                     schema = await schema
                 from .provider_status import authentication_status
-                authentication, auth_status_supported = authentication_status(provider, info)
+                authentication, auth_status_supported = authentication_status(provider, info) if args.get('includeAuthentication') is not False else (None,False)
                 from .provider_catalog import fingerprint
                 mounted=next((row for row in getattr(self.session,'config',{}).get('providers',[]) if (row.get('id') or row.get('instance_id') or row.get('module','').removeprefix('provider-'))==name),{})
                 catalog_key=fingerprint([self.catalog_revision,name,mounted or getattr(provider,'config',{}),public_config(info)])
@@ -555,7 +555,17 @@ class RuntimeControls:
                     from .provider_catalog import configuration_key
                     current=configuration_key(captured['workspace'],mounted['module'],mounted.get('config',{}),captured['sources'][name],home=captured['home'])
                     if current==captured['keys'][name]:shared['sharedCatalogKey']=current
-                rows.append({"id":name,"module":mounted.get('module'),"catalogKey":catalog_key,**shared,"info":public_config(info),"configSchema":public_config(schema),
+                # Cached discovery is passive: no list_models/login/model call on
+                # session initialization, option refresh, or an unrelated provider.
+                model_key=(name,id(provider),fingerprint(getattr(provider,'config',{})))
+                cached=self.model_catalog.peek(model_key)
+                from amplifier_acp.configuration_options import model_rows
+                catalog={'state':'not-loaded','models':[],'fresh':False}
+                if cached is not None:
+                    try:catalog={'state':'available','models':list(model_rows(cached).values()),'fresh':self.model_catalog.fresh(model_key)}
+                    except ValueError:catalog={'state':'unavailable','models':[],'fresh':False}
+                if model_key in self.model_catalog.failed_at:catalog={**catalog,'state':'unavailable','fresh':False}
+                rows.append({"id":name,"module":mounted.get('module'),"catalogKey":catalog_key,**shared,"info":public_config(info),"configSchema":public_config(schema),"modelCatalog":catalog,
                     **({"authentication":authentication} if authentication is not None else {}),
                     "supports":{"models":callable(getattr(provider,"list_models",None)),
                                 "test":callable(getattr(provider,"list_models",None)),
