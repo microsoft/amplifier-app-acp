@@ -22,6 +22,7 @@ import re
 
 import subprocess
 
+import stat
 
 from urllib.parse import urlsplit
 
@@ -81,6 +82,32 @@ class _InstalledSource:
         return self.package
 
 
+def _read_binding(path):
+    # Refuse unsupported safe-open semantics instead of blocking on a special
+    # file swapped in after lstat. Never follow the final path's symlink.
+    if not hasattr(os, 'O_NONBLOCK') or not hasattr(os, 'O_NOFOLLOW'):
+        return None
+    def identity(value):
+        return (value.st_dev, value.st_ino, value.st_mode, value.st_size,
+                value.st_mtime_ns, value.st_ctime_ns)
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode) or before.st_size > 16_384:
+        return None
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode) or identity(opened) != identity(before):
+            return None
+        raw = os.read(fd, 16_385)
+        if (len(raw) != opened.st_size or len(raw) > 16_384
+                or identity(os.fstat(fd)) != identity(opened)
+                or identity(path.lstat()) != identity(opened)):
+            return None
+        return json.loads(raw)
+    finally:
+        os.close(fd)
+
+
 def _shared_binding_matches(root, hint, metadata, commit):
     """A shared object records its commit; its scoped binding records the ref.
 
@@ -103,13 +130,9 @@ def _shared_binding_matches(root, hint, metadata, commit):
     repo_path, _, revision = parsed.path.rpartition('@')
     requested_url = parsed._replace(path=repo_path).geturl()
     binding = binding_root(registry / 'cache') / '.source-bindings' / (source_id(requested_url, revision) + '.json')
-    if binding.is_symlink():
+    value = _read_binding(binding)
+    if not isinstance(value, dict):
         return False
-    with binding.open('rb') as handle:
-        raw = handle.read(16_385)
-    if len(raw) > 16_384:
-        return False
-    value = json.loads(raw)
     return (value.get('commit') == commit and value.get('ref') == revision
             and _repository(value.get('git_url', '')) == _repository(requested_url))
 
@@ -167,7 +190,7 @@ def equivalent_context_source(module_id, hint, source):
         if not (package / '__init__.py').is_file() or _files(package) != _files(installed):
             return source
         return _InstalledSource(installed)
-    except (OSError, ValueError, TypeError, AttributeError, importlib.metadata.PackageNotFoundError,
+    except (OSError, ValueError, TypeError, AttributeError, ImportError,
             subprocess.TimeoutExpired):
         # Missing/unverifiable provenance is not permission to switch sources.
         return source

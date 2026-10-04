@@ -178,7 +178,7 @@ async def test_shared_source_branch_binding_can_reuse_identical_installed_packag
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('difference', ['missing_binding', 'different_ref', 'different_scope', 'outside_store', 'dirty_manifest', 'different_installed_bytes', 'wrong_binding_commit', 'fork_binding', 'oversized_binding', 'symlink_binding'])
+@pytest.mark.parametrize('difference', ['missing_binding', 'different_ref', 'different_scope', 'outside_store', 'dirty_manifest', 'different_installed_bytes', 'wrong_binding_commit', 'fork_binding', 'oversized_binding', 'symlink_binding', 'unsupported_foundation'])
 async def test_shared_source_unproved_binding_is_not_substituted(copies, tmp_path, monkeypatch, difference):
     from amplifier_foundation.sources.shared import SharedSourceStore, source_id
     store = SharedSourceStore(tmp_path / 'sources')
@@ -201,8 +201,75 @@ async def test_shared_source_unproved_binding_is_not_substituted(copies, tmp_pat
     elif difference == 'wrong_binding_commit': binding.write_text(json.dumps({'git_url': REPO, 'ref': 'main', 'commit': '0'*40}))
     elif difference == 'fork_binding': binding.write_text(json.dumps({'git_url': REPO.replace('/microsoft/', '/custom/'), 'ref': 'main', 'commit': copies.commit}))
     elif difference == 'oversized_binding': binding.write_text(' ' * 16385)
+    elif difference == 'unsupported_foundation':
+        import builtins
+        original_import = builtins.__import__
+        def unavailable(name, *args, **kwargs):
+            if name == 'amplifier_foundation.sources.shared': raise ImportError('No shared store API')
+            return original_import(name, *args, **kwargs)
+        monkeypatch.setattr(builtins, '__import__', unavailable)
     elif difference == 'symlink_binding':
         saved = binding.with_suffix('.saved')
         binding.rename(saved)
         binding.symlink_to(saved)
     assert policy.equivalent_context_source('context-simple', hint, source) is source
+
+
+@pytest.mark.parametrize('swapped', [False, True])
+def test_shared_binding_fifo_does_not_block_a_worker(tmp_path, swapped):
+    """A corrupt cache path cannot hang bundle activation before its read bound."""
+    import os
+    import sys
+    if not hasattr(os, 'mkfifo'):
+        pytest.skip('POSIX named-pipe regression')
+    from amplifier_foundation.sources.shared import SharedSourceStore, source_id
+    store = tmp_path / 'sources'
+    registry = tmp_path / 'registry'
+    commit = 'a' * 40
+    selected = SharedSourceStore(store).checkout(REPO, commit)
+    binding = registry / 'cache/.source-bindings' / (source_id(REPO, 'main') + '.json')
+    binding.parent.mkdir(parents=True)
+    if swapped: binding.write_text('{}')
+    else: os.mkfifo(binding)
+    script = '''import os
+from pathlib import Path
+from amplifier_acp.native.host.context_source import _shared_binding_matches
+if {swapped!r}:
+    original_open = os.open
+    def swapped_open(path, flags, *args, **kwargs):
+        if str(path) == {binding!r}:
+            Path(path).unlink()
+            os.mkfifo(path)
+        return original_open(path, flags, *args, **kwargs)
+    os.open = swapped_open
+os.environ['AMPLIFIER_SOURCE_STORE'] = {store!r}
+os.environ['AMPLIFIER_ACP_REGISTRY_HOME'] = {registry!r}
+assert not _shared_binding_matches(Path({selected!r}), {hint!r}, {{'immutable':True,'ref':{commit!r},'git_url':{repo!r}}}, {commit!r})
+'''.format(store=str(store), registry=str(registry), selected=str(selected), hint=HINT, commit=commit, repo=REPO, swapped=swapped, binding=str(binding))
+    result = subprocess.run([sys.executable, '-I', '-B', '-c', script], capture_output=True, text=True, timeout=3)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.asyncio
+async def test_actual_shared_resolver_preserves_dirty_legacy_precedence(copies, tmp_path, monkeypatch):
+    import shutil
+    from amplifier_foundation.sources.shared import SharedSourceStore
+    from amplifier_foundation.sources.git import GitSourceHandler
+    from amplifier_foundation.paths.resolution import parse_uri
+    store = SharedSourceStore(tmp_path/'sources')
+    cache = tmp_path/'registry/cache'
+    monkeypatch.setenv('AMPLIFIER_SOURCE_STORE', str(store.root))
+    monkeypatch.setenv('AMPLIFIER_ACP_REGISTRY_HOME', str(cache.parent))
+    root = await store.bind(cache, REPO, 'main', copies.commit, existing=copies.root)
+    assert store.cached(HINT, cache) == root
+    resolved = await store.resolve(HINT, cache)
+    source = SimpleNamespace(resolve=lambda: resolved.active_path)
+    assert policy.equivalent_context_source('context-simple', HINT, source).resolve() == copies.installed
+    legacy = GitSourceHandler()._get_cache_path(parse_uri(HINT), cache)
+    shutil.copytree(copies.root, legacy)
+    (legacy/'pyproject.toml').write_text('user local dependency change')
+    assert store.cached(HINT, cache) == legacy
+    resolved = await store.resolve(HINT, cache)
+    assert resolved.active_path == legacy
+    source = SimpleNamespace(resolve=lambda: resolved.active_path)
+    assert policy.equivalent_context_source('context-simple', HINT, source) is source
