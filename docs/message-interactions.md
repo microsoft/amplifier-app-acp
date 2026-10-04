@@ -98,11 +98,11 @@ and detects SQLite by its header, producing a consistent backup image of this
 adjunct. Its actual archive pipeline test verifies annotations and original
 unknown quote receipts survive. Selected private-store snapshot parts do not
 include the adjunct. Native transfer capture/install whitelists canonical history
-files only, so shared reaction state is not yet transferred. Actual native fork
-retains canonical frozen replyTo, but does not consume export_metadata. Shared
-reaction fork/copy/transfer acceptance remains unqualified until the consumer
-verifies retained source-to-target IDs and the approved principal/copy policy;
-silent omission is not an accepted fallback.
+files only, so shared reaction state is not yet transferred. The legacy native fork helper
+retains canonical frozen replyTo, but does not consume export_metadata. The
+additive public lifecycle copy consumer is qualified below. Legacy helper and
+transfer annotation acceptance remain unqualified; silent omission is not an
+accepted fallback.
 
 ## Implemented native wiring and remaining integration handoff
 
@@ -156,3 +156,31 @@ Accepted frozen quotes render from the same history metadata's `replyTo` object:
 Streaming deltas do not yet have a canonical byte locator. Bridge/client owners
 must obtain native canonical projection for completed live messages before
 enabling these actions; streaming display IDs are not substitute authority.
+
+## Additive public fork/copy preservation
+
+The actual `_amplifier/session` lifecycle fork now preserves only the trusted
+account's reactions on retained public canonical rows. It carries exact source
+row indices through complete/recovery/bundle transformations, verifies that
+retained public text and role agree, then verifies each persisted target row
+before deriving its actual target byte locator and native message ID. It uses
+no display identity or text matching to choose a row, so repeated identical rows
+remain distinct. Source and target trusted principal bindings must agree; caller
+fields cannot supply an actor. Unrelated account annotations stay in the source.
+
+Reads use at most 50 selected IDs per SQLite query, within the existing 64 MiB
+selected lifecycle history limit. The serialized annotation plan is bounded to
+one MiB; resource overflow refuses during preparation before target creation.
+More than 50 annotated rows are supported in batches. The copy atomically writes
+only annotations and new target revisions. It carries no source reaction command
+receipts, quote reservations, unknown admissions or execution authority. Original
+source state is unchanged. Copies with no retained reactions create no adjunct.
+
+The existing lifecycle marker and receipt cover annotation publication. A lost
+or failed publication leaves creation unknown and the target fenced; the same
+original command inspects that outcome without replay. The bounded result adds
+`messageAnnotations: {policy:"same-account-retained-canonical",messages,reactions,
+receiptsCopied:false}`. Legacy `native.session_store.fork_session` is not this
+public ACP consumer and remains outside this acceptance. Transfer and selected
+private-store snapshot receiver ownership remain explicit separate gaps. Full
+native authority backups preserve the original adjunct and receipts.
