@@ -283,3 +283,38 @@ def test_duplicate_origin_paths_are_checked_once_per_attestation(tmp_path, found
     monkeypatch.setattr(callback,'check_origin',checked)
     callback.attest();callback.attest()
     assert checks.count(str(code))==2  # Once each call, never cached across calls.
+
+
+@pytest.mark.parametrize('boundary', ['entry', 'exit'])
+@pytest.mark.parametrize('change', ['new_submodule', 'changed_origin'])
+def test_scope_rechecks_module_inventory_at_each_boundary(tmp_path, foundation, monkeypatch, boundary, change):
+    reference, root = manifest(tmp_path, packages=['closure_fixture_provider'])
+    monkeypatch.syspath_prepend(str(root))
+    closure.configure({'sourceResolutionManifest': reference})
+    code = root/'closure_fixture_provider/__init__.py'
+    spec = SimpleNamespace(origin=str(code), submodule_search_locations=[str(code.parent)])
+    module = SimpleNamespace(__spec__=spec, __file__=str(code))
+    monkeypatch.setitem(sys.modules, 'closure_fixture_provider', module)
+    foreign = tmp_path/'foreign.py'; foreign.write_text('unqualified')
+    def invalidate():
+        if change == 'new_submodule':
+            monkeypatch.setitem(sys.modules, 'closure_fixture_provider.late', SimpleNamespace(__file__=str(foreign)))
+        else:
+            module.__file__ = str(foreign)
+    effects = []
+    if boundary == 'entry': invalidate()
+    with pytest.raises(closure.SourceClosureDenied):
+        with closure.scope():
+            effects.append('body')
+            if boundary == 'exit': invalidate()
+    assert effects == ([] if boundary == 'entry' else ['body'])
+    assert foundation.get() is None
+
+
+def test_loaded_undeclared_file_under_qualified_root_refuses(tmp_path, foundation, monkeypatch):
+    reference, root = manifest(tmp_path, packages=['closure_fixture_provider'])
+    monkeypatch.syspath_prepend(str(root))
+    closure.configure({'sourceResolutionManifest': reference})
+    extra = root/'closure_fixture_provider/undeclared.py'; extra.write_text('unqualified')
+    monkeypatch.setitem(sys.modules, 'closure_fixture_provider.extra', SimpleNamespace(__file__=str(extra)))
+    with pytest.raises(closure.SourceClosureDenied): closure.attest()
