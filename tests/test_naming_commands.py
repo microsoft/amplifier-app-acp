@@ -84,6 +84,7 @@ async def test_actual_cold_peer_metadata_operations_do_not_start_worker(tmp_path
     try:
         initialized=await peer.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
         assert initialized['result']['agentCapabilities']['_meta']['amplifier.dev/native']['naming']['passiveMetadata']
+        assert initialized['result']['agentCapabilities']['_meta']['amplifier.dev/native']['lifecycle']['retirementStatus']['method']=='_amplifier/retire/status'
         async def operation(op,args):return await peer.request('_amplifier/naming',{'sessionId':'named','cwd':str(cwd),'operation':op,'args':args})
         read=await operation('read',{});assert read['result']['title']=='Before'
         changed=await operation('rename',{'commandId':'cold','title':'Saved cold'});assert changed['result']['applied']
@@ -91,3 +92,62 @@ async def test_actual_cold_peer_metadata_operations_do_not_start_worker(tmp_path
         receipt=await operation('receipt',{'commandId':'cold'});assert receipt['result']['receipt']['result']==changed['result']
         assert not peer.events and transcript.read_bytes()==before
     finally:await peer.close()
+
+async def test_actual_explicit_generation_once_and_manual_race_through_native_dispatch(tmp_path):
+    import asyncio,io,shutil
+    from pathlib import Path
+    from native_setup import configuration
+    from amplifier_acp.server import Server
+    config,cwd=configuration(tmp_path,idleSeconds=60)
+    declaration=Path(__file__).parent/'fixtures/provider';provider=tmp_path/'provider'
+    shutil.copytree(declaration,provider)
+    implementation=provider/'amplifier_module_provider_fixture/__init__.py'
+    body=implementation.read_text();needle='    async def complete(self,request,**kwargs):\n'
+    body=body.replace(needle,needle+'''        if self.config.get('namingFixture'):
+            import json
+            with Path(self.config['namingAudit']).open('a') as output:output.write('one explicit offline completion\\n')
+            if Path(self.config['namingArmed']).exists():
+                Path(self.config['namingEntered']).touch()
+                while not Path(self.config['namingRelease']).exists():await asyncio.sleep(.01)
+            return ChatResponse(content=[TextBlock(text=json.dumps({'action':'set','name':'Offline generated name','description':'Owned explicit naming fixture'}))],finish_reason='stop',usage=Usage(input_tokens=1,output_tokens=1,total_tokens=2))
+''',1);implementation.write_text(body)
+    settings=json.loads(config.read_text());bundle=Path(settings['bundle'])
+    content=bundle.read_text().replace(str(declaration.resolve()),str(provider.resolve()))
+    audit=tmp_path/'completions';armed=tmp_path/'armed';entered=tmp_path/'entered';release=tmp_path/'release'
+    content=content.replace('    config: {}','    config: '+json.dumps({'namingFixture':True,'namingAudit':str(audit),'namingArmed':str(armed),'namingEntered':str(entered),'namingRelease':str(release)}))
+    bundle.write_text(content)
+    server=Server(settings,io.StringIO())
+    await server.dispatch('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
+    sid=(await server.dispatch('session/new',{'cwd':str(cwd),'mcpServers':[]}))['sessionId'];session=server.sessions[sid]
+    async def metadata(op,args):return await server.dispatch('_amplifier/naming',{'sessionId':sid,'cwd':str(cwd),'operation':op,'args':args})
+    async def generate(command):return await server.dispatch('_amplifier/native',{'sessionId':sid,'operation':'session.naming.generate','args':{'commandId':command}})
+    pending=None
+    try:
+        await metadata('rename',{'commandId':'bootstrap-name','title':'Manual initial name'})
+        await server.dispatch('session/prompt',{'sessionId':sid,'prompt':[{'type':'text','text':'One owned conversation turn'}]})
+        assert len(audit.read_text().splitlines())==1
+        transcript=server.directory(str(cwd),sid)/'transcript.jsonl';before=transcript.read_bytes()
+        armed.touch();pending=asyncio.create_task(generate('explicit-race'))
+        for _ in range(200):
+            if entered.exists():break
+            await asyncio.sleep(.01)
+        assert entered.exists()
+        refusal=await server.dispatch('_amplifier/retire',{'sessionId':sid})
+        assert refusal=={'retired':False,'reason':'owned_work'}
+        manual=await metadata('rename',{'commandId':'newer-manual','title':'Keep newer manual name'})
+        assert manual['applied'] and not manual['naming']['automatic']
+        release.touch();candidate=await pending
+        assert candidate['name']=='Offline generated name' and len(audit.read_text().splitlines())==2
+        repeated=await generate('explicit-race');assert repeated==candidate and len(audit.read_text().splitlines())==2
+        stale=await metadata('commit',{'commandId':'stale-commit','candidate':candidate})
+        assert not stale['applied'] and stale['title']=='Keep newer manual name'
+        fresh=await generate('explicit-fresh');assert len(audit.read_text().splitlines())==3
+        committed=await metadata('commit',{'commandId':'fresh-commit','candidate':fresh})
+        assert committed['applied'] and committed['title']=='Offline generated name'
+        assert not committed['naming']['automatic']
+        assert await generate('explicit-fresh')==fresh and len(audit.read_text().splitlines())==3
+        assert transcript.read_bytes()==before
+    finally:
+        release.touch()
+        if pending:await asyncio.gather(pending,return_exceptions=True)
+        await session.close()
