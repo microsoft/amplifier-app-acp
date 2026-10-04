@@ -29,7 +29,7 @@ def prepare(server, source_id, target_id, rows, positions, context):
         raise MessageError('Reaction copy requires the same trusted account for source and target')
     store=MessageMetadata(home(server),source_id,actor_id=actor)
     db=store._db()
-    plan=[];seen=set();plan_bytes=0
+    plan=[];seen=set();plan_bytes=2
     try:
         db.execute('BEGIN')
         selected=[]
