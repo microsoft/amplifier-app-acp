@@ -14,7 +14,9 @@ and optional `sourceDigest`; the client cannot supply an excerpt or path.
 The helper verifies one complete public user/assistant row (maximum 256 KiB),
 its byte boundary and actual `history.message_id` identity. Hidden/service/tool
 rows, archive identities, missing primary history and stale epochs refuse.
-Unchanged messages remain valid after append; rewritten records refuse.
+Unchanged messages remain valid after append; rewritten records refuse. Mutable
+voice rows require a verified sourceDigest because their call/item identity can
+remain stable after text correction; references without that digest refuse.
 
 The returned immutable quote contains the exact input identity, session/message,
 role, source digest, history epoch, up to 4000 characters, truncation flag and
@@ -63,10 +65,17 @@ does not remove another's. Result `reactions` is the aggregate, `counts` counts
 actors and `mine` is the authenticated actor's selection. At most 100 actors may
 hold reactions on one selected message. Exact command/payload/actor retries return
 the immutable original result, even if history later disappears; changed payload
-or actor reuse refuses. Reactions/read/select start no worker or turn.
+or actor reuse refuses. Reaction and quoted-input commands share one protected
+namespace: either kind refuses an ID reserved by the other. Every Send checks the
+original reservation, including Send with reply metadata removed or changed.
+Unknown and accepted quoted inputs never regain admission authority. Alternate
+schedule/question/observation/history-revise and anchored-steering admission
+paths also refuse any previously reserved quote or reaction ID before startup
+or control dispatch.
+Reactions/read/select start no worker or turn.
 
 The selected-session `message-interactions.sqlite3` is created only on the first
-explicit valid reaction. Annotation change, selected revision and original
+explicit valid reaction or quoted-input reservation. Annotation change, selected revision and original
 receipt commit in one transaction. Connections are short lived; untouched passive
 reads create no directory/database and existing reads use SQLite `mode=ro`.
 No global startup enumeration or full conversation object is maintained.
@@ -84,9 +93,16 @@ It returns version/session/selected annotations and `executionAuthority:none`,
 never drafts or command receipts. A copy owner must explicitly preserve/remap the
 selected annotations against independently verified retained target message IDs;
 source receipts and source execution authority never become target authority.
-Retained native stores/archive plans must include this adjunct database and its
-SQLite-consistent contents. Until those consumers are wired, fork/copy/export
-acceptance remains unqualified; silent omission is not an accepted fallback.
+The existing full-native-authority archive recursively includes app-home/sessions
+and detects SQLite by its header, producing a consistent backup image of this
+adjunct. Its actual archive pipeline test verifies annotations and original
+unknown quote receipts survive. Selected private-store snapshot parts do not
+include the adjunct. Native transfer capture/install whitelists canonical history
+files only, so shared reaction state is not yet transferred. Actual native fork
+retains canonical frozen replyTo, but does not consume export_metadata. Shared
+reaction fork/copy/transfer acceptance remains unqualified until the consumer
+verifies retained source-to-target IDs and the approved principal/copy policy;
+silent omission is not an accepted fallback.
 
 ## Implemented native wiring and remaining integration handoff
 
@@ -126,3 +142,17 @@ retries do not republish. The host must scope forwarding to interested clients.
 The source tests exercise cold real native files, SQLite transactions/concurrent
 connections, restarts, exact receipts, public history IDs and negative references.
 They do not qualify the unwired host/browser/worker route or live deployment.
+
+## Authoritative client projection
+
+Current canonical history page and forward updates attach
+`_meta["amplifier.dev/history"].messageReference` with the exact
+`{sessionId,messageId,position,historyEpoch,sourceDigest}` object. Public textual
+user/assistant rows receive it; hidden/tool rows and historical archive rows do
+not. Existing historicalOnly metadata remains the applicability boundary. Use
+this object unchanged for reply/reaction; never infer it from display IDs or text.
+Accepted frozen quotes render from the same history metadata's `replyTo` object:
+`{id,sessionId,messageId,role,sourceDigest,historyEpoch,inputId,excerpt,truncated}`.
+Streaming deltas do not yet have a canonical byte locator. Bridge/client owners
+must obtain native canonical projection for completed live messages before
+enabling these actions; streaming display IDs are not substitute authority.

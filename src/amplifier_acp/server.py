@@ -348,6 +348,12 @@ class Session:
             self.input_id=command_id or str(uuid.uuid4())
             reply=(meta or {}).get('amplifier.dev/messageReply')
             quote=None
+            if command_id:
+                from .message_metadata import guard_input_identity
+                from .relocation import home
+                guard_input_identity(home(self.server)/'sessions'/self.identity/'message-interactions.sqlite3',command_id,
+                    reference=reply,input_payload={'text':value,'attachments':attachments,'provenance':provenance},
+                    actor_id=self.server.message_principal(self.identity) if self.server.message_principal else None)
             if reply is not None:
                 if NATIVE not in self.server.extensions or not self.server.message_principal or not command_id:
                     raise RpcError(-32602,'Quoted input requires negotiated message support and original command identity.',{'executed':False,'replayed':False})
@@ -388,6 +394,9 @@ class Session:
             return resident is not None and self.worker is resident and not resident.closed and resident.process and resident.process.returncode is None and not self.cancelled and not self.retiring and self.worker_retirement_pending is not resident
         refused={'accepted':False,'executed':False,'reason':'The original native worker is unavailable or retiring; no runtime was started.'}
         async with self.lock:
+            from .message_metadata import guard_input_identity
+            from .relocation import home
+            guard_input_identity(home(self.server)/'sessions'/self.identity/'message-interactions.sqlite3',identity)
             if require_existing:
                 if not available():return refused
             else:await self.start()
@@ -777,6 +786,9 @@ class Server:
             if operation=='history.edit':raise RpcError(-32601,'Legacy host-projection history edits are unavailable; use negotiated history.revise.')
             if operation=='steer':raise RpcError(-32601,'Unanchored root steering is unavailable over ACP; use negotiated steer.submit.')
             if operation=='steer.submit':
+                from .message_metadata import guard_input_identity
+                from .relocation import home
+                guard_input_identity(home(self)/'sessions'/identity/'message-interactions.sqlite3',args.get('inputId'))
                 from .steering import submit
                 return await submit(session,args)
             if operation=='runtime.inspect':

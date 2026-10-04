@@ -83,6 +83,8 @@ def resolve_reference(directory, session_id, reference, *, epoch=None):
                    if update.get('content', {}).get('type') == 'text')
     if not text.strip():
         raise MessageError('Selected message has no public text')
+    if (row.get('metadata') or {}).get('amplifier_voice') and 'sourceDigest' not in reference:
+        raise MessageError('Mutable voice message reference requires a verified source digest')
     source_digest = hashlib.sha256(text.encode()).hexdigest()
     if 'sourceDigest' in reference and reference['sourceDigest'] != source_digest:
         raise MessageError('Selected message digest changed')
@@ -176,6 +178,7 @@ class MessageMetadata:
         # remain inspectable even after the original history becomes unavailable.
         db = self._db()
         try:
+            if db: refuse_quote_collision(db,command_id)
             prior = None if db is None else db.execute('SELECT fingerprint,value FROM receipts WHERE command=?', (command_id,)).fetchone()
             if prior:
                 if prior[0] != fingerprint: raise MessageError('Command identity already has different message arguments or actor')
@@ -186,6 +189,7 @@ class MessageMetadata:
         db = self._db(create=True)
         try:
             db.execute('BEGIN IMMEDIATE')
+            refuse_quote_collision(db,command_id)
             prior = db.execute('SELECT fingerprint,value FROM receipts WHERE command=?', (command_id,)).fetchone()
             if prior:
                 if prior[0] != fingerprint: raise MessageError('Command identity already has different message arguments or actor')
@@ -294,11 +298,14 @@ def reserve_quote(store, directory, reference, *, input_id, input_payload, epoch
                 raise QuotedInputUnknown(input_id, accepted=json.loads(row[1]).get('status')=='accepted')
     finally:
         if db:db.close()
+    guard_input_identity(store.path,input_id,reference=reference,input_payload=input_payload,actor_id=store.actor_id)
     quote = freeze_quote(directory,store.session_id,reference,input_id=input_id,epoch=epoch)
     db=store._db(create=True)
     try:
         db.execute('CREATE TABLE IF NOT EXISTS quotes(input TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,value TEXT NOT NULL)')
         db.execute('BEGIN IMMEDIATE')
+        if db.execute('SELECT 1 FROM receipts WHERE command=?',(input_id,)).fetchone():
+            raise MessageError('Command identity is already reserved for a reaction')
         prior=db.execute('SELECT fingerprint,value FROM quotes WHERE input=?',(input_id,)).fetchone()
         if prior:
             if prior[0] != fingerprint: raise MessageError('Quoted command identity already has different payload or principal')
@@ -336,4 +343,30 @@ def quote_admitted(store, input_id):
         db.execute('COMMIT')
     except BaseException:
         db.execute('ROLLBACK');raise
+    finally:db.close()
+
+
+def refuse_quote_collision(db, command_id):
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='quotes'").fetchone() and db.execute('SELECT 1 FROM quotes WHERE input=?',(command_id,)).fetchone():
+        raise MessageError('Command identity is already reserved for quoted input')
+
+
+def guard_input_identity(path, input_id, *, reference=None, input_payload=None, actor_id=None):
+    """Check every subsequent input, including one omitting reply metadata.
+
+    Exact committed or unknown quoted input cannot be admitted again, nor can a
+    reaction command become an input. This passive guard creates no storage.
+    """
+    path=checked(path);token(input_id)
+    if not path.exists():return
+    db=sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)
+    try:
+        if db.execute('SELECT 1 FROM receipts WHERE command=?',(input_id,)).fetchone():
+            raise MessageError('Command identity is already reserved for a reaction')
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='quotes'").fetchone():return
+        row=db.execute('SELECT fingerprint,value FROM quotes WHERE input=?',(input_id,)).fetchone()
+        if not row:return
+        expected=digest({'reference':reference,'input':input_payload,'actor':actor_id})
+        if row[0]!=expected:raise MessageError('Quoted input identity already has a different payload, reference or principal')
+        raise QuotedInputUnknown(input_id,accepted=json.loads(row[1]).get('status')=='accepted')
     finally:db.close()
