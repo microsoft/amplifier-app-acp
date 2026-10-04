@@ -38,7 +38,9 @@ Include aliases for original requested URIs and effective local URIs emitted by
 Effective canonical absolute paths and local file URIs are admitted when they
 belong to a declared root and their file/directory membership exists in the
 manifest. Relative URI bindings must include their exact base. Unbound resolution refuses
-without fallback. The document is bounded to 16 MiB and 65,536 file records.
+without fallback. Rows sharing a physical root may declare disjoint file subsets. Local member
+admission searches those subsets independent of row order; conflicting hashes
+for the same file refuse. The document is bounded to 16 MiB and 65,536 file records.
 
 ## Qualification and runtime checks
 
@@ -72,3 +74,14 @@ forest verification or memory-limit guarantee is claimed at runtime.
 Only an explicitly verified separate mutable staging environment drops an
 inherited reference. A readonly candidate retains it until its trusted launcher
 supplies the candidate's qualified reference.
+
+## Worker readiness
+
+When the launcher binds a manifest, `NativeWorker.start` additionally requires
+an exact typed `sourceClosure` readiness marker: version 1, the bound
+`manifestSha256`, and `sourceResolution: qualified-only`. Missing, partial,
+extra-field, wrong-version, wrong-digest or wrong-type reports refuse and join
+the child through existing cleanup. The current worker projects this compact
+marker from its private attested mounted report. This confirms protocol support;
+it is not a sandbox against a dishonest worker. Without a manifest the existing
+dependency readiness behavior is unchanged.

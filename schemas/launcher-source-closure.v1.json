@@ -117,6 +117,29 @@
           }
         }
       }
+    },
+    "readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "manifestSha256",
+        "sourceResolution"
+      ],
+      "properties": {
+        "version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "manifestSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "sourceResolution": {
+          "const": "qualified-only",
+          "type": "string"
+        }
+      }
     }
   }
 }

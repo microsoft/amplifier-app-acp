@@ -193,3 +193,42 @@ def test_shared_root_contradictory_file_digest_refuses(tmp_path, foundation):
     doc['sources'].append({**row, 'requestedUri': URI+'-other', 'files': {**row['files'], 'bundle.yaml': 'b'*64}})
     path.write_text(json.dumps(doc)); reference['sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
     with pytest.raises(closure.SourceClosureDenied): closure.configure({'sourceResolutionManifest': reference})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('change, accepted', [
+    ({}, True), (None, False), ({'version': True}, False), ({'version': 1.0}, False),
+    ({'version': 2}, False), ({'manifestSha256': 'b'*64}, False),
+    ({'manifestSha256': None}, False), ({'sourceResolution': 'unrestricted'}, False),
+    ({'sourceResolution': True}, False), ({'extra': True}, False),
+    ({'omit': 'manifestSha256'}, False),
+])
+async def test_worker_must_confirm_exact_manifest_before_admitting_work(tmp_path, foundation, change, accepted):
+    from amplifier_acp.worker import NativeWorker, NativeError
+    from unittest.mock import AsyncMock
+    import uuid
+    reference, _ = manifest(tmp_path)
+    closure.configure({'sourceResolutionManifest': reference})
+    # Positive uses the current production ready-report projection. Negative
+    # children acknowledge dependency policy but ignore/misstate source closure.
+    marker = closure.ready_report({'sourceClosure': closure.attest()})
+    report = {'runtimePreparation': {'version': 1, 'immutable': True,
+              'dependencyInstallation': False, 'policy': 'foundation-dependency-installation'}}
+    if change is not None:
+        report['sourceClosure'] = {**marker, **change}
+        if 'omit' in report['sourceClosure']:
+            report['sourceClosure'].pop(report['sourceClosure'].pop('omit'))
+    script = tmp_path/'worker.py'
+    script.write_text("import sys,json\njson.loads(sys.stdin.readline())\nprint("+
+                     repr(json.dumps({'type':'runtime.ready','report':report}))+",flush=True)\njson.loads(sys.stdin.readline())\n")
+    worker = NativeWorker(str(uuid.uuid4()),str(tmp_path),
+                          {'runtimeImmutable':True,'sourceResolutionManifest':reference,
+                           'home':str(tmp_path/'home'),'appHome':str(tmp_path/'app'),
+                           'workerCommand':[sys.executable,'-I','-B',str(script)]},AsyncMock(),AsyncMock())
+    if accepted:
+        assert await worker.start() == report
+        await worker.close()
+    else:
+        with pytest.raises(NativeError,match='exact launcher source closure'): await worker.start()
+    assert worker.closed and worker.process.returncode == 0
+    assert not (tmp_path/'home').exists() and not (tmp_path/'app').exists()

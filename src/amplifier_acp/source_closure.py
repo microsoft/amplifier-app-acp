@@ -252,3 +252,16 @@ def attest_prepared(prepared):
 def attest():
     callback = admission()
     return callback.attest() if callback is not None else {}
+
+
+def readiness(environment=None):
+    reference = _reference(environment)
+    if reference is None: return None
+    return {'version': 1, 'manifestSha256': reference['sha256'],
+            'sourceResolution': 'qualified-only'}
+
+def ready_report(report):
+    # Keep paths and imported-origin inventories in the private mounted receipt.
+    value = report.get('sourceClosure')
+    if not value: return None
+    return {key: value.get(key) for key in ('version', 'manifestSha256', 'sourceResolution')}

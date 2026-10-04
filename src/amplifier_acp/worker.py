@@ -91,6 +91,17 @@ class NativeWorker:
                     and reported_policy.get('dependencyInstallation') is False
                     and reported_policy==expected_policy):
                 raise NativeError('Native worker did not confirm the launcher immutable preparation policy; use the qualified native worker package.')
+            from .source_closure import readiness as source_readiness
+            expected_sources = source_readiness(env)
+            reported_sources = self.report.get('sourceClosure')
+            if expected_sources is not None and not (
+                    type(reported_sources) is dict
+                    and reported_sources.keys() == expected_sources.keys()
+                    and type(reported_sources.get('version')) is int
+                    and type(reported_sources.get('manifestSha256')) is str
+                    and type(reported_sources.get('sourceResolution')) is str
+                    and reported_sources == expected_sources):
+                raise NativeError('Native worker did not confirm the exact launcher source closure; use the qualified native worker package.')
         except BaseException:
             await self.close()
             raise
