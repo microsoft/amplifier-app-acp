@@ -6,7 +6,11 @@ from amplifier_acp.native import runtime_worker as native
 
 @pytest.fixture
 async def harness(monkeypatch):
-    worker=native.Worker();rows=[];ready=asyncio.Event();wire={};closed=[]
+    rows=[];ready=asyncio.Event();wire={};closed=[]
+    from amplifier_acp.native import history_hints
+    monkeypatch.setattr(history_hints,'_observer',history_hints._observer)
+    monkeypatch.setattr(native,'publish',lambda row:rows.append(dict(row)))
+    worker=native.Worker()
     async def pipe(factory,stdin):
         protocol=factory();wire['reader']=protocol._stream_reader;ready.set()
         return SimpleNamespace(close=lambda:closed.append(True)),protocol
