@@ -237,15 +237,17 @@ async def test_worker_must_confirm_exact_manifest_before_admitting_work(tmp_path
     assert not (tmp_path/'home').exists() and not (tmp_path/'app').exists()
 
 
-def test_new_submodule_after_spec_discovery_is_not_missed(tmp_path, foundation, monkeypatch):
-    reference, root = manifest(tmp_path, packages=['closure_fixture_provider'])
+@pytest.mark.parametrize('discovering_package', ['closure_fixture_provider', 'closure_fixture_late'])
+def test_new_submodule_after_spec_discovery_is_not_missed(tmp_path, foundation, monkeypatch, discovering_package):
+    reference, root = manifest(tmp_path, packages=['closure_fixture_provider', 'closure_fixture_late'])
     monkeypatch.syspath_prepend(str(root))
     closure.configure({'sourceResolutionManifest': reference})
     foreign = tmp_path/'foreign.py'; foreign.write_text('unqualified')
     original = closure.importlib.util.find_spec
     def find_spec(package):
         spec = original(package)
-        monkeypatch.setitem(sys.modules, 'closure_fixture_provider.new', SimpleNamespace(__file__=str(foreign)))
+        if package == discovering_package:
+            monkeypatch.setitem(sys.modules, 'closure_fixture_provider.new', SimpleNamespace(__file__=str(foreign)))
         return spec
     monkeypatch.setattr(closure.importlib.util, 'find_spec', find_spec)
     with pytest.raises(closure.SourceClosureDenied): closure.attest()
