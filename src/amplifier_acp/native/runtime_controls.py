@@ -474,13 +474,17 @@ class RuntimeControls:
             self.persist()
             return {'selection':None,'scope':'main session'}
         if operation == "provider.select":
-            self.require_idle()
+            from .host.model_selection import ProviderSelectionRefusal
+            try:
+                self.require_idle()
+            except ValueError as exc:
+                # This check is entirely before selector/state/persistence effects.
+                raise ProviderSelectionRefusal(str(exc), reason="provider-selection-busy") from exc
             from .host.session import SelectedProvider
             providers = self.coordinator.get("providers") or {}
             args = {**args,"instance":args.get("instance") or args.get("provider")}
-            if args.get("instance") not in providers or not isinstance(args.get("model"), str) or not args["model"].strip():
-                from .host.model_selection import ProviderSelectionError
-                raise ProviderSelectionError("Select an available provider instance and model")
+            if not isinstance(args.get("instance"), str) or args["instance"] not in providers or not isinstance(args.get("model"), str) or not args["model"].strip():
+                raise ProviderSelectionRefusal("Select an available provider instance and model", reason="provider-selection-invalid")
             selected = {key:args[key] for key in ("instance","model","effort") if key in args}
             effective = {**selected, **({"max_output_tokens":self.max_output_tokens} if self.max_output_tokens else {})}
             self.coordinator.get("orchestrator").root_provider = SelectedProvider(providers[args["instance"]], effective,self.coordinator.get_capability('web.provider_transform'))
