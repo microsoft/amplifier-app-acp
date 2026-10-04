@@ -84,7 +84,9 @@ class Permissions:
                 'detail':'Saved scopes are merged global, shared workspace, then private workspace. The execution directory remains allowed by default. Bundle, session and tool-instance policies can add restrictions; this is not an inspection of a running tool. Idle sessions reload changed settings before their next input; active work keeps its mounted policy.'}
     def db(self,create=False):
         from .journal_schema import connect
-        return connect(self.path,'permissions',write=create,timeout=5 if create else 0,isolation_level=None)
+        con=connect(self.path,'permissions',write=create,timeout=5 if create else 0,isolation_level=None)
+        if con is not None:con.row_factory=sqlite3.Row
+        return con
     def receipt(self,workspace,identity):
         con=self.db()
         if con is None:return None
@@ -148,5 +150,6 @@ class Permissions:
                 receipt.update(status='succeeded',result=view)
             con.execute('UPDATE commands SET body=? WHERE id=?',(encoded(receipt).decode(),identity));return receipt
         finally:
-            if con.in_transaction:con.execute('ROLLBACK')
-            con.close()
+            try:
+                if con.in_transaction:con.execute('ROLLBACK')
+            finally:con.close()

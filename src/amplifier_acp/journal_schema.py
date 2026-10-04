@@ -98,26 +98,35 @@ def _paths(path):
 def _shape(db):
     # Tables/columns only, fixed upper bounds. No command rows, SQL text, history,
     # full integrity_check or full-file reads. Index contents remain rebuildable.
-    rows = db.execute("SELECT type,substr(name,1,128) FROM sqlite_schema WHERE type IN ('table','view','trigger') AND name NOT LIKE 'sqlite_%' LIMIT 9").fetchall()
+    rows = db.execute("SELECT type,CASE WHEN length(CAST(name AS BLOB))<=64 THEN name END FROM sqlite_schema WHERE type IN ('table','view','trigger') AND substr(name,1,7)!='sqlite_' LIMIT 9").fetchall()
     if len(rows) > 8 or any(kind != 'table' for kind, _ in rows):
         _fail()
     result = {}
     for _, name in rows:
         if name not in {'commands','receipts','state','inventory','diagnostics','uploads','reviews','workers','reports','annotations','revisions','quotes','provenance','outcomes'}:
             _fail()
-        columns = db.execute('PRAGMA table_info("' + name + '")').fetchmany(16)
-        if len(columns) >= 16:
+        columns = db.execute("""SELECT cid,
+            CASE WHEN length(CAST(name AS BLOB))<=64 THEN name END,
+            CASE WHEN length(CAST(type AS BLOB))<=32 THEN type END,
+            "notnull",
+            CASE WHEN length(CAST(dflt_value AS BLOB))<=64 THEN dflt_value END,
+            pk,
+            CASE WHEN dflt_value IS NULL OR length(CAST(dflt_value AS BLOB))<=64 THEN 1 ELSE 0 END
+            FROM pragma_table_info(?) LIMIT 16""", (name,)).fetchall()
+        if len(columns) >= 16 or any(row[1] is None or row[2] is None or row[6] != 1 for row in columns):
             _fail()
         unique = []
-        indexes = db.execute('SELECT name,origin FROM pragma_index_list(?) WHERE "unique"=1 LIMIT 9', (name,)).fetchall()
+        indexes = db.execute('SELECT CASE WHEN length(CAST(name AS BLOB))<=128 THEN name END, CASE WHEN length(CAST(origin AS BLOB))<=8 THEN origin END FROM pragma_index_list(?) WHERE "unique"=1 LIMIT 9', (name,)).fetchall()
         if len(indexes) > 8:
             _fail()
         for index, origin in indexes:
-            keys = db.execute('SELECT name FROM pragma_index_info(?) ORDER BY seqno LIMIT 16', (index,)).fetchall()
+            if index is None or origin is None:
+                _fail()
+            keys = db.execute('SELECT CASE WHEN length(CAST(name AS BLOB))<=64 THEN name END FROM pragma_index_info(?) ORDER BY seqno LIMIT 16', (index,)).fetchall()
             if len(keys) >= 16 or any(key[0] is None for key in keys):
                 _fail()
             unique.append((origin, tuple(key[0] for key in keys)))
-        result[name] = (tuple(tuple(row[1:]) for row in columns), tuple(sorted(unique)))
+        result[name] = (tuple(tuple(row[1:6]) for row in columns), tuple(sorted(unique)))
     return result
 
 
@@ -149,7 +158,7 @@ def _validate(db, profile):
         _fail()
     if profile == 'coordination':
         # This singleton has existed from the first schema. Never reset revision.
-        row = db.execute('SELECT revision FROM state WHERE id=1').fetchone()
+        row = db.execute("SELECT CASE WHEN typeof(revision)='integer' THEN revision END FROM state WHERE id=1").fetchone()
         if row is None or type(row[0]) is not int or row[0] < 0:
             _fail()
     return optional, migration

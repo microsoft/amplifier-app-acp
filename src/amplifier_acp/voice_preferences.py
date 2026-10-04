@@ -43,7 +43,9 @@ class VoicePreferences:
         self.store=SettingsStore(app,shared_home=native_home(config))
     def db(self,create=False):
         from .journal_schema import connect
-        return connect(self.path,'voice-preferences',write=create,timeout=5 if create else 0,isolation_level=None)
+        con=connect(self.path,'voice-preferences',write=create,timeout=5 if create else 0,isolation_level=None)
+        if con is not None:con.row_factory=sqlite3.Row
+        return con
     def receipt(self,workspace,identity):
         con=self.db()
         if con is None:return None
@@ -104,5 +106,6 @@ class VoicePreferences:
                 if isinstance(exc,Conflict):receipt['currentRevision']=exc.current
             con.execute('UPDATE commands SET body=? WHERE id=?',(encoded(receipt).decode(),identity));return receipt
         finally:
-            if con.in_transaction:con.execute('ROLLBACK')
-            con.close()
+            try:
+                if con.in_transaction:con.execute('ROLLBACK')
+            finally:con.close()

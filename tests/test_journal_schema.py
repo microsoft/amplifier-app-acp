@@ -295,3 +295,90 @@ def test_nonregular_initializer_lock_refuses_without_touching_target(tmp_path):
     os.link(victim,Path(str(path)+'.schema.lock'))
     with pytest.raises(JournalUnavailable):connect(path,'bundle',write=True)
     assert victim.read_bytes()==b'original' and not path.exists()
+
+
+@pytest.mark.parametrize('kind',['permissions','voice-preferences','history-import'])
+@pytest.mark.parametrize('status',['failed','succeeded','unknown'])
+def test_healthy_named_row_owners_recover_original_and_refuse_rebinding(tmp_path,monkeypatch,kind,status):
+    import importlib
+    module=importlib.import_module('amplifier_acp.'+kind.replace('-','_'))
+    cls=getattr(module,{'permissions':'Permissions','voice-preferences':'VoicePreferences','history-import':'HistoryImport'}[kind])
+    owner=cls.__new__(cls);owner.root=tmp_path/kind;owner.path=owner.root/'receipts.sqlite3'
+    calls=[]
+    def no_effect(*args,**kwargs):calls.append('unexpected effect');raise AssertionError('Settings/import effect forbidden')
+    owner.store=SimpleNamespace(path=lambda *args:tmp_path/'absent-settings.yaml',read=lambda *args:{},update=no_effect)
+    owner.begin=no_effect
+    cwd=str(tmp_path.resolve());args={'commandId':'original'}
+    if kind=='permissions':
+        operation='permissions.save';args.update(scope='global',expectedRevision='0'*64,allowed=[],denied=[])
+        signature=module.digest({'workspace':cwd,'operation':operation,'args':args})
+    elif kind=='voice-preferences':
+        operation='voice.preferences.update';args.update(expectedRevision='0'*64,patch={'interruptions':True})
+        signature=hashlib.sha256(module.encoded({'operation':operation,'args':args})).hexdigest()
+    else:
+        operation='history.import.begin';args.update(format='json',bytes=2,sha256='0'*64)
+        signature=module.digest(module.encoded({'cwd':cwd,'operation':operation,'args':args}))
+    original={'commandId':'original','operation':operation,'status':status,'replayed':False}
+    if status=='failed':original['executed']=False
+    if status=='succeeded':original['result']={'fixture':'retained public result'}
+    with closing(owner.db(True)) as db:
+        body=json.dumps(original)
+        values=('original',signature,cwd,'global',body) if kind=='permissions' else ('original',signature,body) if kind=='voice-preferences' else ('original',cwd,signature,body)
+        db.execute('INSERT INTO commands VALUES('+','.join('?' for _ in values)+')',values)
+    # Track actual SQLite ownership, including RO preflight and refused lookups.
+    opened=[];real=sqlite3.connect
+    class Tracked(sqlite3.Connection):
+        was_closed=False
+        def close(self):
+            try:return super().close()
+            finally:self.was_closed=True
+    def tracking(database,*args,**kwargs):
+        kwargs['factory']=Tracked;db=real(database,*args,**kwargs);opened.append(db);return db
+    monkeypatch.setattr(sqlite3,'connect',tracking)
+    assert owner.receipt(cwd,'original')==original
+    assert owner.perform(cwd,operation,args)==original
+    changed={**args,**({'allowed':['different']} if kind=='permissions' else {'patch':{'interruptions':False}} if kind=='voice-preferences' else {'title':'different'})}
+    with pytest.raises(ValueError):owner.perform(cwd,operation,changed)
+    assert owner.receipt(cwd,'original')==original
+    if kind!='voice-preferences':
+        with pytest.raises(ValueError):owner.receipt(str(tmp_path/'other'),'original')
+    assert calls==[] and opened and all(db.was_closed for db in opened)
+
+
+@pytest.mark.parametrize('damage',['coordination-revision','column-default','column-name','column-type','unique-index-name'])
+def test_invalid_wide_metadata_is_bounded_before_python_materialization(tmp_path,monkeypatch,damage):
+    profile='coordination' if damage=='coordination-revision' else 'bundle';path=tmp_path/'journal.sqlite3';wide='x'*(512*1024)
+    if damage=='coordination-revision':
+        with closing(connect(path,profile,write=True)):pass
+        with sql(path) as db:db.execute('UPDATE state SET revision=? WHERE id=1',(wide,))
+    else:
+        with sql(path) as db:
+            if damage=='column-default':db.execute("CREATE TABLE commands(id TEXT PRIMARY KEY,binding TEXT NOT NULL,scope TEXT NOT NULL,body TEXT NOT NULL DEFAULT '"+wide+"')")
+            elif damage=='column-name':db.execute('CREATE TABLE commands(id TEXT PRIMARY KEY,binding TEXT NOT NULL,scope TEXT NOT NULL,"'+wide+'" TEXT NOT NULL)')
+            elif damage=='column-type':db.execute('CREATE TABLE commands(id TEXT PRIMARY KEY,binding TEXT NOT NULL,scope TEXT NOT NULL,body "'+wide+'" NOT NULL)')
+            else:
+                db.execute('CREATE TABLE commands(id TEXT PRIMARY KEY,binding TEXT NOT NULL,scope TEXT NOT NULL,body TEXT NOT NULL)')
+                db.execute('CREATE UNIQUE INDEX "'+wide+'" ON commands(scope)')
+    real=sqlite3.connect;observed=[];opened=[]
+    def record(row):
+        if row is not None:
+            for value in row:
+                if isinstance(value,(str,bytes)):observed.append(len(value.encode() if isinstance(value,str) else value))
+        return row
+    class Cursor(sqlite3.Cursor):
+        def fetchone(self):return record(super().fetchone())
+        def fetchall(self):return [record(row) for row in super().fetchall()]
+        def fetchmany(self,*args):return [record(row) for row in super().fetchmany(*args)]
+    class Connection(sqlite3.Connection):
+        was_closed=False
+        def execute(self,statement,*args):return self.cursor(factory=Cursor).execute(statement,*args)
+        def close(self):
+            try:return super().close()
+            finally:self.was_closed=True
+    def tracking(database,*args,**kwargs):
+        kwargs['factory']=Connection;db=real(database,*args,**kwargs);opened.append(db);return db
+    monkeypatch.setattr(sqlite3,'connect',tracking)
+    for write in (False,True):
+        with pytest.raises(JournalUnavailable):connect(path,profile,write=write)
+    assert observed and max(observed)<=128
+    assert all(db.was_closed for db in opened)

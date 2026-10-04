@@ -146,8 +146,9 @@ class HistoryImport:
                 return failed
             raise
         finally:
-            if con.in_transaction:con.execute('ROLLBACK')
-            con.close()
+            try:
+                if con.in_transaction:con.execute('ROLLBACK')
+            finally:con.close()
     def upload(self,con,cwd,identity):
         token(identity,'uploadId',64);row=con.execute('SELECT * FROM uploads WHERE id=?',(identity,)).fetchone()
         if not row or row['cwd']!=cwd:raise ValueError('Upload is unavailable in this authorized workspace')

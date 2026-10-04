@@ -34,7 +34,10 @@ and lifecycle receipt lookup validate existing journals without creating new one
 
 Checks are bounded schema metadata: fixed table names, column order/types/defaults,
 NOT NULL/primary-key and unique-index key metadata, plus the existing coordination
-revision singleton. There is no production record census, full-file hash/copy,
+revision singleton. SQL projections bound individual metadata values before they
+reach Python, and noninteger singleton values refuse without materializing their
+content. SQLite internal schema parsing is not a global allocation/VFS limit.
+There is no production record census, full-file hash/copy,
 `integrity_check`, history scan or shadow mirror. Derived SQL indexes can still be
 built from an admitted schema on a write; this existing index-building work is
 separate from the bounded admission check.
@@ -69,6 +72,8 @@ unknown bundle no-reentry after damage, recorded legacy profiles, optional-table
 loss and rollback, genuine-new versus orphan sidecars, fixed singleton loss,
 concurrent initializer/namespace writers, stable nonregular-path refusal, and a
 real killed writer retaining a damaged committed WAL. Hashes are used only on
-these tiny fault fixtures to establish preservation. No model, provider, bundle,
+these tiny fault fixtures to establish preservation. Healthy named-row owner controls also verify exact original failed/succeeded/unknown
+receipts, duplicate identity binding and deterministic connection closure.
+No model, provider, bundle,
 import, reset, disposal, generation build, live service or user-history effect is
 needed for these tests.
