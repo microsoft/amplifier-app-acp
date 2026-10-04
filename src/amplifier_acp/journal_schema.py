@@ -60,6 +60,28 @@ _SCHEMAS = {
         'CREATE TABLE provenance(id TEXT PRIMARY KEY,body TEXT NOT NULL)',), (
         'CREATE TABLE outcomes(id TEXT PRIMARY KEY,cwd TEXT NOT NULL,body TEXT NOT NULL)',)),
 }
+# Maintenance historically created these complete optional groups after opening
+# the base receipt store. Every constructor now enrolls through this same lock.
+_MAINTENANCE_NAMESPACES = {
+    'cache': (1, (
+        'CREATE TABLE cache_scans(id TEXT PRIMARY KEY,workspace TEXT NOT NULL,body TEXT NOT NULL)',
+        'CREATE TABLE cache_entries(scan TEXT NOT NULL,id TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(scan,id))',
+        'CREATE TABLE cache_previews(hash TEXT PRIMARY KEY,workspace TEXT NOT NULL,body TEXT NOT NULL)')),
+    'app-reset': (2, (
+        'CREATE TABLE app_reset_revision(id INTEGER PRIMARY KEY,stamp TEXT,revision TEXT)',
+        'CREATE TABLE app_reset_previews(id TEXT PRIMARY KEY,workspace TEXT,body TEXT,private TEXT)')),
+}
+
+
+def _maintenance_tables(mask):
+    return tuple(sql for bit, tables in _MAINTENANCE_NAMESPACES.values() if mask & bit for sql in tables)
+
+
+def _maintenance_mask(shape):
+    return sum(bit for bit, tables in _MAINTENANCE_NAMESPACES.values()
+               if any(sql.split('(', 1)[0].split()[-1] in shape for sql in tables))
+
+
 _INDEXES = {
     'history-import': ('CREATE INDEX IF NOT EXISTS uploads_command ON uploads(consumed)',),
     'steering': ("CREATE INDEX IF NOT EXISTS receipts_disposition ON receipts(json_extract(body,'$.disposition'),json_extract(body,'$.generationId'))",),
@@ -103,7 +125,7 @@ def _shape(db):
         _fail()
     result = {}
     for _, name in rows:
-        if name not in {'commands','receipts','state','inventory','diagnostics','uploads','reviews','workers','reports','annotations','revisions','quotes','provenance','outcomes'}:
+        if name not in {'commands','receipts','state','inventory','diagnostics','uploads','reviews','workers','reports','annotations','revisions','quotes','provenance','outcomes','cache_scans','cache_entries','cache_previews','app_reset_revision','app_reset_previews'}:
             _fail()
         columns = db.execute("""SELECT cid,
             CASE WHEN length(CAST(name AS BLOB))<=64 THEN name END,
@@ -134,7 +156,7 @@ def _shape(db):
 def _expected(profile, optional):
     _, base, extras = _SCHEMAS[profile]
     with closing(sqlite3.connect(':memory:')) as db:
-        for sql in base + (extras if optional else ()):
+        for sql in base + (_maintenance_tables(optional) if profile == 'maintenance' else extras if optional else ()):
             db.execute(sql)
         return _shape(db)
 
@@ -144,10 +166,14 @@ def _validate(db, profile):
     marker = db.execute('PRAGMA user_version').fetchone()[0]
     shape = _shape(db)
     optional_name = 'quotes' if profile == 'messages' else 'outcomes' if profile == 'inputs' else None
-    optional = bool(optional_name and optional_name in shape)
+    optional = _maintenance_mask(shape) if profile == 'maintenance' else int(bool(optional_name and optional_name in shape))
     expected = _expected(profile, optional)
     current = _MAGIC | (number << 8) | int(optional)
-    if marker not in (0, current):
+    # The previously shipped maintenance initializer marked only the base, then
+    # appended optional tables. Admit only complete exact groups for that known
+    # legacy marker; subsequent writes bind every present group in the bitmask.
+    legacy_maintenance = profile == 'maintenance' and marker == (_MAGIC | (number << 8))
+    if marker not in (0, current) and not legacy_maintenance:
         _fail()
     migration = False
     if profile == 'history-import' and marker == 0 and shape.get('uploads') == (expected['uploads'][0][:-1], expected['uploads'][1]):
@@ -178,14 +204,15 @@ def _read(path, profile, timeout):
         raise
 
 
-def connect(path, profile, *, write=False, enroll=False, create=True, timeout=5, isolation_level=''):
+def connect(path, profile, *, write=False, enroll=False, namespace=None, create=True, timeout=5, isolation_level=''):
     """Return a validated connection, or None for a genuinely untouched read.
 
     Optional schema enrollment is explicit, atomic and shared by every writer.
     Existing unversioned absence remains ambiguous legacy; it is not recreated
     as a previously known namespace. Unknown markers/layouts fail closed.
     """
-    if profile not in _SCHEMAS or enroll and not _SCHEMAS[profile][2]:
+    if (profile not in _SCHEMAS or enroll and not _SCHEMAS[profile][2]
+            or namespace is not None and (profile != 'maintenance' or namespace not in _MAINTENANCE_NAMESPACES)):
         raise ValueError('Unknown native journal schema')
     path, exists = _paths(path)
     if not write:
@@ -232,10 +259,16 @@ def connect(path, profile, *, write=False, enroll=False, create=True, timeout=5,
                     db.execute(sql)
                 if profile == 'coordination':
                     db.execute('INSERT INTO state VALUES(1,0)')
-            if enroll and not optional:
+            if namespace is not None:
+                bit, tables = _MAINTENANCE_NAMESPACES[namespace]
+                if not optional & bit:
+                    for sql in tables:
+                        db.execute(sql)
+                    optional |= bit
+            elif enroll and not optional:
                 for sql in extras:
                     db.execute(sql)
-                optional = True
+                optional = 1
             for sql in _INDEXES.get(profile, ()):
                 db.execute(sql)
             db.execute('PRAGMA user_version=' + str(_MAGIC | (number << 8) | int(optional)))

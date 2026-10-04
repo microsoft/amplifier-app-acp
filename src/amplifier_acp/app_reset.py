@@ -23,8 +23,7 @@ def digest(value):return hashlib.sha256(json.dumps(value,sort_keys=True,separato
 class AppReset:
     def __init__(self,maintenance):
         self.owner=maintenance;self.path=checked(maintenance.app/'admin-settings.yaml')
-        with self.owner.db() as db:
-            db.executescript('CREATE TABLE IF NOT EXISTS app_reset_revision(id INTEGER PRIMARY KEY,stamp TEXT,revision TEXT); CREATE TABLE IF NOT EXISTS app_reset_previews(id TEXT PRIMARY KEY,workspace TEXT,body TEXT,private TEXT);')
+        with self.owner.db(namespace='app-reset') as db:
             db.execute("CREATE INDEX IF NOT EXISTS app_reset_pending ON commands(json_extract(body,'$.operation'),json_extract(body,'$.state'))")
     def current(self):
         raw=regular(self.path,65536) if self.path.exists() else None
