@@ -156,7 +156,7 @@ class Session:
                 if NATIVE in self.server.extensions:await self.server.notify('_amplifier/event',{'sessionId':self.identity,'event':{'type':'steering.unknown','input_id':receipt['inputId'],'activeInputId':receipt['activeInputId'],'target_generation_id':receipt['generationId'],'reason':receipt['reason']}})
             self.generation_id=None
         if NATIVE in self.server.extensions and kind not in {'assistant.delta','assistant.message','execution.event'}:
-            safe={k:v for k,v in row.items() if k not in {'prompt','options','error','report'}}
+            safe={k:v for k,v in row.items() if k not in {'prompt','options','error','report','_input_outcomes'}}
             await self.server.notify('_amplifier/event',{'sessionId':self.identity,'event':safe})
         if kind=='runtime.ready':self.report=row.get('report',{})
         if kind=='approval.requested':self.server.track(self.permission(row))
@@ -195,10 +195,26 @@ class Session:
                 if not self.streamed and row.get('text'):await self.update('agent_message_chunk',content={'type':'text','text':row['text']})
                 self.prompt.set_result({'stopReason':'cancelled' if self.cancelled else 'end_turn'})
             elif kind=='generation.detached' and self.cancelled:self.prompt.set_result({'stopReason':'cancelled'})
-            else:self.prompt.set_exception(NativeError('Native generation failed; no work replayed.',data={k:row[k] for k in ('error_type','error_category','retryable','cancellation') if k in row}))
+            else:
+                data={k:row[k] for k in ('error_type','error_category','retryable','cancellation') if k in row}
+                if NATIVE in self.server.extensions:
+                    from .input_outcome import KEY,Outcomes,validate
+                    from .relocation import home
+                    candidate=(row.get('_input_outcomes') or {}).get(self.input_id)
+                    if candidate is not None:
+                        validate(candidate,self.identity,self.input_id)
+                        # Attach only the exact committed owner record, not a
+                        # worker event or current transcript used as substitute.
+                        saved=Outcomes(home(self.server),self.identity,self.cwd).read(self.input_id)
+                        if saved==candidate:data[KEY]=saved
+                failure=NativeError('Native generation failed; no work replayed.',data=data)
+                if 'amplifier.dev/inputOutcome' in data:
+                    self.pending_input_failure=failure
+                else:self.prompt.set_exception(failure)
         elif kind=='runtime.closed':
             if self.prompt and not self.prompt.done():
-                if self.cancelled:self.prompt.set_result({'stopReason':'cancelled'})
+                if getattr(self,'pending_input_failure',None):self.prompt.set_exception(self.pending_input_failure)
+                elif self.cancelled:self.prompt.set_result({'stopReason':'cancelled'})
                 else:self.prompt.set_exception(NativeError(row['error'],data=row.get('data')))
 
     async def refresh_options(self,notify=True):
@@ -317,6 +333,14 @@ class Session:
             self.config_cancel=None;self.config_applying=False;self.config_command=None
             await self.configuration_pending()
 
+    def reject_failed_input(self, identity):
+        from .input_outcome import KEY, Outcomes
+        from .relocation import home
+        saved = Outcomes(home(self.server), self.identity, self.cwd).read(identity)
+        if saved is not None:
+            raise NativeError('This original input already failed; it was not replayed.',
+                data={KEY: saved} if NATIVE in self.server.extensions else {'outcome': 'already-admitted', 'replayed': False})
+
     async def send(self,blocks,meta):
         if self.lock.locked():raise RpcError(-32000,'A prompt is already active for this session.')
         async with self.lock:
@@ -349,6 +373,7 @@ class Session:
             if provenance is not None and (not isinstance(provenance,dict) or set(provenance)!={'inputOrigin'} or provenance.get('inputOrigin')!='coordination'):
                 raise RpcError(-32602,'Prompt provenance supports only the negotiated coordination origin marker; it grants no human authority.')
             self.input_id=command_id or str(uuid.uuid4())
+            self.reject_failed_input(self.input_id)
             reply=(meta or {}).get('amplifier.dev/messageReply')
             quote=None
             if command_id:
@@ -372,7 +397,7 @@ class Session:
                 previous=await self.worker.command('delivery',input_id=command_id)
                 if previous.get('delivery')=='accepted':
                     raise RpcError(-32001,'This input was already admitted. Read native history; it was not replayed.',{'outcome':'already-admitted','commandId':command_id,'replayed':False})
-            self.cancelled=False;self.streamed=False;self.had_deltas=False;self.last_model_id=None;self.awaiting_children=False
+            self.cancelled=False;self.streamed=False;self.had_deltas=False;self.last_model_id=None;self.awaiting_children=False;self.pending_input_failure=None
             self.prompt=asyncio.get_running_loop().create_future()
             try:
                 admitted=await self.worker.command('send',text=value,input_id=self.input_id,attachments=attachments,**({'reply_context':quote} if quote is not None else {}),**({'input_provenance':provenance} if provenance is not None else {}))
@@ -397,6 +422,7 @@ class Session:
             return resident is not None and self.worker is resident and not resident.closed and resident.process and resident.process.returncode is None and not self.cancelled and not self.retiring and self.worker_retirement_pending is not resident
         refused={'accepted':False,'executed':False,'reason':'The original native worker is unavailable or retiring; no runtime was started.'}
         async with self.lock:
+            self.reject_failed_input(identity)
             from .message_metadata import guard_input_identity
             from .relocation import home
             guard_input_identity(home(self.server)/'sessions'/self.identity/'message-interactions.sqlite3',identity)
@@ -411,7 +437,7 @@ class Session:
             if require_existing and not available():return refused
             if previous.get('delivery')=='accepted':
                 raise RpcError(-32001,'Input was already admitted; inspect its history.',{'outcome':'already-admitted','commandId':identity,'replayed':False})
-            self.input_id=identity;self.cancelled=False;self.streamed=False;self.had_deltas=False;self.last_model_id=None;self.awaiting_children=False
+            self.input_id=identity;self.cancelled=False;self.streamed=False;self.had_deltas=False;self.last_model_id=None;self.awaiting_children=False;self.pending_input_failure=None
             self.prompt=asyncio.get_running_loop().create_future()
             try:
                 try:result=await worker.control(operation,args)
@@ -536,7 +562,7 @@ class Server:
             return await self._dispatch(method,params)
         if method.startswith('_amplifier/') and NATIVE not in self.extensions:
             raise RpcError(-32601,'Native extension was not negotiated.')
-        if method in {'_amplifier/bundle/receipt','_amplifier/context/receipt'}:return await self._dispatch(method,params)
+        if method in {'_amplifier/bundle/receipt','_amplifier/context/receipt','_amplifier/input/receipt'}:return await self._dispatch(method,params)
         from .maintenance_gate import Gate
         # This exact reviewed effect owns an exclusive home gate for its entire
         # joined lifetime; acquiring the ordinary shared gate here would deadlock.
@@ -574,8 +600,11 @@ class Server:
             return {'protocolVersion':1,'agentInfo':{'name':'amplifier-acp','title':'Amplifier','version':__version__},
                 'agentCapabilities':{'loadSession':True,'sessionCapabilities':{'resume':{},'close':{},'delete':{}},
                     'promptCapabilities':{'image':True,'audio':False,'embeddedContext':True},
-                    '_meta':{NATIVE:{'version':1,**({'messageInteractions':{'version':1,'methods':['reaction','read','receipt'],'quoteMeta':'amplifier.dev/messageReply','maxQuoteChars':4000,'privateReplySelection':True}} if self.message_principal else {}),**({'managedCreation':{'version':1,'passive':True,'configurationScope':'global-and-session','typedSelection':True,'historyCopy':{'version':1,'freshAllocation':True},'configurationCopy':{'version':1,'passive':True},'defaults':{'version':1,'globalOnly':True},'models':{'version':1,'globalOnly':True,'maxPageSize':100,'maxModels':1000,'maxBytes':524288}}} if self.config.get('managedSessionRoots') else {}),'contextClear':__import__('amplifier_acp.native.history_revision',fromlist=['CONTEXT_CLEAR']).CONTEXT_CLEAR,'bundleCommands':__import__('amplifier_acp.bundle_commands',fromlist=['CAPABILITY']).CAPABILITY,'history':{'version':1,'paging':'complete-turns','passive':True,'passiveInspect':True},'scheduledTurns':{'version':1,'completion':'settled'},'questionTurns':{'version':1,'completion':'settled','active':False},'observationTurns':{'version':1,'completion':'settled','active':False},'configurationClone':{'version':1},'taskState':{'version':1,'passive':True},'workers':{'version':1,'passiveInspection':True,'residentControls':True},'runtimeInspection':{'version':1,'residentOnly':True,'passiveStatus':True},'historyEdits':{'version':1,'completion':'settled','active':False},'sessionLifecycle':{'version':1,'passive':True,'deletion':'preserve-history',**({'managedFiles':{'version':1,'preservesCanonical':True,'maxEntries':10000,'maxBytes':268435456}} if self.config.get('managedSessionRoots') and managed_disposal_supported() else {}),'retention':{'version':1,'preservesCanonical':True},**({'retiredCopies':{'version':1,'duplicateFilesOnly':True,'retirementAuthority':'launcher-assertion'}} if self.config.get('retiredSessionCopyRoots') else {}),'recoveryCopy':{'version':1,'mode':'readable-history'},'bundleFork':{'version':1,'configuredOnly':True},'descendantGuard':{'version':1,'maxSessions':100,'coverage':'indexed-and-native-worker-families'}},'activeSteering':{'version':1,'mode':'request_boundary','cancellable':False,'runtimeNegotiated':True},'lifecycle':{'version':1,'gracefulRetire':True},'relocation':{'version':1,'passiveInspection':True},**({'transfer':{'version':1,'passiveInspection':True,'lifecycle':{'version':1,'heldIntake':True,'serviceStop':{'version':1},'nativeAdminWriter':managed_probe(self.config)}}} if self.config.get('transferAuthorityDirectory') and self.config.get('transferWorkspaceRoots') else {}),**({'admin':{'version':1,**({'permissions':{'version':1,'scopes':['global','project','local'],'cas':True,'receipt':True,'pathsPerList':64,'pathChars':4096,'requestBytes':262144,'application':'next-idle-execution'}} if self.config.get('adminPermissions') is True else {}),**({'historyImport':{'version':1,'staged':True,'maxBytes':1048576,'chunkBytes':16384}} if self.config.get('adminHistoryImport') is True else {}),'voice':{'version':1,'configuration':True,'credentials':self.config.get('adminVoiceCredentials') is True,**({'preferences':{'version':1,'cas':True,'receipt':True,'fields':['preferredModel','fallbackModel','voice','interruptions']}} if self.config.get('adminVoicePreferences') is True else {})},'lifecycle':{'version':1,'heldIntake':True,'crossProcessWriterFence':True,'idleNotification':True,'serviceStop':{'version':1}},**({'generations':{'version':1}} if self.config.get('adminGenerations') else {}),**({'maintenance':{'version':1,'selectedOnly':self.config.get('maintenanceFullNative') is not True,'privateArtifacts':True,**({'captureScope':{'version':1,'connectionScoped':True,'beforePrepare':True,'retainsNativeHome':True,'maxArtifacts':16,'expiry':'connection-lifetime'}} if self.config.get('maintenanceFullNative') is True else {}),'appReset':{'version':1,'parts':['native.app-bundle-default'],'retainedUndo':True,'requiresRecoveryAdminLease':True},'cacheInventory':{'version':1,'cold':True,'paged':True,'clearKinds':['python-bytecode'],'sourceRetirement':False,'requiresRecoveryAdminLease':True},'archivePlans':{'version':1,'batchSize':32,'pagedManifest':True,'nativeStores':{'version':1,'parts':['native-import-records','native-preference-receipts','native-maintenance-records','native-retained-archives'],'requiresRecoveryAdminLease':True},**({'fullNative':{'version':1,'part':'full-native-authority','format':'amplifier-native-authority','coldInventory':True,'externalRootsDeclared':True,'artifactInspect':{'version':1},**({'restore':{'version':1,'newDestinationOnly':True,'pagedManifest':True,'receipt':True,'passiveInspect':True}} if self.config.get('maintenanceRestoreRoots') else {})}} if self.config.get('maintenanceFullNative') is True else {})}}} if self.config.get('adminMaintenance') is True else {})}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
+                    '_meta':{NATIVE:{'version':1,**({'messageInteractions':{'version':1,'methods':['reaction','read','receipt'],'quoteMeta':'amplifier.dev/messageReply','maxQuoteChars':4000,'privateReplySelection':True}} if self.message_principal else {}),**({'managedCreation':{'version':1,'passive':True,'configurationScope':'global-and-session','typedSelection':True,'historyCopy':{'version':1,'freshAllocation':True},'configurationCopy':{'version':1,'passive':True},'defaults':{'version':1,'globalOnly':True},'models':{'version':1,'globalOnly':True,'maxPageSize':100,'maxModels':1000,'maxBytes':524288}}} if self.config.get('managedSessionRoots') else {}),'inputOutcome':__import__('amplifier_acp.input_outcome',fromlist=['CAPABILITY']).CAPABILITY,'contextClear':__import__('amplifier_acp.native.history_revision',fromlist=['CONTEXT_CLEAR']).CONTEXT_CLEAR,'bundleCommands':__import__('amplifier_acp.bundle_commands',fromlist=['CAPABILITY']).CAPABILITY,'history':{'version':1,'paging':'complete-turns','passive':True,'passiveInspect':True},'scheduledTurns':{'version':1,'completion':'settled'},'questionTurns':{'version':1,'completion':'settled','active':False},'observationTurns':{'version':1,'completion':'settled','active':False},'configurationClone':{'version':1},'taskState':{'version':1,'passive':True},'workers':{'version':1,'passiveInspection':True,'residentControls':True},'runtimeInspection':{'version':1,'residentOnly':True,'passiveStatus':True},'historyEdits':{'version':1,'completion':'settled','active':False},'sessionLifecycle':{'version':1,'passive':True,'deletion':'preserve-history',**({'managedFiles':{'version':1,'preservesCanonical':True,'maxEntries':10000,'maxBytes':268435456}} if self.config.get('managedSessionRoots') and managed_disposal_supported() else {}),'retention':{'version':1,'preservesCanonical':True},**({'retiredCopies':{'version':1,'duplicateFilesOnly':True,'retirementAuthority':'launcher-assertion'}} if self.config.get('retiredSessionCopyRoots') else {}),'recoveryCopy':{'version':1,'mode':'readable-history'},'bundleFork':{'version':1,'configuredOnly':True},'descendantGuard':{'version':1,'maxSessions':100,'coverage':'indexed-and-native-worker-families'}},'activeSteering':{'version':1,'mode':'request_boundary','cancellable':False,'runtimeNegotiated':True},'lifecycle':{'version':1,'gracefulRetire':True},'relocation':{'version':1,'passiveInspection':True},**({'transfer':{'version':1,'passiveInspection':True,'lifecycle':{'version':1,'heldIntake':True,'serviceStop':{'version':1},'nativeAdminWriter':managed_probe(self.config)}}} if self.config.get('transferAuthorityDirectory') and self.config.get('transferWorkspaceRoots') else {}),**({'admin':{'version':1,**({'permissions':{'version':1,'scopes':['global','project','local'],'cas':True,'receipt':True,'pathsPerList':64,'pathChars':4096,'requestBytes':262144,'application':'next-idle-execution'}} if self.config.get('adminPermissions') is True else {}),**({'historyImport':{'version':1,'staged':True,'maxBytes':1048576,'chunkBytes':16384}} if self.config.get('adminHistoryImport') is True else {}),'voice':{'version':1,'configuration':True,'credentials':self.config.get('adminVoiceCredentials') is True,**({'preferences':{'version':1,'cas':True,'receipt':True,'fields':['preferredModel','fallbackModel','voice','interruptions']}} if self.config.get('adminVoicePreferences') is True else {})},'lifecycle':{'version':1,'heldIntake':True,'crossProcessWriterFence':True,'idleNotification':True,'serviceStop':{'version':1}},**({'generations':{'version':1}} if self.config.get('adminGenerations') else {}),**({'maintenance':{'version':1,'selectedOnly':self.config.get('maintenanceFullNative') is not True,'privateArtifacts':True,**({'captureScope':{'version':1,'connectionScoped':True,'beforePrepare':True,'retainsNativeHome':True,'maxArtifacts':16,'expiry':'connection-lifetime'}} if self.config.get('maintenanceFullNative') is True else {}),'appReset':{'version':1,'parts':['native.app-bundle-default'],'retainedUndo':True,'requiresRecoveryAdminLease':True},'cacheInventory':{'version':1,'cold':True,'paged':True,'clearKinds':['python-bytecode'],'sourceRetirement':False,'requiresRecoveryAdminLease':True},'archivePlans':{'version':1,'batchSize':32,'pagedManifest':True,'nativeStores':{'version':1,'parts':['native-import-records','native-preference-receipts','native-maintenance-records','native-retained-archives'],'requiresRecoveryAdminLease':True},**({'fullNative':{'version':1,'part':'full-native-authority','format':'amplifier-native-authority','coldInventory':True,'externalRootsDeclared':True,'artifactInspect':{'version':1},**({'restore':{'version':1,'newDestinationOnly':True,'pagedManifest':True,'receipt':True,'passiveInspect':True}} if self.config.get('maintenanceRestoreRoots') else {})}} if self.config.get('maintenanceFullNative') is True else {})}}} if self.config.get('adminMaintenance') is True else {})}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
         if not self.initialized:raise RpcError(-32600,'Initialize this connection first.')
+        if method=='_amplifier/input/receipt':
+            from .input_outcome import passive
+            return passive(self,params)
         if method=='_amplifier/context/receipt':
             from .native.history_revision import passive_context_receipt
             return passive_context_receipt(self,params)

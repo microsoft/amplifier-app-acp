@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Native exact settled input failure receipt v1",
+  "description": "Exact receipt only. Null is unknown, never replay permission. Serialized proof bound: 4096 UTF-8 bytes. Reads use original immutable history cwd, not relocated execution cwd.",
+  "type": "object",
+  "required": [
+    "receipt"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "receipt": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/outcome"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "sessionId",
+        "inputId",
+        "status",
+        "terminal",
+        "noReplay",
+        "inputPersisted",
+        "effectBoundary",
+        "error"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "inputId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "status": {
+          "const": "failed"
+        },
+        "terminal": {
+          "const": true
+        },
+        "noReplay": {
+          "const": true
+        },
+        "inputPersisted": {
+          "const": true
+        },
+        "effectBoundary": {
+          "enum": [
+            "unknown",
+            "input-persisted",
+            "provider-request",
+            "model-output",
+            "tool-effects"
+          ]
+        },
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "message"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.]{0,99}$"
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+            }
+          }
+        }
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sessionId",
+        "cwd",
+        "inputId"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "inputId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      }
+    }
+  }
+}
