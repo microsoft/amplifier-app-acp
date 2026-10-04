@@ -43,8 +43,12 @@ async def query(request):
         except ImportError:source=request.get('fallbackSource')
     if source:
         from amplifier_foundation import Bundle
+        from pathlib import Path
         os.environ['AMPLIFIER_HOME']=request['registryHome']
         bundle=Bundle.from_dict({'bundle':{'name':'provider-setup'},'providers':[{'module':request['module'],'source':source}]})
+        if request['action'] == 'providers.compatibility':
+            bundle.base_path = Path(request['basePath']) if request.get('basePath') else None
+            bundle.source_base_paths = {key: Path(value) for key, value in request.get('sourceBasePaths', {}).items()}
         await runtime_preparation.prepare(bundle, strict=True)
     cls=provider_class(request['module'])
     # Metadata gets no credentials/config, except the saved endpoint when the
@@ -66,6 +70,14 @@ async def query(request):
         value=getattr(provider,name)()
         return await value if inspect.isawaitable(value) else value
     try:
+        if request['action'] == 'providers.compatibility':
+            from .managed_models import CatalogUnavailable, discover
+            try:
+                result = await discover(provider, 'candidate', request['module'])
+            except CatalogUnavailable:
+                return {'status': 'unverified'}
+            return {'status': ('advertised' if any(row['id'] == request['model'] for row in result['models'])
+                               else 'not-advertised') if result['modelsSupported'] else 'unverified'}
         info=public(await invoke('get_info'))
         result={'info':info,'configSchema':public(schema)}
         if request['action'] == 'providers.testMessage':

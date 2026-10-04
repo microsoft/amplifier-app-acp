@@ -36,7 +36,7 @@ async def preview(controls, workspace, bundle):
 
 async def inspect_bundle(controls, workspace, bundle):
     from .host.config import load_config
-    from .host.session import load_root_bundle, live_plan, ResolvedRoot
+    from .host.session import load_root_bundle, live_plan, ResolvedRoot, is_snapshot
     from .runtime_controls import public_config, validate_plan, identity
     from amplifier_acp.managed_session import runtime_scope
     # Match the worker's verified configuration scope, including the HostConfig
@@ -67,13 +67,16 @@ async def inspect_bundle(controls, workspace, bundle):
     # An unavailable pin must be an explicit choice, never a silent model change.
     saved = json.loads(controls.state_path().read_text()) if controls.state_path().exists() else {}
     selection = controls.selection or saved.get('selection')
-    compatible = not selection or (selection.get('instance') or selection.get('provider')) in names(plan, 'providers')
+    from .bundle_model_compatibility import inspect_selection
+    compatibility = await inspect_selection(config, loaded, plan, selection, execution_workspace)
+    compatible = compatibility['status'] in {'unpinned', 'advertised'}
     stamp = hashlib.sha256(json.dumps(plan, sort_keys=True, default=str).encode()).hexdigest()
     return {'bundle': bundle, 'resolved': resolved, 'fingerprint': stamp,
-            'changes': changes, 'modelCompatible': compatible,
+            'changes': changes, 'modelCompatible': compatible, 'modelCompatibility': compatibility,
             'selection': public_config(selection), 'instructionsChange': True,
             'overridesReset': controls.state_path().with_name('configuration.json').exists(),
-            'appCapabilities': list(config.app_bundles)}, ResolvedRoot(config, bundle, root, execution_workspace=execution_workspace)
+            'appCapabilities': [] if is_snapshot(loaded) else list(config.app_bundles),
+            'composition': 'snapshot' if is_snapshot(loaded) else 'configured'}, ResolvedRoot(config, bundle, root, execution_workspace=execution_workspace)
 
 
 class BundleTransaction:

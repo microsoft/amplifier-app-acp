@@ -46,7 +46,7 @@ async def test_actual_switch_keeps_scope_history_selection_and_exact_receipt(tmp
             loaded = await client.request('session/new', {'cwd': str(cwd), 'mcpServers': []})
             sid = loaded['result']['sessionId']
         assert 'result' in loaded, loaded
-        selected = {'instance': 'fixture', 'model': 'fixture-original'}
+        selected = {'instance': 'fixture', 'model': 'fixture-model'}
         assert (await control('provider.select', selected))['result']['selection'] == selected
         recorded = await control('voice.transcript.record', {'callId': 'retained', 'itemId': 'original', 'role': 'user',
             'text': 'Retained canonical words', 'append': False, 'commandId': 'retained-voice'})

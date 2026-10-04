@@ -14,7 +14,7 @@ class FixtureProvider:
     name="fixture"
     def parse_tool_calls(self,response):return response.tool_calls or []
     def __init__(self,config=None):self.config=config or {}
-    def get_info(self):return ProviderInfo(id='fixture',display_name='Offline fixture',defaults={'model':'fixture-model','max_tokens':4096},capabilities=['tools','completion:single_attempt:v2'])
+    def get_info(self):return ProviderInfo(id='fixture',display_name='Offline fixture',defaults={'model':self.config.get('fixtureDefaultModel','fixture-model'),'max_tokens':4096},capabilities=['tools','completion:single_attempt:v2'])
     async def close(self):pass
     async def list_models(self):
         if self.config.get('modelDiscoveryError'):raise RuntimeError('fixture private detail must not be returned')
