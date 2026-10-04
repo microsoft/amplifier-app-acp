@@ -900,6 +900,12 @@ class Worker:
                 elif data["operation"] == "voice.transcript.record":
                     from amplifier_acp.native.voice_history import record
                     result = await record(self.controls, arguments)
+                elif data["operation"] == "session.naming.generate":
+                    from amplifier_acp.naming_commands import Commands,validate
+                    validate('generate',arguments)
+                    if not self.naming:raise ValueError('Automatic naming is unavailable for this conversation.')
+                    commands=Commands(self.home,self.runtime.session_id,self.naming.directory)
+                    result=await commands.perform('generate',arguments,self.naming.suggest)
                 elif data["operation"] == "session.naming":
                     if not self.naming:
                         raise ValueError('Automatic naming is unavailable for this conversation.')
