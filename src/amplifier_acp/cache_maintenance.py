@@ -20,8 +20,7 @@ def safeid(value,size=32):
 class Caches:
     def __init__(self,owner):
         self.owner=owner
-        with owner.db() as db:
-            db.executescript('CREATE TABLE IF NOT EXISTS cache_scans(id TEXT PRIMARY KEY,workspace TEXT NOT NULL,body TEXT NOT NULL);CREATE TABLE IF NOT EXISTS cache_entries(scan TEXT NOT NULL,id TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(scan,id));CREATE TABLE IF NOT EXISTS cache_previews(hash TEXT PRIMARY KEY,workspace TEXT NOT NULL,body TEXT NOT NULL);')
+        with owner.db(namespace='cache'):pass
 
     def references(self,workspace,bounds):
         owner=self.owner;refs=[];configured=[];stamps=[];issues=[];generation_rows=[]

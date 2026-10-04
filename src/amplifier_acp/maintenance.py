@@ -67,9 +67,9 @@ class Maintenance:
         with self.db(write=False):pass
 
     @contextmanager
-    def db(self,write=True):
+    def db(self,write=True,*,namespace=None):
         from .journal_schema import connect
-        db=connect(self.root/'receipts.sqlite3','maintenance',write=write)
+        db=connect(self.root/'receipts.sqlite3','maintenance',write=write,namespace=namespace)
         if db is None:yield None;return
         try:
             with db:yield db
