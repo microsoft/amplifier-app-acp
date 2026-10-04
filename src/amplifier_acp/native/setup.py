@@ -568,8 +568,10 @@ class SetupManager:
             result['setupCompletion']={'id':identity,'model':model,'routingCreated':False,'routingSelected':'balanced' if initialize else None,'takesEffect':'new_sessions'}
             return result
         if action=='providers.remove':return self._provider_mutation(args,workspace,scope,remove=True)
-        if action=='providers.loginCancel':return await self.cancel_login(args['id'])
-        if action=='providers.loginStatus':return {'providerId':args['id'],'login':self.login_state(args['id'])}
+        if action in {'providers.loginCancel','providers.loginStatus'}:
+            key=self.login_reference(workspace,args)
+            if action=='providers.loginCancel':return await self.cancel_login(key)
+            return {'providerId':args['id'],'login':self.login_state(key)}
         if action=='providers.login':
             row=next((row for row in self.config(workspace).providers if (row.get('id') or row.get('instance_id') or row['module'].removeprefix('provider-'))==args['id']),None)
             if row and row['module']=='provider-openai-chatgpt':return await self.start_login(row,args,workspace,scope)
@@ -604,23 +606,53 @@ class SetupManager:
             return {**self.routing(workspace),'matrix':self.matrix(workspace,name),'takesEffect':'new_sessions','scope':scope}
         raise ValueError('Unknown setup operation.')
 
-    def login_state(self,identity):
-        row=self.logins.get(identity)
-        if not row:return {"providerId":identity,"status":"idle"}
-        return {key:value for key,value in row.items() if key not in {"task","process"}}
+    def login_key(self,workspace,scope,identity):
+        self.store.path(workspace,scope)
+        return (str(Path(workspace).expanduser().resolve()),scope,safe_name(identity))
 
-    async def publish_login(self,identity,**values):
-        result={**values,"providerId":identity,"login":self.login_state(identity)}
+    def login_reference(self,workspace,args):
+        identity=safe_name(args['id'])
+        if 'scope' in args:
+            key=self.login_key(workspace,args['scope'],identity)
+        else:
+            canonical=str(Path(workspace).expanduser().resolve())
+            matches=[key for key in self.logins if key[0]==canonical and key[2]==identity]
+            if len(matches)>1:raise ValueError('Choose the original sign-in scope; this provider has multiple attempts in this workspace.')
+            key=matches[0] if matches else self.login_key(workspace,'global',identity)
+        if 'loginId' in args:
+            login_id=args['loginId']
+            if not isinstance(login_id,str) or not re.fullmatch(r'[a-f0-9]{32}',login_id):
+                raise ValueError('Use the original sign-in attempt ID.')
+            row=self.logins.get(key)
+            if not row or row['loginId']!=login_id:raise ValueError('The original sign-in attempt is unavailable; no new flow was started or cancelled.')
+        return key
+
+    def login_binding(self,workspace,provider):
+        from .provider_catalog import fingerprint
+        return fingerprint([provider,provider_source(self.config(workspace),provider['module'],provider)])
+
+    def login_state(self,key):
+        row=self.logins.get(key)
+        if not row:return {"providerId":key[2],"status":"idle"}
+        return {name:value for name,value in row.items() if name not in {"task","process","_binding","_enablePlan"}}
+
+    async def publish_login(self,key,**values):
+        result={**values,"providerId":key[2],"login":self.login_state(key)}
         if self.progress:await self.progress(result)
         return result
 
     async def start_login(self,provider,args,workspace,scope):
-        identity=args['id']; previous=self.logins.get(identity)
-        if previous and not previous['task'].done():return await self.publish_login(identity)
+        identity=args['id']; key=self.login_key(workspace,scope,identity)
         original=copy.deepcopy(provider)
         old=original.get('config',{})
         mode=chatgpt_auth_mode(args.get('authMode') or old.get('auth_mode'))
         if mode not in {'chatgpt_codex','chatgpt_plan'}:raise ValueError('Choose a supported ChatGPT sign-in method.')
+        binding=self.login_binding(workspace,provider)
+        previous=self.logins.get(key)
+        if previous and not previous['task'].done():
+            if previous['_binding']!=binding or previous['authMode']!=mode or previous['_enablePlan']!=bool(args.get('enablePlan')):
+                raise ValueError('This connection changed during sign-in. Cancel the original attempt before starting another.')
+            return await self.publish_login(key)
         login_id=uuid.uuid4().hex
         profile_dir=self.home/'config'/'chatgpt-sign-in'/safe_name(identity)
         path=profile_dir/(login_id+'.json')
@@ -631,8 +663,9 @@ class SetupManager:
         config={**old,'auth_mode':mode,'token_file_path':str(path),'login_on_mount':False}
         if mode=='chatgpt_plan':config['host_file_path']=str(host_path)
         before=account_status(old)
-        row={'providerId':identity,'loginId':login_id,'authMode':mode,'status':'starting','instructions':[]}
-        self.logins[identity]=row
+        row={'providerId':identity,'loginId':login_id,'scope':scope,'authMode':mode,'status':'starting','instructions':[],
+             '_binding':binding,'_enablePlan':bool(args.get('enablePlan'))}
+        self.logins[key]=row
         async def run():
             process=None;completed=False;activated=False
             try:
@@ -666,7 +699,7 @@ class SetupManager:
                         if event['status'] in {'completed','failed'}:
                             row.pop('deviceCode',None);row.pop('url',None);row['instructions']=[]
                         if event.get('error'):row['error']='Sign-in did not finish. Update the included ChatGPT provider if necessary, then try again.'
-                        await self.publish_login(identity)
+                        await self.publish_login(key)
                     code=await process.wait()
                     if code or not completed or row['status']=='failed':
                         row.update(status='failed',error=row.get('error') or 'The provider login ended before authentication completed.')
@@ -675,7 +708,7 @@ class SetupManager:
                         if not account['connected']:raise ValueError('No authenticated account was saved.')
                         current=next((p for p in self.config(workspace).providers if (p.get('id') or p.get('instance_id') or p['module'].removeprefix('provider-'))==identity),None)
                         disabled=self.config(workspace).settings.get('configurator',{}).get('disabled',{}).get('providers',[])
-                        if current!=original or identity in disabled:
+                        if current!=original or identity in disabled or self.login_binding(workspace,current)!=binding:
                             row.update(status='failed',error='This connection changed during sign-in. Refresh its settings before trying again.')
                         else:
                             # Activate a separate credential profile only after
@@ -684,7 +717,7 @@ class SetupManager:
                             result=self._provider_mutation({**args,'module':provider['module'],'config':config},workspace,scope)
                             activated=True
                             row.update(status='completed',account=account,showPlanWelcome=account['planEnabled'] and not before['planEnabled'])
-                            await self.publish_login(identity,providers=result['providers'],providersWorkspace=workspace,providersLoadedAt=time.time(),loginConfigurationChanged=True)
+                            await self.publish_login(key,providers=result['providers'],providersWorkspace=workspace,providersLoadedAt=time.time(),loginConfigurationChanged=True)
             except asyncio.CancelledError:row['status']='cancelled';raise
             except TimeoutError:row.update(status='expired',error='Sign-in expired. Start again.')
             except Exception as exc:row.update(status='failed',error='Unable to run provider login ('+type(exc).__name__+').')
@@ -717,17 +750,17 @@ class SetupManager:
                             path.unlink(missing_ok=True)
                     except Exception:
                         row['cleanupWarning']='An abandoned sign-in file could not be safely removed.'
-                await self.publish_login(identity)
+                await self.publish_login(key)
         row['task']=asyncio.create_task(run())
-        return await self.publish_login(identity)
+        return await self.publish_login(key)
 
-    async def cancel_login(self,identity):
-        row=self.logins.get(identity)
+    async def cancel_login(self,key):
+        row=self.logins.get(key)
         if row and not row['task'].done():
             row['status']='cancelled'
             row['task'].cancel()
             await asyncio.gather(row['task'],return_exceptions=True)
-        return await self.publish_login(identity)
+        return await self.publish_login(key)
 
     async def close(self):
         await asyncio.gather(*(self.cancel_login(identity) for identity in list(self.logins)),return_exceptions=True)
