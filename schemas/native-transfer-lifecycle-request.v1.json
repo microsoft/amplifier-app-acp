@@ -189,6 +189,193 @@
         "args"
       ],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "args"
+      ],
+      "properties": {
+        "operation": {
+          "const": "acquire"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "commandId",
+            "fenceId",
+            "instanceId",
+            "dataScope",
+            "ownerId",
+            "purpose"
+          ],
+          "properties": {
+            "commandId": {
+              "$ref": "#/$defs/token"
+            },
+            "fenceId": {
+              "$ref": "#/$defs/token"
+            },
+            "instanceId": {
+              "$ref": "#/$defs/token"
+            },
+            "dataScope": {
+              "$ref": "#/$defs/token"
+            },
+            "ownerId": {
+              "$ref": "#/$defs/token"
+            },
+            "purpose": {
+              "const": "distribution-update"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "args"
+      ],
+      "properties": {
+        "operation": {
+          "const": "release"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "commandId",
+            "fenceId",
+            "instanceId",
+            "dataScope",
+            "ownerId",
+            "purpose",
+            "outcome",
+            "proof"
+          ],
+          "properties": {
+            "commandId": {
+              "$ref": "#/$defs/token"
+            },
+            "fenceId": {
+              "$ref": "#/$defs/token"
+            },
+            "instanceId": {
+              "$ref": "#/$defs/token"
+            },
+            "dataScope": {
+              "$ref": "#/$defs/token"
+            },
+            "ownerId": {
+              "$ref": "#/$defs/token"
+            },
+            "purpose": {
+              "const": "distribution-update"
+            },
+            "outcome": {
+              "enum": [
+                "unchanged",
+                "ready"
+              ]
+            },
+            "proof": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "args"
+      ],
+      "properties": {
+        "operation": {
+          "const": "abortAdmission"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "commandId",
+            "fenceId",
+            "instanceId",
+            "dataScope",
+            "ownerId",
+            "purpose",
+            "proof"
+          ],
+          "properties": {
+            "commandId": {
+              "$ref": "#/$defs/token"
+            },
+            "fenceId": {
+              "$ref": "#/$defs/token"
+            },
+            "instanceId": {
+              "$ref": "#/$defs/token"
+            },
+            "dataScope": {
+              "$ref": "#/$defs/token"
+            },
+            "ownerId": {
+              "$ref": "#/$defs/token"
+            },
+            "purpose": {
+              "const": "distribution-update"
+            },
+            "proof": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "commandId",
+                "fenceId",
+                "instanceId",
+                "dataScope",
+                "purpose",
+                "kind",
+                "verified",
+                "receiptId"
+              ],
+              "properties": {
+                "commandId": {
+                  "$ref": "#/$defs/token"
+                },
+                "fenceId": {
+                  "$ref": "#/$defs/token"
+                },
+                "instanceId": {
+                  "$ref": "#/$defs/token"
+                },
+                "dataScope": {
+                  "$ref": "#/$defs/token"
+                },
+                "receiptId": {
+                  "$ref": "#/$defs/token"
+                },
+                "purpose": {
+                  "const": "distribution-update"
+                },
+                "kind": {
+                  "const": "distribution-admission-abort"
+                },
+                "verified": {
+                  "const": true
+                }
+              }
+            }
+          }
+        }
+      }
     }
   ],
   "$defs": {
