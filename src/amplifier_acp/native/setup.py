@@ -20,7 +20,7 @@ from filelock import FileLock
 from .preferences import SettingsStore
 from .shared_settings import atomic_write, routing_dirs, overlay
 from .host.config import credential_environment_source, expand_environment, load_config, write_private
-from .bundles import SECRET_KEYS, validate_uri
+from .bundles import SECRET_KEYS
 
 KNOWN_PROVIDER_SOURCES=json.loads(Path(__file__).with_name('provider_sources.json').read_text())
 
@@ -427,7 +427,11 @@ class SetupManager:
                     config['login_on_mount']=False
                 row={'id':identity,'module':module,'config':private(config)}
                 source=args.get('source') or (existing or {}).get('source') or (KNOWN_PROVIDER_SOURCES.get(module) if module in {'provider-chat-completions','provider-azure-openai','provider-ollama','provider-vllm'} else None)
-                if source: row['source']=validate_uri(source)
+                if source:
+                    # Providers use the same source contract as the module editor.
+                    # Defer the import: registry also uses SetupManager for keys.
+                    from .registry import source_uri
+                    row['source']=source_uri(source,workspace)
                 if updates:self._keys(updates)
             if index is None:rows.append(row)
             else:rows[index]=row
