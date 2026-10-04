@@ -262,6 +262,15 @@ work. New receipts or plans created afterward are outside the reviewed image;
 ongoing capture bookkeeping cannot invalidate its own snapshot. Original stores
 and prior archive bytes remain unchanged.
 
+The exact `receipts.sqlite3.schema.lock` file is transient coordination for the
+receipt journal initializer. It is accepted only as a regular, non-linked file
+and is excluded from the image without reading its contents, deleting it or
+replacing its inode. A held lock remains held. The exclusive native writer gate
+and exact recovery-admin lease still protect snapshot preparation. This exception
+does not admit arbitrary lock-named files in the maintenance root; unknown entries
+continue to refuse. The receipt database, including enrolled cache and app-reset
+records, remains authoritative and is captured through SQLite backup.
+
 The immutable prepared images are verified by the paged manifest during capture.
 This is deliberately different from the import/preference images, whose source
 revisions must still match review. Unknown entries in the maintenance owner's

@@ -84,7 +84,11 @@ def prepare(owner,plan,parts,directory,bounded,remaining,backup,command_id):
 
     # Only known owner roots. Unknown additions require a deliberate versioned
     # policy; do not sweep arbitrary app-home files into a native archive.
-    known(owner.root,{'receipts.sqlite3','receipts.sqlite3-wal','receipts.sqlite3-shm','plans','previews','retained','artifacts','restore-plans'})
+    known(owner.root,{'receipts.sqlite3','receipts.sqlite3-wal','receipts.sqlite3-shm','receipts.sqlite3.schema.lock','plans','previews','retained','artifacts','restore-plans'})
+    # This exact file is the journal initializer's OS coordination lock, not a
+    # receipt. Never copy, replace or unlink it; an active holder retains its fd.
+    schema_lock=checked(owner.root/'receipts.sqlite3.schema.lock')
+    if schema_lock.exists():file_stamp(schema_lock)
     copy(RECORDS,'receipts.sqlite3',owner.root/'receipts.sqlite3',True)
     walk(RECORDS,'previews',owner.root/'previews')
     walk(RECORDS,'retained',owner.root/'retained')
