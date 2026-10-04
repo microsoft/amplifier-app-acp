@@ -546,6 +546,18 @@ class Server:
             if 'guidance' in app and not isinstance(app['guidance'],str):raise RpcError(-32602,'Host guidance must be text.')
             if len(json.dumps(self.host_info).encode())>32768:raise RpcError(-32602,'Host capability metadata exceeds 32 KiB.')
             self.extensions={key for key in (NATIVE,HOST) if isinstance(meta.get(key),dict) and meta[key].get('version')==1}
+            binding=meta.get('amplifier.dev/messagePrincipal')
+            if binding is not None:
+                from .message_metadata import token
+                if NATIVE not in self.extensions or not isinstance(binding,dict) or set(binding)!={'version','account'} or type(binding['version']) is not int or binding['version']!=1:
+                    raise RpcError(-32602,'Exact native message principal binding required.',{'executed':False,'replayed':False})
+                try:account=token(binding['account'])
+                except ValueError as error:raise RpcError(-32602,str(error),{'executed':False,'replayed':False}) from error
+                if self.message_principal is not None:raise RpcError(-32602,'Trusted message principal is already bound.',{'executed':False,'replayed':False})
+                # This is an assertion by the authenticated spawning host over
+                # its private stdio connection, not independent authentication.
+                # It is immutable and never accepted through per-action args.
+                self.message_principal=lambda identity: account
             from .managed_disposal import supported as managed_disposal_supported
             return {'protocolVersion':1,'agentInfo':{'name':'amplifier-acp','title':'Amplifier','version':__version__},
                 'agentCapabilities':{'loadSession':True,'sessionCapabilities':{'resume':{},'close':{},'delete':{}},

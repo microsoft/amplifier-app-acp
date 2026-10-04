@@ -2,7 +2,7 @@
 
 This module implements the approved CS1–4/7 and AP1/3–5 message boundary. It is
 an adjunct to canonical native transcript/events, never a resume store or draft
-buffer. The native dispatcher and explicit-send admission are wired when a trusted principal provider is injected. Default CLI composition has no provider and does not advertise these methods; bridge/account binding remains a separate integration requirement.
+buffer. The native dispatcher and explicit-send admission are wired when a trusted principal provider is injected. CLI composition advertises these methods only after its trusted spawned-stdio initializer supplies the agreed account binding; absent generic peers remain unadvertised.
 
 Reply selection and Clear are client-local actions. They retain a native
 reference beside the private per-conversation draft, never synchronize the draft
@@ -42,7 +42,14 @@ minimal handler seam. The server negotiates and derives the authenticated princi
 synchronous callable `trusted_provider(native_session_id) -> authenticated account
 principal | None`. It must authorize the native session in its existing trusted
 connection/account context; browser identity and method arguments cannot populate
-this provider. No new launcher identity config field is introduced.
+this provider. CLI initialization binds the same seam once from
+`clientCapabilities._meta["amplifier.dev/messagePrincipal"]` with exact
+`{version:1, account: serverComposedAccount}`, alongside native v1. It requires no
+host-callback advertisement. The bridge supplies its stable authenticated server
+account, never browser client identity or user/agent args. This trusted stdio
+assertion is not independent authentication or user-consent evidence. Missing
+binding leaves the optional capability absent; malformed binding and connection
+reinitialization refuse. No new launcher identity config field is introduced.
 
 `MessageMetadata(app_home, native_session_id, actor_id=trusted_actor)` takes
 **authenticated actor identity from host/owner context**, never protocol args.
