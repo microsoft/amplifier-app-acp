@@ -21,6 +21,8 @@ class NativeWorker:
         self.tasks = set()
         self.closed = False
         self.transport_closed = False
+        self.retirement_confirmed = False
+        self.retirement_commands = set()
         self.generation_lease = None
         self.ready = asyncio.get_running_loop().create_future()
         self.report = {}
@@ -121,12 +123,14 @@ class NativeWorker:
         identity = str(uuid.uuid4())
         future = asyncio.get_running_loop().create_future()
         self.pending[identity]=future
+        if op=='retire':self.retirement_commands.add(identity)
         try:
             await self.write({'op':op,'id':identity,**arguments})
             # No automatic timeout/retry: an admitted operation can have effects.
             return await future
         finally:
             self.pending.pop(identity,None)
+            self.retirement_commands.discard(identity)
 
     async def control(self, operation, arguments=None):
         return await self.command('control',operation=operation,arguments=arguments or {})
@@ -150,6 +154,10 @@ class NativeWorker:
                 row=json.loads(line)
                 if row.get('op')=='reply':
                     future=self.pending.get(row.get('id'))
+                    if future and row.get('id') in self.retirement_commands and not row.get('error') and isinstance(row.get('result'),dict) and set(row['result'])=={'retired'} and row['result']['retired'] is True:
+                        # Exact correlated quiescence acknowledgement, not EOF
+                        # or runtime.closed. Retain it if the caller loses delivery.
+                        self.retirement_confirmed=True
                     if future and not future.done():
                         if row.get('error'):future.set_exception(NativeError(row['error'],data={k:v for k,v in row.items() if k not in {'error','op','id'}}))
                         else:future.set_result(row.get('result'))
