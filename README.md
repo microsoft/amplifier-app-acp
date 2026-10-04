@@ -331,3 +331,17 @@ as `released` with the new abort proof. Missing legacy evidence remains unknown.
 Identical retries return the durable original owner receipt, including after a
 lost reply and replacement process. Normal maintenance commands cannot use the
 reserved admission namespace.
+
+### Passive retirement status
+
+Negotiated `lifecycle.retirementStatus` advertises
+`{version:1,method:'_amplifier/retire/status',passive:true}`. On the same existing
+ACP connection, `{sessionId}` returns `{sessionId,retired,reason?}` without
+starting, retiring, closing, killing or waiting for a worker. True requires the
+original captured retiring worker, its exact correlated literal `retired:true`
+acknowledgement, and clean process exit. Session flags, worker closure, EOF and
+exit alone are insufficient. False, errors and unavailable older peers preserve
+retirement uncertainty. A Host can inspect this proof before closing the old
+bridge and explicitly resuming the same Native identity for a **new** turn;
+no original uncertain turn is replayed. Definite `active_request` / `owned_work`
+retirement refusals keep the existing handle usable.

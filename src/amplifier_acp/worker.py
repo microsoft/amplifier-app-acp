@@ -21,6 +21,8 @@ class NativeWorker:
         self.tasks = set()
         self.closed = False
         self.transport_closed = False
+        self.retirement_confirmed = False
+        self.retirement_commands = set()
         self.generation_lease = None
         self.ready = asyncio.get_running_loop().create_future()
         self.report = {}
@@ -120,13 +122,20 @@ class NativeWorker:
     async def command(self, op, **arguments):
         identity = str(uuid.uuid4())
         future = asyncio.get_running_loop().create_future()
+        if op=='retire' and self.transport_closed:
+            raise NativeError('Native runtime is not running; no work was replayed.')
+        if op=='retire' and len(self.retirement_commands)>=64:
+            raise NativeError('Native retirement correlation capacity reached; original uncertainty preserved.')
         self.pending[identity]=future
+        if op=='retire':self.retirement_commands.add(identity)
         try:
             await self.write({'op':op,'id':identity,**arguments})
             # No automatic timeout/retry: an admitted operation can have effects.
             return await future
         finally:
             self.pending.pop(identity,None)
+            # A cancelled waiter does not cancel a sent retirement. Retain its
+            # exact correlation until the reader consumes the reply or EOF.
 
     async def control(self, operation, arguments=None):
         return await self.command('control',operation=operation,arguments=arguments or {})
@@ -150,6 +159,11 @@ class NativeWorker:
                 row=json.loads(line)
                 if row.get('op')=='reply':
                     future=self.pending.get(row.get('id'))
+                    if row.get('id') in self.retirement_commands and 'error' not in row and isinstance(row.get('result'),dict) and set(row['result'])=={'retired'} and row['result']['retired'] is True:
+                        # Exact correlated quiescence acknowledgement, not EOF
+                        # or runtime.closed. Retain it if the caller loses delivery.
+                        self.retirement_confirmed=True
+                    self.retirement_commands.discard(row.get('id'))
                     if future and not future.done():
                         if row.get('error'):future.set_exception(NativeError(row['error'],data={k:v for k,v in row.items() if k not in {'error','op','id'}}))
                         else:future.set_result(row.get('result'))
@@ -166,6 +180,7 @@ class NativeWorker:
             # EOF is not process exit. Refuse writes immediately, then join
             # the process before publishing closure/settling terminal proof.
             self.transport_closed=True
+            self.retirement_commands.clear()
             if not self.ready.done():self.ready.set_exception(failure)
             for future in self.pending.values():
                 if not future.done():future.set_exception(failure)
