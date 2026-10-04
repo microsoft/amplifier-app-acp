@@ -318,3 +318,16 @@ to prohibit dependency installation throughout native worker and probe lifetimes
 Configured modules stay configured; changed dependencies require a separate
 owned staging environment. Initialize and resident inspection expose the actual
 `runtimePreparation` binding only when the required public Foundation policy is available.
+
+Native administration negotiates `admin.lifecycle.admissionAbort` version 1 with
+durable original receipts. Distribution attempts retain pending/acquired/refused
+evidence and intake in reserved rows of the existing maintenance journal. Process
+exit drops the OS gate but does not erase unresolved intake. The private
+`abortAdmission` operation requires separately authenticated, exactly bound
+`distribution-admission-abort` proof. It settles the original attempt without
+reacquiring it or starting a worker; only an original explicit refusal can return
+`not-acquired`. An exact original acquired/unchanged released receipt may settle
+as `released` with the new abort proof. Missing legacy evidence remains unknown.
+Identical retries return the durable original owner receipt, including after a
+lost reply and replacement process. Normal maintenance commands cannot use the
+reserved admission namespace.

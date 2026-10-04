@@ -76,7 +76,7 @@ class Maintenance:
         finally:db.close()
 
     def receipt(self,workspace,command):
-        if not isinstance(command,str) or not 1<=len(command)<=200:raise ValueError('Bounded original commandId required')
+        if not isinstance(command,str) or command.startswith('native-admin-admission:') or not 1<=len(command)<=200:raise ValueError('Bounded original commandId required')
         with self.db(write=False) as db:row=db.execute('SELECT workspace,signature,body FROM commands WHERE id=?',(command,)).fetchone() if db else None
         if row is None:return None
         if row[0]!=workspace:raise ValueError('Maintenance receipt belongs to another authorized workspace')
@@ -85,10 +85,12 @@ class Maintenance:
         return row[1],result
 
     def claim(self,workspace,signature,row):
+        if row['commandId'].startswith('native-admin-admission:'):raise ValueError('Reserved native admission receipt namespace')
         with self.db() as db:
             return db.execute('INSERT OR IGNORE INTO commands VALUES(?,?,?,?)',(row['commandId'],workspace,signature,json.dumps(row))).rowcount==1
 
     def save(self,workspace,signature,row):
+        if row['commandId'].startswith('native-admin-admission:'):raise ValueError('Reserved native admission receipt namespace')
         with self.db() as db:db.execute('INSERT OR REPLACE INTO commands VALUES(?,?,?,?)',(row['commandId'],workspace,signature,json.dumps(row)))
 
     def spec(self,args,*,reset=False):
