@@ -185,12 +185,14 @@ A private spawning Host can offer
 `clientCapabilities._meta['amplifier.dev/host'].runtimeRetention` as exactly
 `{version:1,owner:'host',lifetime:'connection'}` during `initialize`, with Host
 capability version 1. Native acknowledges the exact tuple plus
-`standaloneIdleSeconds:60` in
+the informational `standaloneIdleSeconds` in
 `agentCapabilities._meta['amplifier.dev/native'].lifecycle.runtimeRetention`.
 Only this accepted agreement suppresses the Native autonomous idle timer. The
 Host then owns bounded retention and requests the existing atomic retirement
-handshake. The 60-second marker describes the standalone default; existing
-standalone `idleSeconds` configuration remains effective for unnegotiated peers.
+handshake. The informational interval snapshots the existing scheduling expression
+`max(1, idleSeconds)`, defaulting to 60 seconds. Zero or negative settings have a
+one-second floor and never disable retirement. Existing standalone scheduling
+and configuration remain effective for unnegotiated peers.
 Missing, unsupported, malformed or extra-key offers receive no retention
 acknowledgement and keep the standalone timer. The agreement is immutable for
 that ACP connection, binds before sessions, and requires no heartbeat. Connection

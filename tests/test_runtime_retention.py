@@ -94,7 +94,7 @@ class Clock:
 
 
 @pytest.mark.parametrize('offer', [None, {**OFFER, 'version': 2}])
-@pytest.mark.parametrize('idle_seconds', [None, 7])
+@pytest.mark.parametrize('idle_seconds', [None, 7, 0, -3, 0.25, 7.5])
 async def test_standalone_timer_default_and_config_remain_effective(tmp_path, monkeypatch, offer, idle_seconds):
     peer = server(tmp_path, **({} if idle_seconds is None else {'idleSeconds': idle_seconds}))
     await initialize(peer, offer)
@@ -102,7 +102,7 @@ async def test_standalone_timer_default_and_config_remain_effective(tmp_path, mo
     clock = Clock(); monkeypatch.setattr(asyncio, 'sleep', clock.sleep)
     session.schedule_retirement()
     try:
-        assert await clock.next_delay() == (60 if idle_seconds is None else idle_seconds)
+        assert await clock.next_delay() == (60 if idle_seconds is None else max(1, idle_seconds))
         clock.ticks.put_nowait(None)
         await asyncio.wait_for(session.idle_task, 2)
         assert session.worker.calls == ['retire'] and session.worker.process.returncode == 0
@@ -188,3 +188,17 @@ async def test_actual_cold_acp_connection_acknowledges_without_starting_worker(t
         assert repeated['error']['code'] == -32600
         assert peer.events == [] and not (tmp_path/'app').exists()
     finally: await peer.close()
+
+
+@pytest.mark.parametrize('idle_seconds,normalized', [(None, 60), (7, 7), (0, 1), (-3, 1), (0.25, 1), (7.5, 7.5)])
+async def test_ack_interval_is_informational_and_matches_existing_normalization(tmp_path, idle_seconds, normalized):
+    config = {} if idle_seconds is None else {'idleSeconds': idle_seconds}
+    peer = server(tmp_path, **config)
+    reply = await initialize(peer, deepcopy(OFFER))
+    assert lifecycle(reply)['runtimeRetention'] == {**OFFER, 'standaloneIdleSeconds': normalized}
+    assert peer.host_runtime_retention
+    assert peer.config.get('idleSeconds', 60) == (60 if idle_seconds is None else idle_seconds)
+    # Later config changes cannot alter the already-negotiated acknowledgement.
+    peer.config['idleSeconds'] = 99
+    assert lifecycle(reply)['runtimeRetention']['standaloneIdleSeconds'] == normalized
+    assert peer.host_runtime_retention
