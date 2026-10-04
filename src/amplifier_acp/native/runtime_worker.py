@@ -77,6 +77,10 @@ class Worker:
         self.activation = None
         self.parked = False
         self.retiring = False
+        self.draining = False
+        self.transport_closed = False
+        self.cleaning = False
+        self.cleanup_bridge_failed = False
         self.parked_history_stamp = None
         self.parked_config_stamp = None
         self.mounted_settings_stamp = {}
@@ -113,12 +117,19 @@ class Worker:
             self.approvals.pop(identity, None)
 
     async def bridge(self, operation, args):
+        cleanup = self.cleaning
+        if self.transport_closed:
+            if cleanup:self.cleanup_bridge_failed = True
+            raise RuntimeError('Native host connection is closed; bridge work was not replayed.')
         identity = str(uuid.uuid4())
         future = asyncio.get_running_loop().create_future()
         self.bridges[identity] = future
-        publish({"op": "bridge", "id": identity, "operation": operation, "args": args})
         try:
+            publish({"op": "bridge", "id": identity, "operation": operation, "args": args})
             return await asyncio.wait_for(future, 60)
+        except Exception:
+            if cleanup:self.cleanup_bridge_failed = True
+            raise
         finally:
             self.bridges.pop(identity, None)
 
@@ -679,8 +690,14 @@ class Worker:
         """Serialize admission with parking and bind a per-work write token."""
 
         op = data.get("op")
-        if self.retiring:
-            publish({"op":"reply","id":data.get("id"),"error":"Native worker has committed retirement; no new work admitted","code":"worker_retired","executed":False})
+        if self.retiring or self.draining:
+            # Only an exact live reply settles work already owned by cleanup.
+            # This grants no command admission, activation or Host mutation.
+            future = self.bridges.get(data.get("id")) if op == "bridge.result" else None
+            if future is not None and not future.done():
+                await self._command_serial(data)
+            else:
+                publish({"op":"reply","id":data.get("id"),"error":"Native worker is shutting down; no new work admitted","code":"worker_retired","executed":False})
             return
         memory_control = op == 'control' and data.get('operation') == 'memory.consolidate'
         naming_control = op == 'control' and data.get('operation') in {'session.naming','session.naming.generate'}
@@ -981,6 +998,10 @@ class Worker:
                         continue
                 except ValueError:
                     continue
+                if data.get("op") == "bridge.result":
+                    # Settle a reply before a following buffered EOF can fail it.
+                    await self.command(data)
+                    continue
                 task = asyncio.create_task(self.command(data))
                 self.tasks.add(task)
                 task.add_done_callback(self.tasks.discard)
@@ -990,7 +1011,11 @@ class Worker:
             publish({'type':'runtime.error','error':f'Amplifier worker communication failed ({type(exc).__name__}). A message could not be read; work was not replayed.'})
         finally:
             transport.close()
+            self.transport_closed = True
             self.shutdown.set()
+            for future in list(self.bridges.values()):
+                if not future.done():
+                    future.set_exception(RuntimeError('Native host connection closed before bridge settlement; work was not replayed.'))
 
     @runtime_preparation.governed
     async def run(self):
@@ -998,10 +1023,12 @@ class Worker:
         try:
             await self.shutdown.wait()
         finally:
-            for task in [read, self.start_task, self.execution, *self.tasks]:
+            self.draining = True
+            for task in [self.start_task, self.execution, *self.tasks]:
                 if task and not task.done():
                     task.cancel()
-            await asyncio.gather(*(t for t in [read, self.start_task, self.execution, *self.tasks] if t), return_exceptions=True)
+            await asyncio.gather(*(t for t in [self.start_task, self.execution, *self.tasks] if t), return_exceptions=True)
+            self.cleaning = True
             try:
                 try:
                     await self.checkpoint_terminal_outcome()
@@ -1014,12 +1041,18 @@ class Worker:
                         await self.controls.close()
                     if self.session:
                         await self.session.cleanup()
+                    if self.cleanup_bridge_failed:
+                        raise RuntimeError('Native cleanup bridge did not settle successfully; retirement is unconfirmed.')
                     if self.shared_handle is not None:
                         try:
                             await asyncio.to_thread(self.shared_handle.release)
                         finally:
                             self.shared_handle = None
             finally:
+                self.cleaning = False
+                for task in [read, *self.tasks]:
+                    if task and not task.done():task.cancel()
+                await asyncio.gather(read, *self.tasks, return_exceptions=True)
                 if self.maintenance_gate is not None:
                     self.maintenance_gate.release();self.maintenance_gate=None
 
