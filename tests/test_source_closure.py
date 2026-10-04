@@ -32,6 +32,9 @@ def foundation(monkeypatch):
     monkeypatch.delenv(closure.ENV)
     monkeypatch.delenv(preparation.VARIABLE, raising=False)
     closure._callbacks.clear()
+    for name in list(sys.modules):
+        if name == 'closure_fixture_provider' or name.startswith('closure_fixture_provider.'):
+            sys.modules.pop(name, None)
     return current
 
 
@@ -232,3 +235,51 @@ async def test_worker_must_confirm_exact_manifest_before_admitting_work(tmp_path
         with pytest.raises(NativeError,match='exact launcher source closure'): await worker.start()
     assert worker.closed and worker.process.returncode == 0
     assert not (tmp_path/'home').exists() and not (tmp_path/'app').exists()
+
+
+def test_new_submodule_after_spec_discovery_is_not_missed(tmp_path, foundation, monkeypatch):
+    reference, root = manifest(tmp_path, packages=['closure_fixture_provider'])
+    monkeypatch.syspath_prepend(str(root))
+    closure.configure({'sourceResolutionManifest': reference})
+    foreign = tmp_path/'foreign.py'; foreign.write_text('unqualified')
+    original = closure.importlib.util.find_spec
+    def find_spec(package):
+        spec = original(package)
+        monkeypatch.setitem(sys.modules, 'closure_fixture_provider.new', SimpleNamespace(__file__=str(foreign)))
+        return spec
+    monkeypatch.setattr(closure.importlib.util, 'find_spec', find_spec)
+    with pytest.raises(closure.SourceClosureDenied): closure.attest()
+
+
+def test_origin_change_and_same_size_file_rewrite_rechecked_every_attestation(tmp_path, foundation, monkeypatch):
+    reference, root = manifest(tmp_path, packages=['closure_fixture_provider'])
+    monkeypatch.syspath_prepend(str(root))
+    closure.configure({'sourceResolutionManifest': reference})
+    code = root/'closure_fixture_provider/__init__.py'
+    spec = SimpleNamespace(origin=str(code),submodule_search_locations=[str(code.parent)])
+    module = SimpleNamespace(__spec__=spec,__file__=str(code))
+    monkeypatch.setitem(sys.modules,'closure_fixture_provider',module)
+    assert closure.attest()['loadedPackages']==1
+    foreign=tmp_path/'foreign.py'; foreign.write_text('outside')
+    module.__file__=str(foreign)
+    with pytest.raises(closure.SourceClosureDenied): closure.attest()
+    module.__file__=str(code)
+    before=code.stat(); value=code.read_bytes(); code.write_bytes(b'X'+value[1:])
+    __import__('os').utime(code, ns=(before.st_atime_ns,before.st_mtime_ns))
+    with pytest.raises(closure.SourceClosureDenied): closure.attest()
+
+
+def test_duplicate_origin_paths_are_checked_once_per_attestation(tmp_path, foundation, monkeypatch):
+    reference,root=manifest(tmp_path,packages=['closure_fixture_provider'])
+    monkeypatch.syspath_prepend(str(root));closure.configure({'sourceResolutionManifest':reference})
+    code=root/'closure_fixture_provider/__init__.py'
+    spec=SimpleNamespace(origin=str(code),submodule_search_locations=[str(code.parent)])
+    module=SimpleNamespace(__spec__=spec,__file__=str(code))
+    monkeypatch.setitem(sys.modules,'closure_fixture_provider',module)
+    monkeypatch.setitem(sys.modules,'closure_fixture_provider.alias',SimpleNamespace(__file__=str(code)))
+    callback=closure.admission();checks=[];original=callback.check_origin
+    def checked(root,location):
+        checks.append(str(location));return original(root,location)
+    monkeypatch.setattr(callback,'check_origin',checked)
+    callback.attest();callback.attest()
+    assert checks.count(str(code))==2  # Once each call, never cached across calls.
