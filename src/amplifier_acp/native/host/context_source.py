@@ -81,6 +81,39 @@ class _InstalledSource:
         return self.package
 
 
+def _shared_binding_matches(root, hint, metadata, commit):
+    """A shared object records its commit; its scoped binding records the ref.
+
+    Inspect exactly that binding without resolving a branch, creating a cache,
+    or importing code. The caller still verifies HEAD, cleanliness and every
+    package byte before substituting the installed source.
+    """
+    store_home = os.environ.get('AMPLIFIER_SOURCE_STORE')
+    if not store_home or metadata.get('immutable') is not True or metadata.get('ref') != commit:
+        return False
+    from amplifier_foundation.sources.shared import SharedSourceStore, source_id, binding_root
+    from .config import app_home
+    from ..updates import foundation_home
+    store = SharedSourceStore(store_home)
+    url = metadata['git_url']
+    if store.checkout(url, commit).resolve() != root:
+        return False
+    registry = Path(os.environ.get('AMPLIFIER_ACP_REGISTRY_HOME') or foundation_home(app_home()))
+    parsed = urlsplit(hint[4:])
+    repo_path, _, revision = parsed.path.rpartition('@')
+    requested_url = parsed._replace(path=repo_path).geturl()
+    binding = binding_root(registry / 'cache') / '.source-bindings' / (source_id(requested_url, revision) + '.json')
+    if binding.is_symlink():
+        return False
+    with binding.open('rb') as handle:
+        raw = handle.read(16_385)
+    if len(raw) > 16_384:
+        return False
+    value = json.loads(raw)
+    return (value.get('commit') == commit and value.get('ref') == revision
+            and _repository(value.get('git_url', '')) == _repository(requested_url))
+
+
 def equivalent_context_source(module_id, hint, source):
     """Return the installed package only after proving the selected source equal.
 
@@ -117,7 +150,8 @@ def equivalent_context_source(module_id, hint, source):
         metadata = json.loads((root / '.amplifier_cache_meta.json').read_text())
         if (metadata.get('commit') != installed_commit
                 or _repository(metadata.get('git_url', '')) != requested_repo
-                or (metadata.get('ref') != revision and revision != installed_commit)):
+                or (metadata.get('ref') != revision and revision != installed_commit
+                    and not _shared_binding_matches(root, hint, metadata, installed_commit))):
             return source
         head = _git(root, 'rev-parse', 'HEAD')
         if head.returncode or head.stdout.strip() != installed_commit:
