@@ -240,10 +240,12 @@ class Generations:
      write_private(profiles_file, json.dumps(profiles))
      from .native.update_sources import store_environment, worker_supports_shared, adopt_clean_sources
      if fresh:
+         from .preparation_policy import staging_environment
          # Materialize the candidate lock once, rather than uv-syncing before
          # every workspace probe. The serving environment is never targeted.
          await self.diagnostics.run('ecosystem-runtime-prepare', process, shutil.which('uv'), 'sync', '--locked',
-             '--project', str(project), '--python', '3.13', timeout=900)
+             '--project', str(project), '--python', '3.13',
+             env=staging_environment(os.environ,project,self.home/'runtime',prepared=False), timeout=900)
      shared = store_environment(self.home) if worker_supports_shared(project) else {}
      if fresh and shared:
          await self.diagnostics.run('ecosystem-source-sharing', adopt_clean_sources, self, stage)
@@ -257,21 +259,25 @@ class Generations:
          flags=['--install-overrides',str(overrides)] if qualified else []
          flags.append('--global-only')
          if refresh:
+             from .preparation_policy import staging_environment
+             staging_env=staging_environment(env,project,self.home/'runtime')
              # One collection pass and one resolver transaction for the shared
              # graph, followed by fresh read-only compatibility processes.
              await self.diagnostics.run('ecosystem-prepare', process, *command, str(workspace), profiles[0],
-                 *flags, '--profiles', str(profiles_file), env={**env, 'UV_OVERRIDE': str(overrides)}, timeout=900)
+                 *flags, '--profiles', str(profiles_file), env={**staging_env, 'UV_OVERRIDE': str(overrides)}, timeout=900)
              return
          completed=0
          progress={'attemptId':getattr(self.diagnostics,'state',{}).get('attemptId'),
                    'phase':'prepare' if refresh else 'compatibility','total':len(configs),
                    'completed':0,'startedAt':time.time()}
          await self.publish(probeProgress=progress)
+         from .preparation_policy import staging_environment
+         readonly_env=staging_environment(env,project,self.home/'runtime',readonly=True)
          async def run_one(workspace, bundle):
              nonlocal completed
              async with semaphore:
                  await self.diagnostics.run('ecosystem-prepare' if refresh else 'ecosystem-compatibility',process,*command,workspace,bundle,*flags,
-                     env={**env,'UV_OVERRIDE':str(overrides)},timeout=900)
+                     env={**readonly_env,'UV_OVERRIDE':str(overrides)},timeout=900)
                  completed+=1
                  await self.publish(probeProgress={**progress,'completed':completed,'lastCompletedAt':time.time()})
          # Installers remain serial. After freezing, mount isolated workers

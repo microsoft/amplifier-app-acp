@@ -32,6 +32,8 @@ from amplifier_acp.native.portability_policy import PROMPT, MAX_OUTPUT_TOKENS, c
 MAX_REQUEST_BYTES = 65536
 
 
+from amplifier_acp import preparation_policy as runtime_preparation
+
 class ProbeFailure(ValueError):
     """Only fixed, application-owned codes may enter the result protocol."""
 
@@ -149,6 +151,7 @@ async def _bounded_info(provider, capability):
     return info
 
 
+@runtime_preparation.governed
 async def _probe(request):
     policy = _validate_request(request)
     _runtime_transfer_fence()
@@ -161,7 +164,7 @@ async def _probe(request):
             os.environ["AMPLIFIER_HOME"] = request["registryHome"]
             bundle = Bundle.from_dict({"bundle": {"name": "destination-execution-probe"},
                 "providers": [{"module": request["module"], "source": source}]})
-            await bundle.prepare(strict=True)
+            await runtime_preparation.prepare(bundle, strict=True)
         finally:
             if previous_home is None:
                 os.environ.pop("AMPLIFIER_HOME", None)

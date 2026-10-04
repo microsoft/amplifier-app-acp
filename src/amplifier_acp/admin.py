@@ -19,6 +19,8 @@ OPERATIONS=GENERATION_OPERATIONS | MAINTENANCE_OPERATIONS | HISTORY_IMPORT_OPERA
  'sources.list','sources.save','sources.remove','sources.validate','bundles.list','bundles.add','bundles.remove','bundles.toggle',
  'bundles.reorder','bundles.move','bundle.discover','bundle.export','bundle.save','bundle.default','bundle.receipt','configuration.defaults'}
 
+from amplifier_acp import preparation_policy as runtime_preparation
+
 class AdminLauncherRefusal(ValueError):
  """A known optional operation was denied before owner admission or effects."""
  def __init__(self,message,operation,launcher_option):
@@ -28,6 +30,8 @@ class AdminLauncherRefusal(ValueError):
 
 class Administration:
  def __init__(self,config,on_idle=None):
+  from .preparation_policy import configure as configure_preparation
+  configure_preparation(config)
   from .module_sources import configure
   configure(config)
   self.on_idle=on_idle
@@ -59,6 +63,7 @@ class Administration:
   from .native.shared_settings import read_yaml
   settings=read_yaml(self.home/'admin-settings.yaml').get('bundle',{})
   return settings.get('active') if 'active' in settings else self.config.get('bundle')
+ @runtime_preparation.governed
  async def perform(self,cwd,operation,args,*,fence=None):
   # Validate all request authority before imports, files, probes or network effects.
   workspace=self.workspace(cwd)

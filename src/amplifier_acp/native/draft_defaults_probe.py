@@ -10,6 +10,9 @@ if not __package__:
     from runtime_bootstrap import bootstrap_app_package
     bootstrap_app_package()
 
+from amplifier_acp import preparation_policy as runtime_preparation
+
+@runtime_preparation.governed
 async def query(request):
     from amplifier_acp.native.host.config import load_config
     from amplifier_acp.native.host.session import load_root_bundle, is_snapshot, prepare_source_resolver
@@ -36,7 +39,7 @@ async def query(request):
                  base_path=bundle.base_path,source_base_paths=bundle.source_base_paths)
     snapshot=is_snapshot(bundle)
     source_resolver=prepare_source_resolver(probe,config,snapshot,getattr(bundle,'_host_components',None))
-    prepared=await probe.prepare(strict=True,install_deps=os.environ.get('AMPLIFIER_RUNTIME_IMMUTABLE')!='1',
+    prepared=await runtime_preparation.prepare(probe, strict=True,
         cache_dir=config.registry_home/'cache',
         source_resolver=source_resolver)
     source_resolver.restore_declarations(prepared)

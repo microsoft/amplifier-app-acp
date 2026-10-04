@@ -13,6 +13,8 @@ else:
 bootstrap_app_package()
 from amplifier_acp.native.update_diagnostics import exception_type,probe_failure,PROBE_PREFIX
 
+from amplifier_acp import preparation_policy as runtime_preparation
+
 async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("workspace")
@@ -24,6 +26,12 @@ async def main():
     parser.add_argument("--global-only", action="store_true")
     parser.add_argument("--runtime-plan", type=Path)
     args = parser.parse_args()
+    from amplifier_acp.preparation_policy import configure
+    configure({'runtimeImmutable': args.read_only})
+    return await probe(args)
+
+@runtime_preparation.governed
+async def probe(args):
     runtime_plan = json.loads(args.runtime_plan.read_text()) if args.runtime_plan else None
     started = time.monotonic()
     async def deny(*args): return 'deny'

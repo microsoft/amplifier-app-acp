@@ -10,6 +10,9 @@ import os
 from pathlib import Path
 import sys
 
+from amplifier_acp import preparation_policy as runtime_preparation
+
+@runtime_preparation.governed
 async def main():
     args=json.loads(sys.stdin.readline())
     section=args['section'];module=args['module']
@@ -26,7 +29,7 @@ async def main():
         else:data[section]=[entry]
         bundle=Bundle.from_dict(data)
         os.environ['AMPLIFIER_HOME']=str(Path(os.environ['AMPLIFIER_WEB_HOME'])/'foundation')
-        await bundle.prepare(strict=True)
+        await runtime_preparation.prepare(bundle, strict=True)
         validator={'tool':ToolValidator,'hook':HookValidator,'provider':ProviderValidator,'orchestrator':OrchestratorValidator,'context':ContextValidator}[kind]()
         # Importable module names let Core validators resolve packages prepared
         # by Foundation without exposing arbitrary file reads over the API.

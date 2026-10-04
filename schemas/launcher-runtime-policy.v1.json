@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/microsoft/amplifier-app-acp/schemas/launcher-runtime-policy.v1.json",
+  "title": "Trusted native launcher runtimeImmutable field v1",
+  "description": "Boolean JSON launcher field, never ACP peer authority. True requires Foundation public dependency-installation policy and is inherited monotonically by native workers/probes. False cannot weaken inherited immutable policy.",
+  "type": "boolean",
+  "$defs": {
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "immutable",
+        "dependencyInstallation",
+        "policy"
+      ],
+      "properties": {
+        "version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "immutable": {
+          "const": true
+        },
+        "dependencyInstallation": {
+          "const": false
+        },
+        "policy": {
+          "const": "foundation-dependency-installation"
+        }
+      }
+    }
+  }
+}

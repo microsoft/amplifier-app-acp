@@ -31,6 +31,8 @@ class NativeWorker:
         env = os.environ.copy()
         # An inherited shell's venv must not redirect Foundation installers.
         env.pop('VIRTUAL_ENV',None)
+        from .preparation_policy import configure as configure_preparation, metadata as preparation_metadata
+        configure_preparation(self.config,env)
         from .module_sources import configure
         configure(self.config,env)
         # Explicit process env remains authoritative over settings keys.env.
@@ -79,6 +81,9 @@ class NativeWorker:
             'workingDirectory':self.config.get('executionDirectory',self.cwd),'bundle':bundle, 'hostBridge':host_info is not None, 'hostInfo':host_info or {}, 'mcpServers':mcp_servers or []}})
         try:
             self.report = await asyncio.wait_for(asyncio.shield(self.ready), self.config.get('startupTimeout',180))
+            expected_policy=preparation_metadata(env).get('runtimePreparation')
+            if expected_policy and self.report.get('runtimePreparation')!=expected_policy:
+                raise NativeError('Native worker did not confirm the launcher immutable preparation policy; use the qualified native worker package.')
         except BaseException:
             await self.close()
             raise
