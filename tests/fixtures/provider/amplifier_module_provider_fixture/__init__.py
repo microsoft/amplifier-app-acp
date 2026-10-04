@@ -50,6 +50,19 @@ class FixtureProvider:
             context.add_message=paused_add
         prompt=next((m.content for m in reversed(request.messages) if m.role=='user'),'')
         if isinstance(prompt,list):prompt=' '.join(getattr(b,'text','') for b in prompt)
+        if self.config.get('inputOutcomeFailure') and 'fail-outcome' in str(prompt):
+            from amplifier_core import InvalidRequestError
+            if self.config.get('inputOutcomeAfterTool') and request.messages[-1].role != 'tool':
+                return ChatResponse(content=[TextBlock(text='Before fixture tool effect.')],tool_calls=[ToolCall(id='permit-call',name='fixture_permit',arguments={})],finish_reason='tool_calls')
+            if self.config.get('inputOutcomeCheckpoint'):
+                original = self.coordinator.get_capability('live.checkpoint')
+                async def checkpoint(*args, **kwargs):
+                    if self.config['inputOutcomeCheckpoint'] == 'fail': raise OSError('private checkpoint detail')
+                    await gate(self.config, 'outcome-checkpoint')
+                    return await original(*args, **kwargs)
+                self.coordinator.register_capability('live.checkpoint', checkpoint)
+            if self.config.get('inputOutcomeProviderGate'): await gate(self.config, 'outcome-provider')
+            raise InvalidRequestError('private token/password must never be projected', provider='fixture')
         if self.config.get('coordinationFixture') and 'spawn-persistent' in str(prompt) and not getattr(self,'coordinationSpawned',False):
             self.coordinationSpawned=True
             return ChatResponse(content=[TextBlock(text='Starting persistent fixture worker.')],tool_calls=[ToolCall(id='delegate-fixture',name='delegate',arguments={'agent':'fixture-child','instruction':'child-initial','persistent':True})],finish_reason='tool_calls')
@@ -86,6 +99,14 @@ async def mount(coordinator,config=None):
             original_write(path,value)
             if phase=='preserved' and path.name=='segment.json' or phase=='head' and path.name=='context-head.json':os.kill(os.getpid(),signal.SIGKILL)
         history_revision._write=crash_write
+    if config and config.get('inputOutcomeCrashAfterReceipt'):
+        from amplifier_acp.input_outcome import Outcomes
+        import os,signal
+        original = Outcomes.failed
+        def crash(owner, identity, event):
+            original(owner, identity, event)
+            os.kill(os.getpid(), signal.SIGKILL)
+        Outcomes.failed = crash
     provider=FixtureProvider(config);provider.coordinator=coordinator
     await coordinator.mount('providers',provider,name='fixture')
     class Permit:

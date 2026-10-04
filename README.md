@@ -310,3 +310,5 @@ Reviewed, history-preserving context clearing is an additive native capability:
 before-images while resetting active model context, and uses passive exact
 receipts after a lost reply. Archived viewing references never grant canonical
 fork/edit/export authority.
+
+Exact failed-input settlement and passive recovery are documented in [input outcomes](docs/input-outcomes.md); terminal failure never means no effects or replay permission.

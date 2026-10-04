@@ -35,6 +35,9 @@ async def test_cold_full_native_captures_all_histories_generation_authority_and_
     reacted=adjunct.reaction(selected,ref,emoji='👍',present=True,command_id='archived-reaction')
     quote=reserve_quote(adjunct,selected,ref,input_id='archived-unknown-quote',input_payload={'text':'explicit follow-up'})
     from amplifier_acp.bundle_commands import BundleCommands
+    from amplifier_acp.input_outcome import Outcomes
+    failed_inputs=Outcomes(app,sid,str(cwd))
+    failed_input=failed_inputs.failed('archived-terminal-input',{'error_category':'invalid_request','error_type':'InvalidRequestError'})
     commands=BundleCommands(config,str(cwd))
     async def fixture_saved(effect):return {'saved':{'name':'retained-original'}}
     await commands.perform('bundle.save',{'commandId':'archived-command'},fixture_saved)
@@ -76,6 +79,11 @@ async def test_cold_full_native_captures_all_histories_generation_authority_and_
                 body=json.loads(receipts.execute('SELECT body FROM commands WHERE id=?',('archived-command',)).fetchone()[0])
                 assert body==commands.receipt('archived-command')
                 assert receipts.execute('PRAGMA quick_check').fetchone()==('ok',)
+            image=tmp_path/'input-outcome-image.sqlite3'
+            image.write_bytes(tar.extractfile('app-home/sessions/'+sid+'/input-provenance.sqlite3').read())
+            with sqlite3.connect(image) as db:
+                assert db.execute('PRAGMA quick_check').fetchone()==('ok',)
+                assert json.loads(db.execute('SELECT body FROM outcomes WHERE id=?',('archived-terminal-input',)).fetchone()[0])==failed_input
             image=tmp_path/'message-adjunct-image.sqlite3'
             image.write_bytes(tar.extractfile('app-home/sessions/'+sid+'/message-interactions.sqlite3').read())
             with sqlite3.connect(image) as db:

@@ -87,6 +87,7 @@ class Worker:
         self.context_inputs = []
         self.root_generation_outcome = None
         self.terminal_checkpointed = False
+        self.pending_input_failure = None
         if __package__:
             from .ownership import WorkerOwnership
         else:
@@ -155,6 +156,8 @@ class Worker:
         root_generation = event_session_id == root_session_id and event_root_id == root_session_id
         if root_generation and event.get('type') == 'generation.started':
             self.root_generation_outcome = None
+            self.terminal_checkpointed = False
+            self.pending_input_failure = None
             capability=self.session.coordinator.get_capability('live.steering')
             if isinstance(capability,dict):event['activeSteering']={key:capability[key] for key in ('version','mode','cancellable') if key in capability}
         elif root_generation and event.get('type') in {'generation.finished', 'generation.failed', 'generation.detached'}:
@@ -182,7 +185,12 @@ class Worker:
             arguments = (job.get("tool_call") or {}).get("arguments", {})
             if isinstance(arguments, dict) and isinstance(arguments.get("agent"), str):
                 event["agent"] = arguments["agent"]
-        publish(event)
+        if root_generation and event.get('type') == 'generation.failed':
+            # loop-live emits this before final job joining/checkpoint. It is
+            # not terminal proof until the owning execute task has settled.
+            self.pending_input_failure = event
+        else:
+            publish(event)
         if event.get("type") == "generation.finished" and loop:
             count = sum(not job["task"].done() for job in loop.jobs.values())
             if count:
@@ -542,6 +550,21 @@ class Worker:
             try:
                 await checkpoint(outcome)
                 self.terminal_checkpointed = True
+                if (self.pending_input_failure is not None and self.execution is not None
+                        and self.execution.done() and not self.execution.cancelled()):
+                    from amplifier_acp.input_outcome import Outcomes
+                    messages = await self.session.coordinator.get('context').get_messages()
+                    ids = self.pending_input_failure.get('input_ids', [])
+                    # A bounded generation list comes from the native runtime,
+                    # never a caller-supplied proof. No message text is retained.
+                    if not isinstance(ids, list) or len(ids) > 200:
+                        return
+                    owner = Outcomes(self.home, self.runtime.session_id, str(self.workspace))
+                    proofs = {}
+                    for identity in ids:
+                        if isinstance(identity, str) and contains_input(messages, identity):
+                            proofs[identity] = owner.failed(identity, self.pending_input_failure)
+                    self.pending_input_failure['_input_outcomes'] = proofs
             finally:
                 self.activation_gate.reset(token)
 
@@ -625,11 +648,27 @@ class Worker:
     def executed(self, task):
         if self.remounting or self.ownership.yielding:
             return
-        if not task.cancelled():
-            error = task.exception()
-            if error:
-                publish({"type": "runtime.error", "error": f"{type(error).__name__}: {error}. Work was not replayed."})
-        self.shutdown.set()
+        completion = asyncio.create_task(self.finish_execution(task))
+        self.tasks.add(completion)
+        completion.add_done_callback(self.tasks.discard)
+
+    async def finish_execution(self, task):
+        """Join execution, checkpoint, and commit exact proof before public error."""
+        try:
+            if not task.cancelled():
+                error = task.exception()
+                if self.pending_input_failure is not None:
+                    try:
+                        await self.checkpoint_terminal_outcome()
+                    except Exception as exc:
+                        # A failed checkpoint/receipt write never becomes proof.
+                        publish({'type': 'persistence.failed', 'error_type': type(exc).__name__})
+                    event, self.pending_input_failure = self.pending_input_failure, None
+                    publish(event)
+                if error:
+                    publish({'type': 'runtime.error', 'error': 'Native execution stopped after a failure; work was not replayed.'})
+        finally:
+            self.shutdown.set()
 
     async def command(self, data):
         """Serialize admission with parking and bind a per-work write token."""
