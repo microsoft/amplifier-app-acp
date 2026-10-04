@@ -195,12 +195,14 @@ class SessionStore:
                 current.update(name_auto=enabled, name_auto_revision=current.get('name_revision', 0), name_policy_revision=1)
                 store.history._save_metadata_unlocked(current)
 
-    def load(self, session_id):
+    def load(self, session_id, *, diagnostics=None):
         """Read native history first, without migrating or writing while browsing."""
         directory = self.directory(session_id)
         from ..naming import read
         if self.has_transcript(session_id):
             value = self.history(session_id).load(include_events=False)
+            if diagnostics is not None:
+                diagnostics.extend(value.diagnostics)
             if any(item.code == 'changed_during_read' for item in value.diagnostics):
                 raise ValueError('The saved session changed while it was being read.')
             return value.messages, {**value.metadata, **read(directory)}

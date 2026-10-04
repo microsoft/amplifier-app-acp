@@ -298,6 +298,7 @@ async def test_native_backup_recovery_preserves_provider_fields_without_replay(m
     h.path.write_text('{partial')
     await h.prepare(snapshot([]))
     assert h.context.messages == rows
+    assert [json.loads(line) for line in h.path.read_text().splitlines()] == rows
     assert h.store.load('native-root')[1]['unknown'] == {'keep': True}
     h.registry.load.assert_awaited_once_with('recorded-bundle')
     assert h.writes == []
@@ -363,3 +364,27 @@ async def test_execution_write_policy_follows_checkout_on_all_prepare_routes(mou
     assert report['execution_workspace'] == str(checkout)
     assert h.path.read_bytes() == original
     h.session.execute.assert_not_called()
+
+
+async def test_unchanged_resume_still_saves_independent_continuity_state(mounted_host, monkeypatch):
+    h = mounted_host
+    rows = [{'role': 'user', 'content': 'Canonical evidence'}]
+    h.store.save('native-root', rows, {'bundle': 'anchors'})
+    original = {name: h.path.with_name(name).read_bytes() for name in ('transcript.jsonl', 'metadata.json')}
+    from amplifier_acp.native import context_continuity
+    continuity = SimpleNamespace(save=Mock())
+    monkeypatch.setattr(context_continuity, 'install', lambda *args: continuity)
+    await h.prepare()
+    await h.capabilities['live.checkpoint']('completed')
+    assert continuity.save.call_count == 2
+    assert {name: h.path.with_name(name).read_bytes() for name in original} == original
+
+
+async def test_explicit_runtime_plan_still_publishes_configuration_metadata(mounted_host, monkeypatch):
+    h = mounted_host
+    h.store.save('native-root', [{'role': 'user', 'content': 'Retained'}],
+                 {'bundle': 'anchors', 'config': {'selection': 'previous'}})
+    h.session.config = {'selection': 'explicit new plan'}
+    monkeypatch.setattr(host, 'apply_runtime_plan', lambda loaded, *args: loaded)
+    await h.prepare(runtime_plan={})
+    assert h.store.load('native-root')[1]['config'] == {'selection': 'explicit new plan'}
