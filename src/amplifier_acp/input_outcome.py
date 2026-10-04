@@ -56,7 +56,9 @@ class Outcomes:
         for suffix in ('-wal', '-shm', '-journal'): checked(Path(str(self.path)+suffix))
         if not write and not self.path.exists(): return None
         if write: self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        db = sqlite3.connect(self.path if write else self.path.as_uri()+'?mode=ro', uri=not write, timeout=0)
+        # A passive lookup can race the first schema commit or final WAL
+        # recovery. Bound only its lock wait; effect writes are never retried.
+        db = sqlite3.connect(self.path if write else self.path.as_uri()+'?mode=ro', uri=not write, timeout=0 if write else .25)
         db.execute('PRAGMA trusted_schema=OFF')
         if write:
             os.chmod(self.path, 0o600)

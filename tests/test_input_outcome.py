@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import signal
 import sqlite3
+import sys
 import uuid
 
 import jsonschema
@@ -177,3 +178,58 @@ async def test_passive_receipt_negotiation_and_held_home_gate(tmp_path):
     with Gate(config, exclusive=True):
         assert await server.dispatch('_amplifier/input/receipt', params) == {'receipt': None}
     assert not (tmp_path/'app/sessions').exists()
+
+
+@pytest.mark.asyncio
+async def test_eof_is_not_reusable_worker_and_terminal_reply_joins_process_exit(tmp_path):
+    config, cwd = configuration(tmp_path)
+    values = json.loads(config.read_text()); bundle = Path(values['bundle'])
+    plan = yaml.safe_load(bundle.read_text())
+    plan['providers'][0]['config'] = {'inputOutcomeFailure': True, 'selectedModelAudit': str(tmp_path/'calls')}
+    bundle.write_text(yaml.safe_dump(plan))
+    wrapper = tmp_path/'delayed-exit-worker.py'
+    marker = tmp_path/'cleanup-returned'
+    wrapper.write_text("import os,runpy,time\nfrom pathlib import Path\n"
+        "result=runpy.run_module('amplifier_acp.native.runtime_worker',run_name='__main__')\n"
+        "result['_PROTOCOL'].close()\nPath("+repr(str(marker))+").write_text(str(os.getpid()))\ntime.sleep(1)\n")
+    values['workerCommand'] = [sys.executable, '-I', '-B', str(wrapper)]
+    config.write_text(json.dumps(values))
+    client = await Client.launch(config)
+    try:
+        await initialize(client)
+        made = await client.request('session/new', {'cwd': str(cwd), 'mcpServers': []})
+        sid = made['result']['sessionId']
+        async with asyncio.timeout(30):
+            failed = await prompt(client, sid, 'fail-outcome', 'original')
+            assert failed['error']['data'][KEY] == await receipt(client, sid, cwd, 'original')
+            assert (tmp_path/'calls').read_text().count('\n') == 1
+            pid = int(marker.read_text())
+            with pytest.raises(ProcessLookupError): os.kill(pid, 0)
+            corrected = await prompt(client, sid, 'new corrected instruction', 'corrected')
+        assert corrected['result']['stopReason'] == 'end_turn'
+        assert (tmp_path/'calls').read_text().count('\n') >= 2
+        transcript = next((tmp_path/'home/projects').glob('*/sessions/'+sid+'/transcript.jsonl'))
+        inputs = [json.loads(line).get('metadata', {}).get('amplifier_input', {}).get('id')
+                  for line in transcript.read_text().splitlines()]
+        assert inputs.count('original') == inputs.count('corrected') == 1
+    finally: await client.close()
+
+
+def test_passive_receipt_waits_briefly_for_existing_database_lock_without_replay(tmp_path):
+    import threading
+    import time
+    owner = Outcomes(tmp_path/'app', str(uuid.uuid4()), str(tmp_path))
+    saved = owner.failed('original', {'error_category': 'invalid_request'})
+    # SQLite can need an exclusive lock during first schema publication or
+    # crash recovery. Use a real cross-thread lock; no mocked connection.
+    db = sqlite3.connect(owner.path)
+    db.execute('PRAGMA journal_mode=DELETE'); db.close()
+    held = threading.Event()
+    def writer():
+        db = sqlite3.connect(owner.path)
+        db.execute('BEGIN EXCLUSIVE'); held.set(); time.sleep(.08)
+        db.rollback(); db.close()
+    thread = threading.Thread(target=writer); thread.start(); held.wait(2)
+    try:
+        assert owner.read('original') == saved
+    finally: thread.join()

@@ -71,7 +71,7 @@ class Session:
             location=state(self.server,self.identity,self.cwd)
             if location['blocked']:raise RpcError(-32000,'Native relocation outcome is unresolved; inspect its receipt before execution.',{'outcome':'unknown','replayed':False})
             self.execution_directory=location['executionDirectory']
-        if self.worker and (self.worker.closed or self.cancelled):await self.worker.close()
+        if self.worker and (self.worker.closed or self.worker.transport_closed or self.cancelled):await self.worker.close()
         if self.worker and self.worker.process.returncode is None:return
         config={**self.server.config,'executionDirectory':self.execution_directory,**({'cloneBundle':self.bundle_override} if self.bundle_override else {})}
         self.coordination.lost()

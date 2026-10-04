@@ -27,7 +27,9 @@ The loop's `generation.failed` arrives before its final cleanup/checkpoint.
 Native retains that event until execution joins, checkpoints under the original
 writer/activation, confirms the exact input in the checkpointed context, and
 commits the immutable per-input receipt. The ACP failed response is delivered
-after the worker closes. A checkpoint/receipt failure or interrupted execution
+after the worker transport closes and its process exits. EOF immediately closes
+write admission; it is not sufficient evidence that the process has exited. A
+checkpoint/receipt failure or interrupted execution
 without proof stays unknown. Cancellation and success are not manufactured as
 failed receipts. Unknown/missing/malformed proof must retain the consumer's
 existing uncertain outcome without replay.

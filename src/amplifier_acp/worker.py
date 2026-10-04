@@ -20,6 +20,7 @@ class NativeWorker:
         self.pending = {}
         self.tasks = set()
         self.closed = False
+        self.transport_closed = False
         self.generation_lease = None
         self.ready = asyncio.get_running_loop().create_future()
         self.report = {}
@@ -84,7 +85,7 @@ class NativeWorker:
         return self.report
 
     async def write(self, message):
-        if not self.process or self.process.returncode is not None:
+        if self.transport_closed or not self.process or self.process.returncode is not None:
             raise NativeError('Native runtime is not running; no work was replayed.')
         encoded = (json.dumps(message,ensure_ascii=False,allow_nan=False)+'\n').encode()
         if len(encoded)>48_000_000:
@@ -139,10 +140,30 @@ class NativeWorker:
         except (ValueError, OSError, asyncio.IncompleteReadError) as exc:
             failure=NativeError('Invalid native runtime response; no work replayed.',data={'outcome':'unknown','errorType':type(exc).__name__})
         finally:
+            # EOF is not process exit. Refuse writes immediately, then join
+            # the process before publishing closure/settling terminal proof.
+            self.transport_closed=True
             if not self.ready.done():self.ready.set_exception(failure)
             for future in self.pending.values():
                 if not future.done():future.set_exception(failure)
+            await self.reap()
+            if self.generation_lease:self.generation_lease.unlink(missing_ok=True)
             await self.observe({'type':'runtime.closed','error':str(failure),'data':failure.data})
+
+    async def reap(self):
+        """Join a disconnected worker without joining its reader from itself."""
+        if not self.process or self.process.returncode is not None:return
+        try:await asyncio.wait_for(self.process.wait(),10)
+        except TimeoutError:
+            if self.process.returncode is None:
+                try:self.process.terminate()
+                except ProcessLookupError:pass
+            try:await asyncio.wait_for(self.process.wait(),5)
+            except TimeoutError:
+                if self.process.returncode is None:
+                    try:self.process.kill()
+                    except ProcessLookupError:pass
+                await self.process.wait()
 
     async def close(self):
         async with self._close_lock:
@@ -153,14 +174,9 @@ class NativeWorker:
         self.closed=True
         if self.process:
             if self.process.returncode is None:
-                try:
-                    await self.write({'op':'stop'})
-                    await asyncio.wait_for(self.process.wait(),10)
-                except (TimeoutError, BrokenPipeError, ConnectionResetError, NativeError):
-                    if self.process.returncode is None:
-                        self.process.terminate()
-                        try:await asyncio.wait_for(self.process.wait(),5)
-                        except TimeoutError:self.process.kill();await self.process.wait()
+                try:await self.write({'op':'stop'})
+                except (BrokenPipeError, ConnectionResetError, NativeError):pass
+                await self.reap()
             if hasattr(self,'reader'):await asyncio.gather(self.reader,return_exceptions=True)
         for task in self.tasks:task.cancel()
         await asyncio.gather(*self.tasks,return_exceptions=True)
