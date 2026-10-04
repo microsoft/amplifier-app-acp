@@ -127,7 +127,7 @@ async def test_actual_retirement_proof_recheck_while_original_outer_reply_is_del
         await session.close()
 
 
-@pytest.mark.parametrize('value,reply_id,error',[(1,'retirement',False),(True,'different-command',False),(True,'retirement',True)])
+@pytest.mark.parametrize('value,reply_id,error',[(1,'retirement',False),(True,'different-command',False),(True,'retirement',True),(True,'retirement','empty')])
 async def test_worker_reader_does_not_accept_nonliteral_uncorrelated_or_error_reply(value,reply_id,error):
     from types import SimpleNamespace
     from amplifier_acp.worker import NativeWorker
@@ -136,12 +136,13 @@ async def test_worker_reader_does_not_accept_nonliteral_uncorrelated_or_error_re
     async def bridge(*args):raise AssertionError('No bridge calls permitted')
     worker=NativeWorker('fixture','/',{},observe,bridge)
     reader=asyncio.StreamReader();row={'op':'reply','id':reply_id,'result':{'retired':value}}
-    if error:row['error']='uncertain'
+    if error:row['error']='uncertain' if error is True else ''
     reader.feed_data((json.dumps(row)+'\n').encode());reader.feed_eof()
     worker.process=SimpleNamespace(stdout=reader,returncode=0)
     future=asyncio.get_running_loop().create_future();worker.pending['retirement']=future;worker.retirement_commands.add('retirement')
-    await worker.read();await asyncio.gather(future,return_exceptions=True)
+    await worker.read();await asyncio.gather(worker.ready,future,return_exceptions=True)
     assert worker.retirement_confirmed is False
+    assert not worker.retirement_commands
 
 async def test_actual_cold_peer_advertises_passive_status_and_never_warms_unknown_handle(tmp_path):
     from client import Client
@@ -154,3 +155,39 @@ async def test_actual_cold_peer_advertises_passive_status_and_never_warms_unknow
         missing=await peer.request('_amplifier/retire/status',{'sessionId':'not-loaded'})
         assert 'error' in missing and not peer.events
     finally:await peer.close()
+
+
+async def test_cancelled_retirement_waiter_retains_correlation_until_literal_reply_and_eof():
+    from types import SimpleNamespace
+    from amplifier_acp.worker import NativeWorker
+    captured=[]
+    async def observe(row):pass
+    async def bridge(*args):raise AssertionError('No bridge calls')
+    worker=NativeWorker('fixture','/',{},observe,bridge)
+    async def write(row):captured.append(row)
+    worker.write=write
+    pending=asyncio.create_task(worker.command('retire'))
+    await asyncio.sleep(0);identity=captured[0]['id'];pending.cancel();await asyncio.gather(pending,return_exceptions=True)
+    assert identity in worker.retirement_commands and identity not in worker.pending
+    reader=asyncio.StreamReader();reader.feed_data((json.dumps({'op':'reply','id':identity,'result':{'retired':True}})+'\n').encode());reader.feed_eof()
+    worker.process=SimpleNamespace(stdout=reader,returncode=0)
+    await worker.read()
+    await asyncio.gather(worker.ready,return_exceptions=True)
+    assert worker.retirement_confirmed is True and not worker.retirement_commands
+
+async def test_retirement_correlations_are_bounded_and_eof_clears_unacknowledged_ids():
+    from types import SimpleNamespace
+    from amplifier_acp.worker import NativeWorker
+    async def observe(row):pass
+    async def bridge(*args):raise AssertionError('No bridge calls')
+    worker=NativeWorker('fixture','/',{},observe,bridge);worker.retirement_commands={str(n) for n in range(64)}
+    async def forbidden(row):raise AssertionError('Capacity refusal must not write')
+    worker.write=forbidden
+    with pytest.raises(NativeError,match='capacity'):await worker.command('retire')
+    assert len(worker.retirement_commands)==64 and not worker.pending
+    reader=asyncio.StreamReader();reader.feed_eof();worker.process=SimpleNamespace(stdout=reader,returncode=0)
+    await worker.read()
+    await asyncio.gather(worker.ready,return_exceptions=True)
+    assert not worker.retirement_commands and worker.retirement_confirmed is False
+    with pytest.raises(NativeError,match='not running'):await worker.command('retire')
+    assert not worker.retirement_commands
