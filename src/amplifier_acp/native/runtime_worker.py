@@ -459,6 +459,9 @@ class Worker:
             # gets a compact capability report, not credentials or config blobs.
             public = {key: report.get(key) for key in ("bundle", "root_bundle", "workspace", "session_id", "resumed", "providers",
                 "tools", "agents", "provider_choices", "selection", "effective_selection", "delegationRouting", "steering", "capabilities", "runtimePreparation", "fork_context_messages", "standalone", "settings_file")}
+            from amplifier_acp.source_closure import ready_report
+            source_ready = ready_report(report)
+            if source_ready is not None: public["sourceClosure"] = source_ready
             publish({"type": "runtime.ready", "report": public})
         except asyncio.CancelledError:
             raise
