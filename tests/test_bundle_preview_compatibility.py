@@ -165,3 +165,43 @@ async def test_probe_transport_is_bounded_and_cancelled_child_is_joined(tmp_path
     else:
         assert await task == {'status': 'unverified'}
     assert len(spawned) == 1 and spawned[0].returncode is not None
+
+
+@pytest.mark.asyncio
+async def test_exited_probe_leader_does_not_leave_child_holding_stdout(tmp_path, monkeypatch):
+    import asyncio
+    import os
+    import signal
+    import sys
+    from types import SimpleNamespace
+    from amplifier_acp.native import bundle_model_compatibility as subject
+    from amplifier_foundation import Bundle
+    launched = []
+    launch = asyncio.create_subprocess_exec
+    child_pid = tmp_path / 'child-pid'
+    child = f"import os,time; from pathlib import Path; Path({str(child_pid)!r}).write_text(str(os.getpid())); time.sleep(30)"
+    parent = f"import sys,subprocess; sys.stdin.read(); subprocess.Popen([sys.executable,'-I','-B','-c',{child!r}]); sys.exit(0)"
+    async def subprocess(*args, **kwargs):
+        process = await launch(sys.executable, '-I', '-B', '-c', parent, **kwargs)
+        launched.append(process)
+        return process
+    monkeypatch.setattr(subject.asyncio, 'create_subprocess_exec', subprocess)
+    monkeypatch.setattr(subject, 'TIMEOUT', 1)
+    bundle = Bundle(name='bounded', providers=[{'module': 'provider-fixture'}])
+    config = SimpleNamespace(registry_home=tmp_path, module_sources={}, launcher_module_sources={})
+    try:
+        assert await subject.inspect_selection(config, bundle, bundle.to_mount_plan(),
+                    {'instance': 'fixture', 'model': 'fixture-model'}, tmp_path) == {'status': 'unverified'}
+        assert launched[0].returncode == 0 and child_pid.exists()
+        pid = int(child_pid.read_text())
+        for _ in range(200):
+            try: os.kill(pid, 0)
+            except ProcessLookupError: break
+            await asyncio.sleep(.01)
+        else: pytest.fail('Probe child survived its parent and probe deadline')
+    finally:
+        # Test failure must also clean its own synthetic child; no state replay.
+        if launched:
+            try: os.killpg(launched[0].pid, signal.SIGKILL)
+            except ProcessLookupError: pass
+            await launched[0].wait()

@@ -60,12 +60,14 @@ async def inspect_selection(config, bundle, plan, selection, workspace):
     except (TimeoutError, ValueError, OSError):
         pass
     finally:
-        if process.returncode is None:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            await process.wait()
+        # The leader can already have exited while an SDK child still owns its
+        # stdout pipe. This isolated process group belongs to this one probe;
+        # its lifetime ends on success as well as timeout/cancellation.
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        await process.wait()
     # An unavailable/non-exhaustive catalog never proves that a pin is invalid,
     # but it also cannot authorize carrying that pin into a different bundle.
     return {'status': 'unverified'}

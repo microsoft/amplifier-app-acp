@@ -108,8 +108,9 @@ the existing public provider setup/schema/materialization and `list_models` APIs
 never `complete`, `login`, or a session mount. Discovery may use the provider's
 metadata service. The inherited immutable dependency policy still applies.
 Probes are limited to 45 seconds, 1 MiB request, 4 KiB response, and the existing
-1,000-model/512 KiB discovery bound; timeout/cancellation kills and joins the
-isolated process. No candidate import changes the old mounted worker.
+1,000-model/512 KiB discovery bound; completion, timeout and cancellation end the
+isolated process group and join its leader, including a child holding stdout
+after the leader exits. No candidate import changes the old mounted worker.
 
 `tests/test_bundle_preview_compatibility.py` covers actual ordinary/snapshot
 composition, same-instance removed model, discovery failure, explicit reset,
