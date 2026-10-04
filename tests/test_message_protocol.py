@@ -226,3 +226,51 @@ async def test_actual_cli_absent_binding_unadvertised(tmp_path,monkeypatch):
         denied=await client.request('_amplifier/message/read',{'sessionId':'native','messageIds':['native:id']})
         assert denied['error']['code']==-32601 and not client.events
     finally:await client.close()
+
+@pytest.mark.asyncio
+async def test_reserved_quote_cannot_retry_as_ordinary_send(tmp_path):
+    from amplifier_acp.server import Server,Session,NATIVE
+    from amplifier_acp.message_metadata import MessageError
+    from io import StringIO
+    server=Server({'home':str(tmp_path/'native'),'appHome':str(tmp_path/'app')},StringIO(),message_principal=lambda identity:'account')
+    server.initialized=True;server.extensions={NATIVE};cwd=tmp_path/'cwd';cwd.mkdir();sid='existing'
+    directory=server.directory(str(cwd),sid);directory.mkdir(parents=True);row={'role':'assistant','content':'earlier'}
+    (directory/'transcript.jsonl').write_text(json.dumps(row)+'\n');ref={'sessionId':sid,'messageId':message_id(row,0),'position':0,'historyEpoch':None}
+    session=Session(server,sid,str(cwd));server.sessions[sid]=session;starts=[]
+    async def fail():starts.append(True);raise RuntimeError('worker start failed before acknowledgement')
+    session.start=fail
+    request={'sessionId':sid,'prompt':[{'type':'text','text':'original'}],'_meta':{'amplifier.dev/command':{'commandId':'reserved'},'amplifier.dev/messageReply':ref}}
+    with pytest.raises(RuntimeError):await server.dispatch('session/prompt',request)
+    for text in ('original','changed ordinary input'):
+        absent={'sessionId':sid,'prompt':[{'type':'text','text':text}],'_meta':{'amplifier.dev/command':{'commandId':'reserved'}}}
+        with pytest.raises(MessageError):await server.dispatch('session/prompt',absent)
+    assert len(starts)==1
+    from amplifier_acp.message_metadata import MessageMetadata
+    assert MessageMetadata(tmp_path/'app',sid,actor_id='account').receipt('reserved')['receipt']['outcome']=='unknown'
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('operation',['schedule.submit','question.submit','observation.submit','history.revise','steer.submit'])
+@pytest.mark.parametrize('original',['quote','reaction'])
+async def test_alternate_input_admissions_refuse_message_command_collision(tmp_path,operation,original):
+    from io import StringIO
+    from unittest.mock import AsyncMock
+    from amplifier_acp.server import Server,Session,NATIVE
+    from amplifier_acp.message_metadata import MessageMetadata,reserve_quote,MessageError
+    server=Server({'home':str(tmp_path/'native'),'appHome':str(tmp_path/'app')},StringIO(),message_principal=lambda identity:'user')
+    server.initialized=True;server.extensions={NATIVE}
+    cwd=tmp_path/'cwd';cwd.mkdir();sid='existing'
+    directory=server.directory(str(cwd),sid);directory.mkdir(parents=True)
+    row={'role':'assistant','content':'Original source'}
+    (directory/'transcript.jsonl').write_text(json.dumps(row)+'\n')
+    ref={'sessionId':sid,'messageId':message_id(row,0),'position':0,'historyEpoch':None}
+    metadata=MessageMetadata(tmp_path/'app',sid,actor_id='user')
+    if original=='quote':reserve_quote(metadata,directory,ref,input_id='reserved-command',input_payload={'text':'original'})
+    else:metadata.reaction(directory,ref,emoji='👍',present=True,command_id='reserved-command')
+    before=metadata.receipt('reserved-command')
+    session=Session(server,sid,str(cwd));server.sessions[sid]=session
+    session.start=AsyncMock(side_effect=AssertionError('Collision must refuse before startup'))
+    args={'inputId':'reserved-command','text':'different alternate input','kind':'task','activeInputId':'active'}
+    with pytest.raises(MessageError):
+        await server.dispatch('_amplifier/native',{'sessionId':sid,'operation':operation,'args':args})
+    session.start.assert_not_awaited()
+    assert metadata.receipt('reserved-command')==before

@@ -130,3 +130,44 @@ def test_concurrent_connections_preserve_actor_presence(selected):
     result=store(selected,'user-a').read([selected[3]['messageId']])['items'][0]
     assert result['counts']=={'✅':4} and result['revision']==4
     assert sorted(row['revision'] for row in results)==[1,2,3,4]
+
+
+@pytest.mark.parametrize('first',['quote','reaction'])
+def test_shared_command_namespace_refuses_both_directions(selected,first):
+    from amplifier_acp.message_metadata import reserve_quote
+    metadata=store(selected);ref=selected[3]
+    def quoted():return reserve_quote(metadata,selected[1],ref,input_id='shared',input_payload={'text':'new'})
+    def react():return metadata.reaction(selected[1],ref,emoji='👍',present=True,command_id='shared')
+    if first=='quote':
+        quoted();before=metadata.receipt('shared')
+        with pytest.raises(MessageError):react()
+        assert metadata.receipt('shared')==before and before['receipt']['outcome']=='unknown'
+    else:
+        react();before=metadata.receipt('shared')
+        with pytest.raises(MessageError):quoted()
+        assert metadata.receipt('shared')==before and before['receipt']['reactions']==['👍']
+
+
+def test_mutable_voice_reference_requires_digest_and_rejects_rewrite(selected):
+    from amplifier_acp.history import page
+    row={'role':'user','content':'original voice text','metadata':{'amplifier_voice':{'callId':'call','itemId':'item'}}}
+    selected[2].write_text(json.dumps(row)+'\n')
+    projection=page(selected[1])['updates'][0]['_meta']['amplifier.dev/history']['messageReference']
+    # The fixture directory is canonical, while the selected native ID binds it.
+    projection['sessionId']=SID
+    assert resolve_reference(selected[1],SID,projection)['text']=='original voice text'
+    without={k:v for k,v in projection.items() if k!='sourceDigest'}
+    with pytest.raises(MessageError):freeze_quote(selected[1],SID,without,input_id='voice')
+    row['content']='rewritten voice text';selected[2].write_text(json.dumps(row)+'\n')
+    assert message_id(row,0)==projection['messageId']
+    with pytest.raises(MessageError):freeze_quote(selected[1],SID,projection,input_id='voice')
+
+
+def test_canonical_projection_exposes_authoritative_ref_not_archives(selected):
+    from amplifier_acp.history import page,forward,message_reference
+    result=page(selected[1]);meta=result['updates'][0]['_meta']['amplifier.dev/history'];ref=meta['messageReference']
+    assert ref['messageId']==meta['messageId'] and ref['position']==meta['position'] and ref['historyEpoch'] is None
+    assert ref['sourceDigest']==hashlib.sha256(('Earlier public answer '*250).encode()).hexdigest()
+    assert next(forward(selected[1]))['_meta']['amplifier.dev/history']['messageReference']==ref
+    row=json.loads(selected[2].read_text());assert message_reference(selected[1],row,0,None,archive_id='retained') is None
+    assert message_reference(selected[1],{'role':'tool','content':'output'},0,None) is None
