@@ -131,9 +131,9 @@ class Admission:
         if not path.is_relative_to(root): _deny()
         if path.is_dir(): return
         relative = path.relative_to(root).as_posix()
-        rows = [row for row in self.rows.values() if row['root'] == root and relative in row['files']]
-        if not rows: _deny()
-        self.check_file(root, relative, rows[0]['files'][relative])
+        digest = self.file_digests.get((str(root), relative))
+        if digest is None: _deny()
+        self.check_file(root, relative, digest)
 
     def __call__(self, uri, *, base_path):
         self.verify()
@@ -175,21 +175,36 @@ class Admission:
         """Check configured package origins without importing provider code."""
         self.verify()
         self.origins = {}
+        specs = []
+        # Spec discovery may itself load modules. Complete it before taking the
+        # one inventory snapshot, so its new submodules are not missed.
         for package, root in self.packages.items():
             loaded = sys.modules.get(package)
             spec = getattr(loaded, '__spec__', None) if loaded is not None else importlib.util.find_spec(package)
+            specs.append((package, root, spec))
+        groups = {}
+        for name, module in list(sys.modules.items()):
+            package = name.partition('.')[0]
+            if package in self.packages:
+                groups.setdefault(package, []).append(module)
+        checked_origins = set()
+        for package, root, spec in specs:
+            loaded = sys.modules.get(package)
+            if loaded is not None: spec = getattr(loaded, '__spec__', None)
             if spec is None:
                 if loaded is not None: _deny()
                 continue  # Foundation has not activated it yet.
             locations = list(spec.submodule_search_locations or [])
             if spec.origin and spec.origin not in {'built-in', 'frozen'}: locations.append(spec.origin)
             if not locations: _deny()
+            for module in groups.get(package, ()):
+                origin = getattr(module, '__file__', None)
+                if origin: locations.append(origin)
             for location in locations:
-                self.check_origin(root, location)
-            for name, module in list(sys.modules.items()):
-                if name == package or name.startswith(package + '.'):
-                    origin = getattr(module, '__file__', None)
-                    if origin: self.check_origin(root, origin)
+                key = (root, str(location))
+                if key not in checked_origins:
+                    self.check_origin(root, location)
+                    checked_origins.add(key)
             self.origins[package] = {'root': str(root), 'origin': spec.origin, 'verified': True, 'loaded': loaded is not None}
         return {'version': 1, 'manifestSha256': self.reference['sha256'], 'origins': dict(self.origins),
                 'sourceResolution': 'qualified-only', 'declaredPackages': len(self.packages),
