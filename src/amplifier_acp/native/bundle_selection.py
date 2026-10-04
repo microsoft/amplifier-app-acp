@@ -38,7 +38,13 @@ async def inspect_bundle(controls, workspace, bundle):
     from .host.config import load_config
     from .host.session import load_root_bundle, live_plan, ResolvedRoot
     from .runtime_controls import public_config, validate_plan, identity
-    config = load_config(workspace, session_id=controls.session.session_id)
+    from amplifier_acp.managed_session import runtime_scope
+    # Match the worker's verified configuration scope, including the HostConfig
+    # identity retained by ResolvedRoot. Settings-path filtering alone does not
+    # make a global-only remount equal to a workspace-scoped preview.
+    managed = runtime_scope(workspace, controls.session.session_id)
+    config = load_config(workspace, session_id=controls.session.session_id,
+                         global_only=bool(managed))
     execution_workspace = Path(controls.session.coordinator.get_capability('session.working_dir') or config.workspace).expanduser().resolve()
     root = await load_root_bundle(config, bundle, execution_workspace=execution_workspace)
     _, loaded, resolved = root

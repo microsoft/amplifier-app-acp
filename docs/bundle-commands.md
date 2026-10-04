@@ -64,6 +64,16 @@ unapplied outcome or an unknown/failed activation. Existing rollback journals st
 protect remount internals; a recovered journal is not substituted for a command
 receipt, and an interrupted command remains unknown.
 
+Managed-session preview and remount both use the authenticated managed
+`global_only` configuration scope. Filtering the same settings files is not
+enough: `ResolvedRoot` retains the complete configuration, selected bundle and
+execution workspace identity, and is consumed only once. A genuine settings
+change during remount still rejects activation and invokes rollback. Successful
+rollback alone does not convert an existing unknown command into a refusal.
+`tests/test_managed_bundle_switch.py` exercises managed and ordinary sessions,
+stale previews, concurrent settings edits, retained history and cold exact
+receipt recovery with actual Core/Foundation and no provider calls.
+
 ## Storage, backup and scope limits
 
 The native owner stores indexed exact-ID receipts in
