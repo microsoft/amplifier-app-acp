@@ -40,7 +40,7 @@ async def test_fresh_public_events_enable_selection_without_a_warmup_control(tmp
             and event['params']['update']['sessionUpdate'] == 'agent_message_chunk')
         assert client.events.index(options[0]) < first_chunk
         model = next(option for option in advertised if option['category'] == 'model')
-        selected = next(choice for choice in model['options'] if choice['name'].endswith(' / fixture-model'))
+        selected = next(choice for group in model['options'] for choice in group['options'] if choice.get('_meta',{}).get('amplifier.dev/native',{}).get('model')=='fixture-model')
         before = audit.read_text().splitlines()
         assert 'fixture-model' not in before
         changed = await client.request('session/set_config_option', {'sessionId': sid,

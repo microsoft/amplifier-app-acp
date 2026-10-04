@@ -46,7 +46,7 @@ async def test_separate_process_configuration_clone_preserves_modules_not_execut
         assert cloned.get('result',{}).get('sessionId')==identity,cloned
         assert cloned['result']['_meta']['amplifier.dev/native']['creationConfirmed']
         model=next(o for o in cloned['result']['configOptions'] if o['id']=='model')
-        assert next(o['name'] for o in model['options'] if o['value']==model['currentValue']).endswith('other-model')
+        assert next(o['name'] for group in model['options'] for o in group['options'] if o['value']==model['currentValue']).endswith('other-model')
         target=await b.request('_amplifier/native',{'sessionId':identity,'operation':'task.get'})
         assert not target['result'].get('task'),target
         controls=json.loads((tmp_path/'app/sessions'/identity/'control-state.json').read_text())

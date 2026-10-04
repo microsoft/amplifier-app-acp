@@ -14,9 +14,16 @@ class FixtureProvider:
     name="fixture"
     def parse_tool_calls(self,response):return response.tool_calls or []
     def __init__(self,config=None):self.config=config or {}
-    def get_info(self):return ProviderInfo(id='fixture',display_name='Offline fixture',defaults={'model':self.config.get('fixtureDefaultModel','fixture-model'),'max_tokens':4096},capabilities=['tools','completion:single_attempt:v2'])
+    def get_info(self):return ProviderInfo(id='fixture',display_name='Offline fixture',defaults={'model':self.config.get('fixtureDefaultModel','fixture-model'),'max_tokens':4096},config_fields=self.config.get('fixtureConfigFields',[]),capabilities=['tools','completion:single_attempt:v2'])
     async def close(self):pass
     async def list_models(self):
+        if self.config.get('modelDiscoveryAudit'):
+            with Path(self.config['modelDiscoveryAudit']).open('a') as output:output.write(self.config.get('fixtureLabel','fixture')+'\n')
+        if self.config.get('fixtureModelsFile'):
+            import json
+            result=json.loads(Path(self.config['fixtureModelsFile']).read_text())
+            if isinstance(result,dict):raise RuntimeError('fixture private discovery error')
+            return result
         if self.config.get('modelDiscoveryError'):raise RuntimeError('fixture private detail must not be returned')
         return self.config.get('fixtureModels',[{'id':'fixture-model'}])
     async def login(self,print_fn=None):
@@ -24,6 +31,9 @@ class FixtureProvider:
         await asyncio.sleep(60)
         return True
     async def complete(self,request,**kwargs):
+        if self.config.get('requestSelectionAudit'):
+            import json
+            with Path(self.config['requestSelectionAudit']).open('a') as output:output.write(json.dumps({'instance':self.config.get('fixtureLabel'),'model':request.model,'effort':request.reasoning_effort})+'\n')
         if self.config.get("selectedModelAudit"):
             with Path(self.config["selectedModelAudit"]).open("a") as output:output.write(str(request.model)+"\n")
         if (kwargs.get('request_options') or {}).get('single_attempt'):
