@@ -599,6 +599,7 @@ def prepare_source_resolver(bundle, config, snapshot, components=None):
     return PreparationSourceResolver(bundle, config, snapshot, components)
 
 
+@runtime_preparation.governed
 async def load_configured_bundle(registry, config, reference):
     """Apply the same source selections to roots and app behaviors as includes."""
     replacement = config.resolve_source(reference)
@@ -639,6 +640,7 @@ def session_registry(config):
     return SessionRegistry(**options)
 
 
+@runtime_preparation.governed
 async def load_root_bundle(config, chosen, *, execution_workspace=None):
     """Compose in a session-local registry view; settings own registrations."""
     registry = session_registry(config)
@@ -970,6 +972,8 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
             "module_load_failures": failures}
         from amplifier_acp.module_sources import provenance
         report["moduleSourceOverrides"] = provenance(config)
+        from amplifier_acp.source_closure import attest as attest_sources
+        report["sourceClosure"] = attest_sources()
         report.update(runtime_preparation.metadata())
         report["config_inputs"] = config_inputs
         report["history_source"] = history_source

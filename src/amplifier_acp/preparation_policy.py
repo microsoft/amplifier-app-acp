@@ -40,6 +40,9 @@ def configure(config, environment=None):
     restricted = immutable(env) or config.get('runtimeImmutable') is True
     if restricted:
         _foundation()  # Refuse unsupported protection before startup effects.
+    from .source_closure import configure as configure_sources
+    configure_sources(config, env)
+    if restricted:
         env[VARIABLE] = '1'
     return restricted
 
@@ -53,9 +56,11 @@ def metadata(environment=None):
 
 @contextmanager
 def scope(*, readonly=False):
-    if immutable() or readonly:
-        with _foundation()(False): yield
-    else: yield
+    from .source_closure import scope as source_scope
+    with source_scope():
+        if immutable() or readonly:
+            with _foundation()(False): yield
+        else: yield
 
 
 def governed(function):
@@ -71,7 +76,10 @@ async def prepare(bundle, *, readonly=False, **kwargs):
     """One entry for all native Foundation preparation, including probes."""
     restricted = immutable() or readonly
     with scope(readonly=readonly):
-        return await bundle.prepare(install_deps=not restricted, **kwargs)
+        result = await bundle.prepare(install_deps=not restricted, **kwargs)
+        from .source_closure import attest
+        attest()
+        return result
 
 
 def require_mutable():
@@ -95,7 +103,10 @@ def staging_environment(environment, project, owned_root, *, prepared=True, read
         raise ValueError('Mutable preparation requires a separate owned staged Python environment')
     result = dict(environment)
     if readonly: result[VARIABLE] = '1'
-    else: result.pop(VARIABLE, None)
+    else:
+        result.pop(VARIABLE, None)
+        from .source_closure import ENV as closure_env
+        result.pop(closure_env, None)
     result.pop('VIRTUAL_ENV', None)
     # uv must use this verified candidate even if its parent shell selected an
     # unrelated UV_PROJECT_ENVIRONMENT. This also covers initial uv sync.
