@@ -21,6 +21,7 @@ def qualified(tmp_path, monkeypatch):
     monkeypatch.setenv(closure.ENV, '{}'); monkeypatch.delenv(closure.ENV)
     monkeypatch.delenv(preparation.VARIABLE, raising=False)
     closure._callbacks.clear()
+    before_path = list(sys.path)
     root = tmp_path/'root'; root.mkdir()
     (root/'bundle.yaml').write_text('bundle:\n  name: qualified-test\n')
     (root/'pyproject.toml').write_text('[project]\nname="qualified-test"\nversion="0.0.0"\n')
@@ -41,6 +42,7 @@ def qualified(tmp_path, monkeypatch):
         monkeypatch.setattr(getattr(imported, name), 'resolve', forbidden)
     yield root, calls
     sys.modules.pop('amplifier_module_provider_closure_test', None)
+    sys.path[:] = before_path
 
 
 @pytest.mark.asyncio
