@@ -34,32 +34,33 @@ class Generations:
   self.home=Path(home).resolve();self.config=config;self.directory=self.home/'updates';self.directory.mkdir(parents=True,exist_ok=True,mode=0o700)
   self.path=self.directory/'generation-owner.sqlite3';self.diagnostics=Diagnostics(self);self.inventory=[]
   if self.path.is_symlink():raise ValueError('Generation receipts cannot be symlinks')
-  with self.db() as db:
-   db.executescript('CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY,signature TEXT NOT NULL,body TEXT NOT NULL);CREATE TABLE IF NOT EXISTS state(id TEXT PRIMARY KEY,body TEXT NOT NULL);CREATE TABLE IF NOT EXISTS inventory(id TEXT PRIMARY KEY,body TEXT NOT NULL);CREATE TABLE IF NOT EXISTS diagnostics(sequence INTEGER PRIMARY KEY,body TEXT NOT NULL);')
+  with self.db(write=False):pass
  @contextmanager
- def db(self):
-  db=sqlite3.connect(self.path);db.execute('PRAGMA journal_mode=WAL');db.execute('PRAGMA synchronous=FULL')
+ def db(self,write=True):
+  from .journal_schema import connect
+  db=connect(self.path,'generations',write=write)
+  if db is None:yield None;return
   try:
    with db:yield db
   finally:db.close()
  def state(self):
-  with self.db() as db:row=db.execute("SELECT body FROM state WHERE id='current'").fetchone()
+  with self.db(write=False) as db:row=db.execute("SELECT body FROM state WHERE id='current'").fetchone() if db else None
   return json.loads(row[0]) if row else {'phase':'idle'}
  async def publish(self,**values):
   state={**self.state(),**values}
   with self.db() as db:db.execute("INSERT OR REPLACE INTO state VALUES ('current',?)",(json.dumps(state),))
   return state
  def receipt(self,command):
-  with self.db() as db:row=db.execute('SELECT body FROM commands WHERE id=?',(command,)).fetchone()
+  with self.db(write=False) as db:row=db.execute('SELECT body FROM commands WHERE id=?',(command,)).fetchone() if db else None
   return json.loads(row[0]) if row else None
  def save(self,row,signature):
   with self.db() as db:db.execute('INSERT OR REPLACE INTO commands VALUES (?,?,?)',(row['commandId'],signature,json.dumps(row)))
  def inspect(self,args):
   limit=args.get('limit',50);cursor=args.get('cursor','')
   if type(limit)is not int or not 1<=limit<=100 or not isinstance(cursor,str) or len(cursor)>200:raise ValueError('Bounded generation page required')
-  with self.db() as db:
-   rows=db.execute('SELECT id,body FROM inventory WHERE id>? ORDER BY id LIMIT ?',(cursor,limit+1)).fetchall()
-   diagnostics=[json.loads(r[0]) for r in db.execute('SELECT body FROM diagnostics ORDER BY sequence DESC LIMIT 30')]
+  with self.db(write=False) as db:
+   rows=db.execute('SELECT id,body FROM inventory WHERE id>? ORDER BY id LIMIT ?',(cursor,limit+1)).fetchall() if db else []
+   diagnostics=[json.loads(r[0]) for r in db.execute('SELECT body FROM diagnostics ORDER BY sequence DESC LIMIT 30')] if db else []
   from .native.updates import group_sources
   items=group_sources([json.loads(r[1]) for r in rows[:limit]])
   return {**self.state(),'pointer':active_release(self.home),'items':items,'nextCursor':rows[limit-1][0] if len(rows)>limit else None,'diagnostics':{'events':diagnostics[::-1]},'scope':'native-runtime','applicationUpdateSupported':False}
@@ -81,7 +82,7 @@ class Generations:
   async with AsyncFileLock(self.directory/'generation-owner.lock'):
    previous=self.receipt(command)
    if previous:
-    with self.db() as db:known=db.execute('SELECT signature FROM commands WHERE id=?',(command,)).fetchone()[0]
+    with self.db(write=False) as db:known=db.execute('SELECT signature FROM commands WHERE id=?',(command,)).fetchone()[0]
     if known!=signature:raise ValueError('Generation command identity conflicts with its saved request')
     if previous['state']=='running':
      previous={**previous,'state':'unknown','detail':'Owner exited before settlement. Inspect receipts; no work was replayed.'};self.save(previous,signature)
@@ -150,7 +151,7 @@ class Generations:
   state=self.state()
   if (args.get('checkId') is not None and args['checkId']!=state.get('checkId')) or 'checkId' not in state:raise ValueError('Prepare requires the exact current source check')
   if active_release(self.home).get('current')!=state.get('checkedGeneration'):raise ValueError('Active generation changed since check')
-  with self.db() as db:self.inventory=[json.loads(r[0]) for r in db.execute('SELECT body FROM inventory ORDER BY id')]
+  with self.db(write=False) as db:self.inventory=[json.loads(r[0]) for r in db.execute('SELECT body FROM inventory ORDER BY id')] if db else []
   if any(r.get('status') in {'check_failed','local_changes'} for r in self.inventory):raise ValueError('Resolve protected or unavailable sources before preparing')
   candidates=[r for r in self.inventory if r.get('eligible') and r.get('status')=='update']
   generation=uuid.uuid4().hex;stage=self.directory/'releases'/generation;stage.mkdir(parents=True,mode=0o700)

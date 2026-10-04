@@ -137,23 +137,17 @@ def historical_proof(config,identity,cwd):
 
 @contextmanager
 def db(owner):
-    path=checked(owner.app/'managed-files.sqlite3')
-    for item in (path,Path(str(path)+'-wal'),Path(str(path)+'-shm')):
-        checked(item)
-        if item.exists() and (not item.is_file() or item.stat().st_nlink!=1):raise Refused('Disposal journal must be a private regular file')
-    connection=sqlite3.connect(path)
-    connection.execute('PRAGMA journal_mode=WAL');connection.execute('PRAGMA synchronous=FULL')
-    connection.executescript('CREATE TABLE IF NOT EXISTS reviews(id TEXT PRIMARY KEY,body TEXT NOT NULL);CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY,signature TEXT NOT NULL,body TEXT NOT NULL);')
+    from .journal_schema import connect
+    connection=connect(owner.app/'managed-files.sqlite3','managed-disposal',write=True)
     try:
         with connection:yield connection
     finally:connection.close()
 
 def receipt(owner,command):
     managed.bounded(command,'command ID',200)
-    path=checked(owner.app/'managed-files.sqlite3')
-    if not path.exists():return None
-    if not path.is_file() or path.stat().st_nlink!=1:raise Refused('Disposal receipt must be a private regular file')
-    connection=sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)
+    from .journal_schema import connect
+    connection=connect(owner.app/'managed-files.sqlite3','managed-disposal')
+    if connection is None:return None
     try:row=connection.execute('SELECT body FROM commands WHERE id=?',(command,)).fetchone()
     finally:connection.close()
     if not row:return None

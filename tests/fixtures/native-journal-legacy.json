@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "profiles": [
+    {
+      "profile": "bundle",
+      "source": "4d2ea06c4f538f6670fb8f6bcb174a0d3d5bffc5",
+      "path": "src/amplifier_acp/bundle_commands.py",
+      "tables": [
+        "CREATE TABLE commands (id TEXT PRIMARY KEY, binding TEXT NOT NULL, scope TEXT NOT NULL, body TEXT NOT NULL)"
+      ]
+    },
+    {
+      "profile": "maintenance",
+      "source": "518ca7131beef6fee68fda5b6cfafac75c1cd22a",
+      "path": "src/amplifier_acp/maintenance.py",
+      "tables": [
+        "CREATE TABLE commands(id TEXT PRIMARY KEY,workspace TEXT,signature TEXT,body TEXT)"
+      ]
+    },
+    {
+      "profile": "lifecycle",
+      "source": "cd19850f800ac65af2d8a5bdcc6e0e59497c966b",
+      "path": "src/amplifier_acp/session_lifecycle.py",
+      "tables": [
+        "CREATE TABLE receipts(id TEXT PRIMARY KEY,signature TEXT,body TEXT)"
+      ]
+    },
+    {
+      "profile": "generations",
+      "source": "0d0194bb8194fe0410404ee62b403247498d47ba",
+      "path": "src/amplifier_acp/generations.py",
+      "tables": [
+        "CREATE TABLE commands(id TEXT PRIMARY KEY,signature TEXT NOT NULL,body TEXT NOT NULL)",
+        "CREATE TABLE state(id TEXT PRIMARY KEY,body TEXT NOT NULL)",
+        "CREATE TABLE inventory(id TEXT PRIMARY KEY,body TEXT NOT NULL)",
+        "CREATE TABLE diagnostics(sequence INTEGER PRIMARY KEY,body TEXT NOT NULL)"
+      ]
+    },
+    {
+      "profile": "history-import",
+      "source": "31c537a2edb6d1f181245c84c179816dc9371761",
+      "path": "src/amplifier_acp/history_import.py",
+      "tables": [
+        "CREATE TABLE commands(id TEXT PRIMARY KEY,cwd TEXT NOT NULL,signature TEXT NOT NULL,body TEXT NOT NULL)",
+        "CREATE TABLE uploads(id TEXT PRIMARY KEY,cwd TEXT NOT NULL,spec TEXT NOT NULL,received INTEGER NOT NULL DEFAULT 0,body BLOB NOT NULL,prepared BLOB,preview TEXT UNIQUE,consumed TEXT,target TEXT)"
+      ]
+    },
+    {
+      "profile": "voice-preferences",
+      "source": "48c5199e493f3a4149270055193e57e105979a19",
+      "path": "src/amplifier_acp/voice_preferences.py",
+      "tables": [
+        "CREATE TABLE commands(id TEXT PRIMARY KEY,signature TEXT NOT NULL,body TEXT NOT NULL)"
+      ]
+    },
+    {
+      "profile": "permissions",
+      "source": "309d960fbc3b3288a0ceebd0456aa17dc0444a7f",
+      "path": "src/amplifier_acp/permissions.py",
+      "tables": [
+        "CREATE TABLE commands(id TEXT PRIMARY KEY,signature TEXT NOT NULL,workspace TEXT NOT NULL,scope TEXT NOT NULL,body TEXT NOT NULL)"
+      ]
+    },
+    {
+      "profile": "managed-disposal",
+      "source": "5a1549eb64f7630125c8b77e8b88e3c7444f8662",
+      "path": "src/amplifier_acp/managed_disposal.py",
+      "tables": [
+        "CREATE TABLE reviews(id TEXT PRIMARY KEY,body TEXT NOT NULL)",
+        "CREATE TABLE commands(id TEXT PRIMARY KEY,signature TEXT NOT NULL,body TEXT NOT NULL)"
+      ]
+    },
+    {
+      "profile": "steering",
+      "source": "9fbf95d6b480c833a7cd415d66674028e46f554d",
+      "path": "src/amplifier_acp/steering.py",
+      "tables": [
+        "CREATE TABLE receipts(id TEXT PRIMARY KEY,signature TEXT NOT NULL,body TEXT NOT NULL)"
+      ]
+    },
+    {
+      "profile": "coordination",
+      "source": "07e7724f8842712261cdf6332d4e5fc366cb1f5b",
+      "path": "src/amplifier_acp/coordination.py",
+      "tables": [
+        "CREATE TABLE workers(id TEXT PRIMARY KEY,body TEXT NOT NULL,sequence INTEGER NOT NULL DEFAULT 0)",
+        "CREATE TABLE reports(worker TEXT,sequence INTEGER,id TEXT,body TEXT,PRIMARY KEY(worker,sequence),UNIQUE(worker,id))",
+        "CREATE TABLE commands(id TEXT PRIMARY KEY,signature TEXT,body TEXT)",
+        "CREATE TABLE state(id INTEGER PRIMARY KEY,revision INTEGER)"
+      ]
+    },
+    {
+      "profile": "messages",
+      "source": "9f2aca64d487b5007f80ebd4ee24ac3212785ce8",
+      "path": "src/amplifier_acp/message_metadata.py",
+      "tables": [
+        "CREATE TABLE annotations(\n              message TEXT NOT NULL, actor TEXT NOT NULL, emoji TEXT NOT NULL,\n              PRIMARY KEY(message,actor,emoji))",
+        "CREATE TABLE revisions(message TEXT PRIMARY KEY,value INTEGER NOT NULL)",
+        "CREATE TABLE receipts(command TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,value TEXT NOT NULL)"
+      ]
+    },
+    {
+      "profile": "messages-quotes",
+      "source": "5551c48853d3efe9b80fd6d8b6953b37c7c7eeff",
+      "path": "src/amplifier_acp/message_metadata.py",
+      "tables": [
+        "CREATE TABLE quotes(input TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,value TEXT NOT NULL)",
+        "CREATE TABLE annotations(\n              message TEXT NOT NULL, actor TEXT NOT NULL, emoji TEXT NOT NULL,\n              PRIMARY KEY(message,actor,emoji))",
+        "CREATE TABLE revisions(message TEXT PRIMARY KEY,value INTEGER NOT NULL)",
+        "CREATE TABLE receipts(command TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,value TEXT NOT NULL)"
+      ]
+    },
+    {
+      "profile": "inputs",
+      "source": "81d8da8ceb0e14828ec59e5e0ba9b87a967f5e1b",
+      "path": "src/amplifier_acp/native/input_provenance.py",
+      "tables": [
+        "CREATE TABLE provenance(id TEXT PRIMARY KEY,body TEXT NOT NULL)"
+      ]
+    },
+    {
+      "profile": "inputs-outcomes",
+      "source": "8c014be790ab506fa8e9b7540911e59c9ff702ab",
+      "path": "src/amplifier_acp/input_outcome.py",
+      "tables": [
+        "CREATE TABLE provenance(id TEXT PRIMARY KEY,body TEXT NOT NULL)",
+        "CREATE TABLE outcomes(id TEXT PRIMARY KEY,cwd TEXT NOT NULL,body TEXT NOT NULL)"
+      ]
+    }
+  ]
+}

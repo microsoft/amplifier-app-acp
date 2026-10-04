@@ -51,24 +51,8 @@ class Outcomes:
         self.path = checked(Path(app_home).absolute()/'sessions'/self.session_id/'input-provenance.sqlite3')
 
     def connect(self, write=False):
-        from .maintenance_gate import checked
-        checked(self.path)
-        for suffix in ('-wal', '-shm', '-journal'): checked(Path(str(self.path)+suffix))
-        if not write and not self.path.exists(): return None
-        if write: self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        # A passive lookup can race the first schema commit or final WAL
-        # recovery. Bound only its lock wait; effect writes are never retried.
-        db = sqlite3.connect(self.path if write else self.path.as_uri()+'?mode=ro', uri=not write, timeout=0 if write else .25)
-        db.execute('PRAGMA trusted_schema=OFF')
-        if write:
-            os.chmod(self.path, 0o600)
-            db.execute('PRAGMA journal_mode=WAL'); db.execute('PRAGMA synchronous=FULL')
-            # Keep the existing context decorator and provenance reader valid
-            # when this is the first record in an ordinary ACP conversation.
-            db.execute('CREATE TABLE IF NOT EXISTS provenance(id TEXT PRIMARY KEY,body TEXT NOT NULL)')
-            db.execute('CREATE TABLE IF NOT EXISTS outcomes(id TEXT PRIMARY KEY,cwd TEXT NOT NULL,body TEXT NOT NULL)')
-        else: db.execute('PRAGMA query_only=ON')
-        return db
+        from .journal_schema import connect
+        return connect(self.path,'inputs',write=write,enroll=write,timeout=0 if write else .25)
 
     def read(self, identity):
         identity = input_id(identity)

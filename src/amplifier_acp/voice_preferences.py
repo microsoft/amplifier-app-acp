@@ -42,14 +42,8 @@ class VoicePreferences:
         self.root=checked(app/'voice-preferences');self.path=self.root/'receipts.sqlite3'
         self.store=SettingsStore(app,shared_home=native_home(config))
     def db(self,create=False):
-        if not create:
-            if not self.path.exists():return None
-            checked(self.path);con=sqlite3.connect(self.path.as_uri()+'?mode=ro',uri=True,timeout=0,isolation_level=None)
-        else:
-            self.root.mkdir(parents=True,exist_ok=True,mode=0o700);checked(self.path)
-            con=sqlite3.connect(self.path,timeout=5,isolation_level=None);os.chmod(self.path,0o600)
-            con.executescript('PRAGMA journal_mode=WAL;PRAGMA synchronous=FULL;CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY,signature TEXT NOT NULL,body TEXT NOT NULL);')
-        con.row_factory=sqlite3.Row;return con
+        from .journal_schema import connect
+        return connect(self.path,'voice-preferences',write=create,timeout=5 if create else 0,isolation_level=None)
     def receipt(self,workspace,identity):
         con=self.db()
         if con is None:return None

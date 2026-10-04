@@ -12,16 +12,12 @@ def bounded_id(value):
 class Store:
     def __init__(self,home,sid):self.path=Path(home)/'sessions'/sid/'coordination.sqlite3'
     @contextmanager
-    def db(self,create=False):
-        for p in (self.path,*self.path.parents):
-            if p.is_symlink():raise ValueError('Native coordination cannot traverse symbolic links')
-        if not create and not self.path.exists():yield None;return
-        if create:self.path.parent.mkdir(parents=True,exist_ok=True)
-        db=sqlite3.connect(self.path);db.execute('PRAGMA journal_mode=WAL');db.execute('PRAGMA synchronous=FULL')
+    def db(self,create=False,*,write=False):
+        from .journal_schema import connect
+        db=connect(self.path,'coordination',write=create or write,create=create)
+        if db is None:yield None;return
         try:
-            with db:
-                if create:db.executescript('CREATE TABLE IF NOT EXISTS workers(id TEXT PRIMARY KEY,body TEXT NOT NULL,sequence INTEGER NOT NULL DEFAULT 0);CREATE INDEX IF NOT EXISTS workers_status ON workers(json_extract(body,\'$.status\'));CREATE INDEX IF NOT EXISTS workers_call ON workers(json_extract(body,\'$.callId\'),json_extract(body,\'$.kind\'));CREATE INDEX IF NOT EXISTS workers_visible ON workers(id) WHERE json_extract(body,\'$.supersededBy\') IS NULL;CREATE TABLE IF NOT EXISTS reports(worker TEXT,sequence INTEGER,id TEXT,body TEXT,PRIMARY KEY(worker,sequence),UNIQUE(worker,id));CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY,signature TEXT,body TEXT);CREATE INDEX IF NOT EXISTS command_disposition ON commands(json_extract(body,\'$.disposition\'));CREATE TABLE IF NOT EXISTS state(id INTEGER PRIMARY KEY,revision INTEGER);INSERT OR IGNORE INTO state VALUES(1,0);')
-                yield db
+            with db:yield db
         finally:db.close()
     def observe(self,event):
         kind=event.get('type','');wid=None;patch={};report=None
@@ -62,7 +58,7 @@ class Store:
             # Ambiguous native call identities must stay visible, not guessed.
             db.execute("UPDATE workers SET body=json_remove(body,'$.supersededBy') WHERE json_extract(body,'$.callId')=? AND json_extract(body,'$.kind')='job'",(call,))
     def lost(self):
-        with self.db() as db:
+        with self.db(write=True) as db:
             if not db:return
             rows=db.execute("SELECT id,body FROM workers WHERE json_extract(body,'$.status') IN ('working','running','starting','ready','queued','pending','stopping','idle')").fetchall()
             for wid,raw in rows:
