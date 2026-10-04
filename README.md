@@ -47,7 +47,7 @@ Do not point an experiment at another owner's state.
 
 Each loaded native session uses a separate worker subprocess so cwd, provider
 credentials, module imports and native ownership never mix across sessions.
-Settled workers retire after `idleSeconds`; active turns, children, approvals,
+Standalone settled workers retire after `idleSeconds`; active turns, children, approvals,
 bridges and operations prevent retirement. A new explicit prompt remounts from
 native history, without replay. Connection metadata is bounded by `maxSessions`.
 An adapter connection ending cancels its workers; the AHP host must retain its
@@ -180,6 +180,23 @@ rejects new work. The host may then close ACP. A false result or lost transport
 is never permission to kill a possibly active worker. Hosts should hold their
 session admission lock during the handshake. `session/cancel` and explicit
 `session/close` remain user-directed termination paths, separate from idle cleanup.
+
+A private spawning Host can offer
+`clientCapabilities._meta['amplifier.dev/host'].runtimeRetention` as exactly
+`{version:1,owner:'host',lifetime:'connection'}` during `initialize`, with Host
+capability version 1. Native acknowledges the exact tuple plus
+the informational `standaloneIdleSeconds` in
+`agentCapabilities._meta['amplifier.dev/native'].lifecycle.runtimeRetention`.
+Only this accepted agreement suppresses the Native autonomous idle timer. The
+Host then owns bounded retention and requests the existing atomic retirement
+handshake. The informational interval snapshots the existing scheduling expression
+`max(1, idleSeconds)`, defaulting to 60 seconds. Zero or negative settings have a
+one-second floor and never disable retirement. Existing standalone scheduling
+and configuration remain effective for unnegotiated peers.
+Missing, unsupported, malformed or extra-key offers receive no retention
+acknowledgement and keep the standalone timer. The agreement is immutable for
+that ACP connection, binds before sessions, and requires no heartbeat. Connection
+loss still cancels workers and preserves the existing no-replay semantics.
 
 Passive history inspection is negotiated by `history.passiveInspect:true`.
 `_amplifier/history/inspect {sessionId,cwd}` returns
@@ -345,3 +362,24 @@ retirement uncertainty. A Host can inspect this proof before closing the old
 bridge and explicitly resuming the same Native identity for a **new** turn;
 no original uncertain turn is replayed. Definite `active_request` / `owned_work`
 retirement refusals keep the existing handle usable.
+
+## Canonical naming metadata extension
+
+Negotiated `_amplifier/naming` accepts exact `sessionId`, canonical history `cwd`,
+`operation`, and `args`. Operations `read`, `rename`, `policy`, `commit`, and
+`receipt` are passive: they never start a worker or invoke a model. Mutations
+require the original `commandId`. Policy additionally requires current name and
+policy revisions; generated commit accepts the legacy naming candidate with
+both revisions. Manual rename disables Auto and advances both revisions.
+
+`session.naming` remains the legacy candidate-only operation. New
+`session.naming.generate` invokes that same lifecycle once behind an exact
+command receipt. Selected-session lifecycle receipts reserve a namespaced
+unknown record before generation or metadata writes. Repeated succeeded commands
+return their original result; interrupted commands remain unknown without replay.
+Receipts do not infer completion from current metadata.
+
+The public bridge and generic Host own title serialization and projection.
+Manual saves persist canonical Native metadata first; generation captures the
+Host title revision before its model call and commits only after both Host and
+Native revisions agree. These methods alone do not restore the composed UI.
