@@ -89,3 +89,40 @@ async def test_actual_cached_prepared_mismatch_denies(qualified, tmp_path):
         with pytest.raises(closure.SourceClosureDenied):
             await ModuleActivator(cache_dir=tmp_path/'cache', install_deps=False).activate('provider-closure-test',URI+'-unknown')
     assert not calls and not (tmp_path/'cache').exists()
+
+@pytest.mark.asyncio
+async def test_actual_core_loader_accepts_qualified_installed_layout(tmp_path, monkeypatch):
+    from amplifier_core.loader import ModuleLoader
+    from types import SimpleNamespace
+    monkeypatch.setenv(closure.ENV, '{}'); monkeypatch.delenv(closure.ENV)
+    monkeypatch.delenv(preparation.VARIABLE, raising=False)
+    closure._callbacks.clear()
+    before = list(sys.path)
+    prefix = tmp_path/'python'; site = prefix/'lib/python3.13/site-packages'
+    package = site/'amplifier_module_provider_closure_installed'; package.mkdir(parents=True)
+    code = package/'__init__.py'
+    code.write_text('async def mount(coordinator, config):\n    return lambda: None\n')
+    metadata = site/'closure_installed-1.0.dist-info/METADATA'; metadata.parent.mkdir()
+    metadata.write_text('Name: closure-installed\nVersion: 1.0\n')
+    files = {p.relative_to(prefix).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in (code,metadata)}
+    row = dict(requestedUri=URI, basePath=None, activePath=str(site),sourceRoot=str(prefix),
+               resolvedCommit='a'*40,approval='verified-source-to-wheel-receipt',files=files,
+               admissionFiles=list(files),packages=['amplifier_module_provider_closure_installed'])
+    path=tmp_path/'installed.json'; path.write_text(json.dumps(dict(version=1,sources=[row])))
+    reference=dict(path=str(path),sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+    monkeypatch.syspath_prepend(str(site))
+    closure.configure({'sourceResolutionManifest':reference})
+    resolver=BundleModuleResolver({},source_paths={('provider-closure-installed',URI):site})
+    coordinator=SimpleNamespace(get=lambda name: resolver)
+    loader=ModuleLoader(coordinator)
+    try:
+        with closure.scope():
+            assert loader._find_package_dir('provider-closure-installed',site)==package
+            mount=await loader.load('provider-closure-installed',{},source_hint=URI)
+            cleanup=await mount(coordinator)
+            assert callable(cleanup)
+            assert closure.attest()['origins']['amplifier_module_provider_closure_installed']['loaded']
+            assert resolver.prepared_sources()==(('provider-closure-installed',URI,site),)
+    finally:
+        sys.modules.pop('amplifier_module_provider_closure_installed',None)
+        sys.path[:]=before

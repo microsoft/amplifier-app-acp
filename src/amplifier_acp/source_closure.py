@@ -71,7 +71,7 @@ class Admission:
         if not isinstance(document, dict) or set(document) != {'version', 'sources'} or type(document['version']) is not int or document['version'] != 1: _deny()
         rows = document['sources']
         if not isinstance(rows, list) or not 1 <= len(rows) <= 512: _deny()
-        self.rows = {}; self.packages = {}; self.origins = {}; self.checked_files = {}; files_count = 0
+        self.rows = {}; self.packages = {}; self.origins = {}; self.checked_files = {}; self.file_digests = {}; files_count = 0
         for row in rows:
             if not isinstance(row, dict) or set(row) != {'requestedUri', 'basePath', 'activePath', 'sourceRoot', 'resolvedCommit', 'approval', 'files', 'admissionFiles', 'packages'}: _deny()
             uri = _uri(row['requestedUri'])
@@ -90,6 +90,9 @@ class Admission:
             for name, digest in files.items():
                 relative = PurePosixPath(name)
                 if not isinstance(name, str) or len(name) > 1024 or relative.is_absolute() or '..' in relative.parts or str(relative) != name or not _sha(digest): _deny()
+                file_key = (str(root), name)
+                if file_key in self.file_digests and self.file_digests[file_key] != digest: _deny()
+                self.file_digests[file_key] = digest
             required = row['admissionFiles']
             if not isinstance(required, list) or not 1 <= len(required) <= 128 or any(name not in files for name in required): _deny()
             key = (uri, base)
@@ -150,13 +153,18 @@ class Admission:
             active = _absolute(str(path))
             candidates = [value for value in self.rows.values() if active.is_relative_to(value['root'])]
             if not candidates: _deny()
-            row = candidates[0]
-            relative = active.relative_to(row['root']).as_posix()
+            members = []
+            for value in candidates:
+                relative = active.relative_to(value['root']).as_posix()
+                if active.is_file():
+                    if relative in value['files']: members.append(value)
+                elif any(name.startswith(relative + '/') or relative == '.' for name in value['files']):
+                    members.append(value)
+            if not members: _deny()
+            row = members[0]
             if active.is_file():
-                if relative not in row['files']: _deny()
+                relative = active.relative_to(row['root']).as_posix()
                 self.check_file(row['root'], relative, row['files'][relative])
-            elif not any(name.startswith(relative + '/') or relative == '.' for name in row['files']):
-                _deny()
         _absolute(str(row['root'])); _absolute(str(row['active']))
         for name in row['admissionFiles']:
             self.check_file(row['root'], name, row['files'][name])

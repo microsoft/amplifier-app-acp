@@ -170,3 +170,26 @@ def test_prepared_local_paths_require_declared_manifest_membership(tmp_path, fou
     bad = SimpleNamespace(resolver=SimpleNamespace(prepared_sources=lambda: (('provider-test', URI, outside),)))
     with pytest.raises(closure.SourceClosureDenied): closure.attest_prepared(bad)
     with pytest.raises(RuntimeError, match='prepared_sources'): closure.attest_prepared(SimpleNamespace())
+
+
+def test_shared_installed_root_local_member_is_independent_of_row_order(tmp_path, foundation):
+    reference, root = manifest(tmp_path)
+    path = Path(reference['path']); doc = json.loads(path.read_text())
+    row = doc['sources'][0]
+    second = {**row, 'requestedUri': URI.replace('provider', 'provider-two'),
+              'files': {'closure_fixture_provider/__init__.py': row['files']['closure_fixture_provider/__init__.py']},
+              'admissionFiles': ['closure_fixture_provider/__init__.py']}
+    row['files'] = {'bundle.yaml': row['files']['bundle.yaml']}
+    doc['sources'].append(second); path.write_text(json.dumps(doc))
+    reference['sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
+    closure.configure({'sourceResolutionManifest': reference})
+    assert closure.admission()(str(root/'closure_fixture_provider/__init__.py'), base_path=tmp_path).source_root == root
+
+
+def test_shared_root_contradictory_file_digest_refuses(tmp_path, foundation):
+    reference, _ = manifest(tmp_path)
+    path = Path(reference['path']); doc = json.loads(path.read_text())
+    row = doc['sources'][0]
+    doc['sources'].append({**row, 'requestedUri': URI+'-other', 'files': {**row['files'], 'bundle.yaml': 'b'*64}})
+    path.write_text(json.dumps(doc)); reference['sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
+    with pytest.raises(closure.SourceClosureDenied): closure.configure({'sourceResolutionManifest': reference})
