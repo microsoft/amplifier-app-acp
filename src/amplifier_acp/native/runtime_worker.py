@@ -683,7 +683,7 @@ class Worker:
             publish({"op":"reply","id":data.get("id"),"error":"Native worker has committed retirement; no new work admitted","code":"worker_retired","executed":False})
             return
         memory_control = op == 'control' and data.get('operation') == 'memory.consolidate'
-        naming_control = op == 'control' and data.get('operation') == 'session.naming'
+        naming_control = op == 'control' and data.get('operation') in {'session.naming','session.naming.generate'}
         if op in {'send', 'retry', 'stop', 'resume', 'worker.message', 'worker.steer', 'worker.stop'}:
             # Auxiliary personalization must never delay foreground admission.
             # Cancellation cannot retract an already accepted provider request;
@@ -900,6 +900,12 @@ class Worker:
                 elif data["operation"] == "voice.transcript.record":
                     from amplifier_acp.native.voice_history import record
                     result = await record(self.controls, arguments)
+                elif data["operation"] == "session.naming.generate":
+                    from amplifier_acp.naming_commands import Commands,validate
+                    validate('generate',arguments)
+                    if not self.naming:raise ValueError('Automatic naming is unavailable for this conversation.')
+                    commands=Commands(self.home,self.runtime.session_id,self.naming.directory)
+                    result=await commands.perform('generate',arguments,self.naming.suggest)
                 elif data["operation"] == "session.naming":
                     if not self.naming:
                         raise ValueError('Automatic naming is unavailable for this conversation.')
