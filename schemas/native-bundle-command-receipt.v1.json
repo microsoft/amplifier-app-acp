@@ -74,6 +74,12 @@
         "result": {
           "type": "object",
           "description": "Exact original public result, at most 524288 UTF-8 JSON bytes. Activation requiresModelChoice=true/applied=false is confirmed unapplied; applied=true means remount returned successfully."
+        },
+        "diagnosticReceipt": {
+          "type": "string",
+          "pattern": "^startup-[a-f0-9]{32}\\.log$",
+          "maxLength": 44,
+          "description": "Opaque basename for a private native diagnostic. Does not establish completion or no effect."
         }
       },
       "additionalProperties": false,
@@ -101,6 +107,11 @@
                 {
                   "required": [
                     "reason"
+                  ]
+                },
+                {
+                  "required": [
+                    "diagnosticReceipt"
                   ]
                 }
               ]

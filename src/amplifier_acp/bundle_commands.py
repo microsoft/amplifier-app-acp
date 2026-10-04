@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import time
 from pathlib import Path
@@ -15,14 +16,29 @@ CAPABILITY = {'version': 1, 'commandId': 'optional-legacy-required-for-receipt',
               'adminReceipt': 'bundle.receipt', 'activationReceipt': '_amplifier/bundle/receipt',
               'passiveReceipt': True, 'maxResultBytes': MAX_RESULT, 'replayUnknown': False}
 
+def diagnostic_reference(value):
+    reference = value.get('diagnosticReceipt') if isinstance(value, dict) else None
+    return {'diagnosticReceipt': reference} if isinstance(reference, str) and re.fullmatch(r'startup-[a-f0-9]{32}\.log', reference) else {}
+
+
 class BundleCommandError(ValueError):
-    def __init__(self, reason, *, refused=False, command_id=None):
+    def __init__(self, reason, *, refused=False, command_id=None, diagnostic=None):
         super().__init__('Bundle command was refused without an effect.' if refused else 'Bundle command outcome is unknown; inspect its exact receipt without replay.')
         self.data = {'reason': reason, 'replayed': False, **({'executed': False} if refused else {'outcome': 'unknown'}),
-                     **({'commandId': command_id} if command_id else {})}
+                     **({'commandId': command_id} if command_id else {}), **diagnostic_reference(diagnostic)}
 
 class BundlePreflightRefusal(ValueError):
     data = {'executed': False, 'reason': 'bundle-preflight-refused', 'replayed': False}
+
+    def __init__(self, message, *, diagnostic=None):
+        super().__init__(message)
+        self.data = {**self.data, **diagnostic_reference(diagnostic)}
+
+
+class BundleActivationFailure(RuntimeError):
+    def __init__(self, *, diagnostic=None):
+        super().__init__('Bundle activation did not complete conclusively; inspect its exact receipt without replay.')
+        self.data = {'outcome': 'unknown', 'replayed': False, **diagnostic_reference(diagnostic)}
 
 def encoded(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
@@ -95,7 +111,7 @@ class BundleCommands:
     @staticmethod
     def outcome(row):
         if row['status'] == 'succeeded': return row['result']
-        raise BundleCommandError(row.get('reason', 'bundle-command-outcome-unknown'), refused=row['status']=='refused', command_id=row['commandId'])
+        raise BundleCommandError(row.get('reason', 'bundle-command-outcome-unknown'), refused=row['status']=='refused', command_id=row['commandId'], diagnostic=row)
 
     async def perform(self, operation, args, invoke):
         fresh, row = self.claim(operation, args)
@@ -115,9 +131,20 @@ class BundleCommands:
             # retains the original unknown reservation, never reruns the call.
             proof = getattr(exc, 'data', {})
             refused = isinstance(exc, ValueError) and not effected or isinstance(proof, dict) and proof.get('executed') is False
+            diagnostic = diagnostic_reference(proof)
+            if diagnostic:
+                # Add only an owned private-log basename. This supplies evidence,
+                # never a terminal result or permission to replay an unknown.
+                row = {**row, **diagnostic}
+                try:
+                    db = self.connect(True)
+                    try: db.execute('UPDATE commands SET body=? WHERE id=? AND scope=?', (encoded(row).decode(), row['commandId'], encoded(self.scope).decode()))
+                    finally: db.close()
+                except Exception:
+                    pass  # Keep the existing reservation if diagnostics cannot persist.
             if refused: self.finish(row, refused=True)
             if isinstance(exc, (KeyboardInterrupt, SystemExit)): raise
-            raise BundleCommandError('bundle-preflight-refused' if refused else 'bundle-command-outcome-unknown', refused=refused, command_id=row['commandId']) from None
+            raise BundleCommandError('bundle-preflight-refused' if refused else 'bundle-command-outcome-unknown', refused=refused, command_id=row['commandId'], diagnostic=diagnostic) from None
 
 
 def passive(server, params):

@@ -139,6 +139,12 @@ asyncio.run(Worker().run())
         params = {'sessionId': sid, 'cwd': str(cwd), 'commandId': 'concurrent-change'}
         receipt = (await client.request('_amplifier/bundle/receipt', params))['result']['receipt']
         assert receipt['status'] == 'unknown' and 'result' not in receipt
+        assert receipt['diagnosticReceipt'] == failed['error']['data']['diagnosticReceipt']
+        diagnostic = Path(values['appHome']) / 'logs' / 'workers' / receipt['diagnosticReceipt']
+        detail = json.loads(json.loads(diagnostic.read_text().splitlines()[0])['failure'])
+        assert detail['errorType'] == 'ValueError'
+        assert 'bundle configuration changed' in detail['message']
+        assert 'bundle configuration changed' not in json.dumps(receipt)
         assert not audit.exists()
     finally:
         await client.close()
