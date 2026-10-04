@@ -281,9 +281,11 @@ class Lifecycle:
         from .native.host.session import repair_interrupted_receipts
         if mode=='recovery':
             from .native.session_health import recovery_context
-            context,_=recovery_context([row for _,row in selected])
+            context,positions=recovery_context([row for _,row in selected])
             if not context:raise ValueError('Selected source contains no coherent readable recovery history')
-        else:context=repair_interrupted_receipts(complete_tool_exchanges([row for _,row in selected]))
+        else:
+            positions={}
+            context=repair_interrupted_receipts(complete_tool_exchanges([row for _,row in selected],positions=positions))
         copied={}
         for name in ('configuration.json','effective-configuration.json','control-state.json'):
             path=self.app/name
@@ -300,17 +302,22 @@ class Lifecycle:
         if not isinstance(metadata.get('bundle') or metadata.get('bundle_name'),str):raise ValueError('The saved native bundle identity is unavailable; resume and inspect configuration before forking')
         if args.get('bundle'):
             metadata={**metadata,'bundle':self.fork_bundles()[args['bundle']],'bundle_name':self.fork_bundles()[args['bundle']]}
-            context=[row for row in context if row.get('role') not in {'system','developer'}]
+            retained=[(index,row) for index,row in enumerate(context) if row.get('role') not in {'system','developer'}]
+            remap={index:new for new,(index,_) in enumerate(retained)}
+            positions={source:remap[target] for source,target in positions.items() if target in remap}
+            context=[row for _,row in retained]
             controls=copied.get('control-state.json',{})
             copied={'control-state.json':({'selection':controls['selection']} if 'selection' in controls and not args.get('resetModel') else {})}
-        return context,metadata,revision,copied,managed
+        from .message_copy import prepare
+        reactions=prepare(self.server,self.identity,target,selected,positions,context)
+        return context,metadata,revision,copied,managed,reactions
     def fork_bundles(self):
         choices=self.server.config.get('forkBundles',{})
         if not isinstance(choices,dict) or len(choices)>64 or any(not isinstance(k,str) or not 1<=len(k)<=200 or not isinstance(v,str) or not 1<=len(v)<=4096 for k,v in choices.items()):raise ValueError('Launcher fork bundle choices are invalid')
         return choices
     def fork(self,args,prepared):
         from amplifier_foundation.session.history import SessionHistoryStore
-        context,metadata,revision,copied,managed=prepared;target=args['targetSessionId'];target_app=location(home(self.server),target)
+        context,metadata,revision,copied,managed,reactions=prepared;target=args['targetSessionId'];target_app=location(home(self.server),target)
         from .managed_session import reserve_copy,complete_copy,copied_configuration,location as managed_location
         cwd=managed['workspace'] if managed else self.cwd
         target_app.mkdir(parents=True,exist_ok=False,mode=0o700)
@@ -330,9 +337,13 @@ class Lifecycle:
         target_handle=SharedSessionStore(cwd,target).acquire(app='amplifier-acp-fork',pid=os.getpid())
         try:
             SessionHistoryStore(destination,session_id=target).save(context,safe,preserve_system=preserve_system)
+            from .message_copy import publish
+            target_revision=history.inspect(destination)['revision']
+            target_rows,_,_=canonical(destination,target_revision,app_home=home(self.server)) if reactions else ([],None,None)
+            reaction_copy=publish(self.server,target,target_rows,reactions)
             for name,value in copied.items():write(target_app/name,value)
             write(target_app/'execution-location.json',{'sessionId':target,'historyCwd':cwd,'executionDirectory':execution,'executionRevision':0})
-            result={'sessionId':target,'creationConfirmed':True,'historyCwd':cwd,'executionDirectory':execution,'historyRevision':history.inspect(destination)['revision'],'source':{'sessionId':self.identity,'historyRevision':revision,**({'throughMessageId':args['throughMessageId']} if args.get('throughMessageId') else {})},'workReplayed':False,'mode':args.get('mode','complete'),'bundleSelection':args.get('bundle'),'preservedSource':True}
+            result={'sessionId':target,'creationConfirmed':True,'historyCwd':cwd,'executionDirectory':execution,'historyRevision':history.inspect(destination)['revision'],'source':{'sessionId':self.identity,'historyRevision':revision,**({'throughMessageId':args['throughMessageId']} if args.get('throughMessageId') else {})},'workReplayed':False,'mode':args.get('mode','complete'),'bundleSelection':args.get('bundle'),'preservedSource':True,'messageAnnotations':reaction_copy}
             if managed_record:result.update(location=managed_location(managed),configurationScope='global-and-session',runtimeStarted=False,generatedFilesCopied=False)
             write(target_app/'history-fork.json',{**marker,'state':'committed','result':result})
             if managed_record:complete_copy(self.server,managed_record,title=safe.get('name','Copied chat'),bundle=safe['bundle'])

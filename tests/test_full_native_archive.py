@@ -25,6 +25,15 @@ async def test_cold_full_native_captures_all_histories_generation_authority_and_
     (app/'updates/worker-leases').mkdir();(app/'updates/worker-leases/stale.json').write_text('{"pid":1}')
     credentials=home/'keys.env';credentials.write_bytes(b'SYNTHETIC_NATIVE_BACKUP_KEY=fixture-only\n')
     before={p:p.read_bytes() for p in [old/'events.jsonl',old/'metadata.json',release/'runtime.lock',credentials]}
+    from amplifier_acp.message_metadata import MessageMetadata,reserve_quote
+    from amplifier_acp.history import message_id
+    selected=tmp_path/'selected-message';selected.mkdir()
+    row={'role':'assistant','content':'Retained quoted evidence'}
+    (selected/'transcript.jsonl').write_text(json.dumps(row)+'\n')
+    ref={'sessionId':sid,'messageId':message_id(row,0),'position':0,'historyEpoch':None}
+    adjunct=MessageMetadata(app,sid,actor_id='archive-fixture-account')
+    reacted=adjunct.reaction(selected,ref,emoji='👍',present=True,command_id='archived-reaction')
+    quote=reserve_quote(adjunct,selected,ref,input_id='archived-unknown-quote',input_payload={'text':'explicit follow-up'})
     from amplifier_acp.bundle_commands import BundleCommands
     commands=BundleCommands(config,str(cwd))
     async def fixture_saved(effect):return {'saved':{'name':'retained-original'}}
@@ -67,6 +76,14 @@ async def test_cold_full_native_captures_all_histories_generation_authority_and_
                 body=json.loads(receipts.execute('SELECT body FROM commands WHERE id=?',('archived-command',)).fetchone()[0])
                 assert body==commands.receipt('archived-command')
                 assert receipts.execute('PRAGMA quick_check').fetchone()==('ok',)
+            image=tmp_path/'message-adjunct-image.sqlite3'
+            image.write_bytes(tar.extractfile('app-home/sessions/'+sid+'/message-interactions.sqlite3').read())
+            with sqlite3.connect(image) as db:
+                assert db.execute('PRAGMA quick_check').fetchone()==('ok',)
+                assert db.execute('SELECT message,actor,emoji FROM annotations').fetchall()==[(ref['messageId'],'archive-fixture-account','👍')]
+                assert json.loads(db.execute('SELECT value FROM receipts WHERE command=?',('archived-reaction',)).fetchone()[0])['result']==reacted
+                reserved=json.loads(db.execute('SELECT value FROM quotes WHERE input=?',('archived-unknown-quote',)).fetchone()[0])
+                assert reserved['quote']==quote and reserved['outcome']=='unknown' and reserved['replayed'] is False
             assert any(name.startswith('checkpoint/') and name.endswith('/checkpoint.json') for name in tar.getnames())
             assert not any('worker-leases' in name or created['planId'] in name or artifact['artifactId'] in name for name in tar.getnames()[2:])
             manifest=tmp_path/'manifest.sqlite3';manifest.write_bytes(tar.extractfile('native-manifest.sqlite3').read())

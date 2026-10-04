@@ -108,6 +108,18 @@ page before the edit and replace their displayed prefix only after commit proof.
 
 ## Guarded readable recovery and configured bundle fork
 
+A clean cold resume preserves the original canonical transcript, metadata and
+reviewed history revision through preparation and idle parking. Context modules
+may normalize their in-memory representation during hydration; that alone is not
+new conversation activity. The adapter compares the hydrated context exactly and
+still checks the native file stamps and Foundation writer lease before skipping
+an unchanged checkpoint. Explicit edits, new inputs, voice recording, context
+clear, interrupted-receipt recovery, damaged-primary recovery, explicit bundle
+switches and failure checkpoints retain their existing persistence paths. External
+canonical changes still revoke the original revision; clients must not silently
+retry an edit with a replacement revision. Focused acceptance is in
+`tests/test_cold_resume_history.py`.
+
 The optional `sessionLifecycle.recoveryCopy.version: 1` supports `fork` with
 `mode: "recovery"`. It creates an independent root with readable public history
 and labeled tool-result references, removing prior native tool calls, image and

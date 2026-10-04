@@ -43,6 +43,9 @@ def provenance(row):
         if value is None and name=='createdAt':value=metadata.get('timestamp')
         if isinstance(value,str) and len(value)<=8192:result[name]=value
         elif name=='createdAt' and type(value) in (int,float):result[name]=value
+    quote = metadata.get('replyTo')
+    if isinstance(quote, dict) and len(json.dumps(quote).encode()) <= 32768:
+        result['replyTo'] = quote
     if type(metadata.get('questionRevision')) is int:result['questionRevision']=metadata['questionRevision']
     if isinstance(metadata.get('answerProvenance'),dict) and len(json.dumps(metadata['answerProvenance']).encode())<=8192:result['answerProvenance']=metadata['answerProvenance']
     native={key:value for key,value in marker.items() if key in {'id','kind','source','call_id'} and isinstance(value,str) and len(value)<=8192}
@@ -108,6 +111,17 @@ def message_id(row, position, epoch=None):
     voice=(row.get('metadata') or {}).get('amplifier_voice')
     if voice:digest=hashlib.sha256((voice['callId']+'\0'+voice['itemId']).encode()).hexdigest()[:24]
     return 'native:'+(epoch+':' if epoch else '')+digest
+
+
+def message_reference(directory, row, position, epoch, *, archive_id=None):
+    # Streaming chunks carry no inferred locator. Only confirmed current native
+    # history projection supplies this bounded reference and public-text digest.
+    if archive_id or row.get('role') not in {'user','assistant'}:return None
+    values,_=content_updates(row,position)
+    text=''.join(value['content']['text'] for value in values if value.get('content',{}).get('type')=='text')
+    if not text.strip():return None
+    return {'sessionId':Path(directory).name,'messageId':message_id(row,position,epoch),
+            'position':position,'historyEpoch':epoch,'sourceDigest':hashlib.sha256(text.encode()).hexdigest()}
 
 
 class SegmentIntegrity:
@@ -179,7 +193,9 @@ def _page(directory,*,cursor=None,limit=50,max_bytes=2_000_000,expected_revision
         if row.get('role')=='user' or current is None or voice:
             current={'id':marker.get('id') or identity,'updates':[],'state':'unknown',**({'recordedOnly':True} if voice else {}),**({'archiveId':archive_id,'historicalOnly':True} if archive_id else {})}
             groups.append(current)
+        reference=message_reference(directory,row,position,epoch,archive_id=archive_id)
         for value in values:
+            if reference:value['_meta']['amplifier.dev/history']['messageReference']=reference
             value['_meta']['amplifier.dev/history'].update(turnId=current['id'],messageId=('archive:'+archive_id+':' if archive_id else '')+identity,**({'archiveId':archive_id,'historicalOnly':True,'mutationAuthority':'none'} if archive_id else {}))
         current['updates'].extend(values);updates.extend(values)
     return {'updates':updates,'turnGroups':groups,'nextCursor':_cursor(revision,consumed) if consumed>0 else None,'revision':revision,'diagnostics':diagnostics}
@@ -242,7 +258,9 @@ def _forward(directory,*,epoch=None,archive_id=None):
                 identity=message_id(row,position,epoch)
                 if row.get('role')=='user' or current is None or (row.get('metadata') or {}).get('amplifier_voice'):
                     current=marker.get('id') or identity
+                reference=message_reference(directory,row,position,epoch,archive_id=archive_id)
                 for update in values:
+                    if reference:update['_meta']['amplifier.dev/history']['messageReference']=reference
                     update['_meta']['amplifier.dev/history'].update(turnId=current,messageId=('archive:'+archive_id+':' if archive_id else '')+identity,**({'archiveId':archive_id,'historicalOnly':True,'mutationAuthority':'none'} if archive_id else {}))
                     yield update
     if stamp(path)[0]!=revision:raise HistoryError('Native history changed during replay; resubscribe to obtain a consistent view.')

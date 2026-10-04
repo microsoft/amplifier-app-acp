@@ -13,6 +13,8 @@ from datetime import UTC, datetime
 
 import inspect
 
+import hashlib
+
 
 import json
 
@@ -711,7 +713,8 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
     # A common checkpoint is read only for an explicitly legacy-only session;
     # a stale or corrupt checkpoint cannot prevent opening valid native history.
     native_guard = _NativeTranscriptGuard(store.directory(runtime.session_id) / "transcript.jsonl")
-    saved = store.load(runtime.session_id) if resume else None
+    resume_diagnostics = []
+    saved = store.load(runtime.session_id, diagnostics=resume_diagnostics) if resume else None
     history_source = "native" if saved is not None else "new"
     if resume and saved is None:
         if shared_snapshot is None and shared_handle is not None:
@@ -729,7 +732,7 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
             # Migration intentionally writes once; take its stamp before the
             # read so a concurrent older CLI write cannot become our baseline.
             native_guard.saved()
-            saved = store.load(runtime.session_id)
+            saved = store.load(runtime.session_id, diagnostics=resume_diagnostics)
             if saved is None and shared_handle is None:
                 saved = store.import_cli(runtime.session_id, workspace=config.workspace)
             if saved is not None:
@@ -799,6 +802,12 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
         project_slug=project_slug(config.workspace),
         bundle_name=chosen, project_dir=str(config.workspace), project_name=config.workspace.name)
     messages = saved[0] if saved else None
+    def message_digest(rows):
+        return hashlib.sha256(json.dumps(rows, sort_keys=True, ensure_ascii=False,
+            allow_nan=False, separators=(",", ":")).encode()).digest()
+    native_resume_digest = (message_digest(messages)
+        if history_source == "native" and not resume_diagnostics
+        and resolved_root is None and runtime_plan is None else None)
     jobs = JobStore(store.base_dir / runtime.session_id / "live-jobs")
     recovered = []
     if jobs.rows:
@@ -837,6 +846,11 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
             register(approvals)
         if messages is not None:
             await coordinator.get("context").set_messages(messages)
+        # Hydration may normalize optional fields without new work. Preserve the
+        # original canonical bytes (and their reviewed revision) until context
+        # actually changes. Recovered interrupted receipts still checkpoint.
+        unchanged_resume = (message_digest(await coordinator.get("context").get_messages())
+            if native_resume_digest is not None and message_digest(messages) == native_resume_digest else None)
         await install_children(session, prepared, runtime, store, approvals, host_adapter=adapter)
         configurator = SessionConfigurator(session, prepared)
         coordinator.register_capability("web.configurator", configurator)
@@ -878,8 +892,10 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
             "application_host": application_host, "config": redact(session.config)}
         continuity = None
         async def checkpoint(status="in_progress"):
+            nonlocal unchanged_resume
             from ..history_revision import guard_context_clear
-            if not coordinator.get_capability('native.context-clear-writing'):
+            clearing = coordinator.get_capability('native.context-clear-writing')
+            if not clearing:
                 guard_context_clear(app_home(), runtime.session_id)
             if write_guard:
                 write_guard()
@@ -893,6 +909,13 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
                 # Cross-host ownership remains Foundation's responsibility;
                 # native transcript/metadata are the only newly written history.
                 held.check()
+            if (unchanged_resume is not None and not clearing
+                    and status in {"in_progress", "completed"}
+                    and message_digest(transcript) == unchanged_resume):
+                if continuity:
+                    continuity.save()
+                return
+            unchanged_resume = None
             store.save(runtime.session_id, transcript, {**metadata, "status": status,
                 "last_updated": datetime.now(UTC).isoformat(),
                 "turn_count": sum(row.get("role") == "user" for row in transcript)})

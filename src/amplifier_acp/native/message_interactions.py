@@ -34,3 +34,8 @@ async def prepare_input(coordinator, text, quote, *, max_chars):
     # references must never cause files or tools to be read again.
     expanded = await expand_input(coordinator, text, max_chars=max_chars)
     return quoted_text(expanded, quote)
+
+
+# Explicit Send integration resolves/freeze quotes before entering a worker.
+# Reply selection/clear remain client-local and do not call these helpers.
+from ..message_metadata import freeze_quote, resolve_reference
