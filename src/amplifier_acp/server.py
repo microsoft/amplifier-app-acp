@@ -224,7 +224,8 @@ class Session:
         return options
 
     async def configure(self,identity,value):
-        if self.lock.locked():raise RpcError(-32000,'Configuration requires an idle turn.')
+        if self.lock.locked():raise RpcError(-32000,'Configuration requires an idle turn.',
+            {'executed':False,'replayed':False,'reason':'provider-selection-busy'} if identity=='model' else None)
         async with self.lock:return await self.configure_idle(identity,value)
 
     async def configure_idle(self,identity,value):
@@ -240,7 +241,8 @@ class Session:
         return {'configOptions':await self.refresh_options()}
 
     async def configuration_control(self,operation,args):
-        if self.lock.locked():raise RpcError(-32000,'Configuration requires an idle turn.')
+        if self.lock.locked():raise RpcError(-32000,'Configuration requires an idle turn.',
+            {'executed':False,'replayed':False,'reason':'provider-selection-busy'} if operation=='provider.select' else None)
         async with self.lock:
             await self.start()
             return await self.worker.control(operation,args)

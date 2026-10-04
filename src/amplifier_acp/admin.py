@@ -19,6 +19,13 @@ OPERATIONS=GENERATION_OPERATIONS | MAINTENANCE_OPERATIONS | HISTORY_IMPORT_OPERA
  'sources.list','sources.save','sources.remove','sources.validate','bundles.list','bundles.add','bundles.remove','bundles.toggle',
  'bundles.reorder','bundles.move','bundle.discover','bundle.export','bundle.save','bundle.default','bundle.receipt','configuration.defaults'}
 
+class AdminLauncherRefusal(ValueError):
+ """A known optional operation was denied before owner admission or effects."""
+ def __init__(self,message,operation,launcher_option):
+  super().__init__(message)
+  self.data={'executed':False,'replayed':False,'reason':'native-admin-launcher-disabled',
+             'operation':operation,'launcherOption':launcher_option}
+
 class Administration:
  def __init__(self,config,on_idle=None):
   from .module_sources import configure
@@ -56,12 +63,12 @@ class Administration:
   # Validate all request authority before imports, files, probes or network effects.
   workspace=self.workspace(cwd)
   if operation not in OPERATIONS:raise ValueError('Unknown native administration operation.')
-  if operation in PERMISSION_OPERATIONS and self.config.get('adminPermissions') is not True:raise ValueError('File-access changes require explicit trusted launcher enablement.')
-  if operation in VOICE_PREFERENCE_OPERATIONS and self.config.get('adminVoicePreferences') is not True:raise ValueError('Voice preference changes require explicit trusted launcher enablement.')
-  if operation in HISTORY_IMPORT_OPERATIONS and self.config.get('adminHistoryImport') is not True:raise ValueError('History import requires explicit trusted launcher enablement.')
-  if operation in MAINTENANCE_OPERATIONS and self.config.get('adminMaintenance') is not True:raise ValueError('Native private maintenance requires explicit trusted launcher enablement.')
-  if operation in GENERATION_OPERATIONS and self.config.get('adminGenerations') is not True:raise ValueError('Native generation maintenance requires explicit trusted launcher enablement.')
-  if operation in {'voice.credential','voice.configure'} and self.config.get('adminVoiceCredentials') is not True:raise ValueError('Voice credentials require explicit trusted launcher enablement.')
+  if operation in PERMISSION_OPERATIONS and self.config.get('adminPermissions') is not True:raise AdminLauncherRefusal('File-access changes require explicit trusted launcher enablement.',operation,'adminPermissions')
+  if operation in VOICE_PREFERENCE_OPERATIONS and self.config.get('adminVoicePreferences') is not True:raise AdminLauncherRefusal('Voice preference changes require explicit trusted launcher enablement.',operation,'adminVoicePreferences')
+  if operation in HISTORY_IMPORT_OPERATIONS and self.config.get('adminHistoryImport') is not True:raise AdminLauncherRefusal('History import requires explicit trusted launcher enablement.',operation,'adminHistoryImport')
+  if operation in MAINTENANCE_OPERATIONS and self.config.get('adminMaintenance') is not True:raise AdminLauncherRefusal('Native private maintenance requires explicit trusted launcher enablement.',operation,'adminMaintenance')
+  if operation in GENERATION_OPERATIONS and self.config.get('adminGenerations') is not True:raise AdminLauncherRefusal('Native generation maintenance requires explicit trusted launcher enablement.',operation,'adminGenerations')
+  if operation in {'voice.credential','voice.configure'} and self.config.get('adminVoiceCredentials') is not True:raise AdminLauncherRefusal('Voice credentials require explicit trusted launcher enablement.',operation,'adminVoiceCredentials')
   if not isinstance(args,dict):raise ValueError('Administration args must be an object.')
   if any(key in args for key in ('home','appHome','sessionId','session_id')) or 'cwd' in args and operation!='maintenance.reset.preview':raise ValueError('Native homes and session identity are launcher-owned.')
   if args.get('workspace') and self.workspace(args['workspace'])!=workspace:raise ValueError('Workspace selector disagrees with authorized cwd.')

@@ -6,6 +6,14 @@ class ProviderSelectionError(ValueError):
     """A saved or requested connection needs an explicit user replacement."""
 
 
+class ProviderSelectionRefusal(ProviderSelectionError):
+    """A requested selector was rejected before selector or persistence effects."""
+
+    def __init__(self, message, *, reason):
+        super().__init__(message)
+        self.data = {"executed": False, "replayed": False, "reason": reason}
+
+
 def inherited_selection(parent, overlay, preferences, saved=None):
     """Snapshot an opted-in parent's UI model choice unless a specialist wins."""
     if preferences or overlay.get("providers") or overlay.get("model_role"):

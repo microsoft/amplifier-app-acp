@@ -915,7 +915,8 @@ class Worker:
             from .task_continuity import TaskRefusal
             from ..bundle_commands import BundlePreflightRefusal
             from .history_revision import ContextClearError
-            detail=exc.configuration_conflict if isinstance(exc,ConfigurationConflict) else exc.data if isinstance(exc,(TaskRefusal,BundlePreflightRefusal,ContextClearError)) else {}
+            from .host.model_selection import ProviderSelectionRefusal
+            detail=exc.configuration_conflict if isinstance(exc,ConfigurationConflict) else exc.data if isinstance(exc,(TaskRefusal,BundlePreflightRefusal,ContextClearError,ProviderSelectionRefusal)) else {}
             publish({"op": "reply", "id": identity, "error": f"{type(exc).__name__}: {exc}",**detail})
 
     async def read(self):
