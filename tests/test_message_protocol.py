@@ -140,3 +140,24 @@ async def test_cold_dispatch_receipt_without_history_or_scope(tmp_path):
     receipt=await server.dispatch('_amplifier/message/receipt',{'sessionId':sid,'commandId':'reserved'})
     assert receipt['receipt']['quote']==quote and receipt['receipt']['outcome']=='unknown'
     assert not server.sessions and not hasattr(server,'message_scopes')
+
+
+def test_actual_native_fork_retains_frozen_quote(tmp_path,monkeypatch):
+    from amplifier_acp.native.session_store import fork_session
+    from amplifier_acp.message_metadata import MessageMetadata,reserve_quote
+    monkeypatch.setenv('AMPLIFIER_HOME',str(tmp_path/'native'))
+    cwd=tmp_path/'cwd';cwd.mkdir();directory=tmp_path/'original';directory.mkdir()
+    source_row={'role':'assistant','content':'Earlier answer'}
+    (directory/'transcript.jsonl').write_text(json.dumps(source_row)+'\n')
+    ref={'sessionId':'source','messageId':message_id(source_row,0),'position':0,'historyEpoch':None}
+    store=MessageMetadata(tmp_path/'app','source',actor_id='account')
+    quote=reserve_quote(store,directory,ref,input_id='input',input_payload={'text':'new'})
+    reply={'role':'user','content':'New input','metadata':{'amplifier_input':{'id':'input','kind':'user','source':'user'},'replyTo':quote}}
+    source={'id':'source','status':'idle','workspace':str(cwd),'messages':[]}
+    fork=fork_session(tmp_path/'app',source,'target',live_messages=[source_row,reply])
+    from amplifier_acp.native.host.storage import SessionStore
+    saved=SessionStore.for_app(tmp_path/'app',cwd).load('target')
+    assert saved[0][1]['metadata']['replyTo']==quote
+    from amplifier_acp.history import page
+    copied=page(SessionStore.for_app(tmp_path/'app',cwd).directory('target'))
+    assert next(u for u in copied['updates'] if u['sessionUpdate']=='user_message_chunk')['_meta']['amplifier.dev/history']['replyTo']==quote
