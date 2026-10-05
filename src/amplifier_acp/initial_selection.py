@@ -55,15 +55,15 @@ def options(draft, providers, catalog):
         raise Refused('Initial model is not advertised by this provider.')
     values={'instance':instance}
     schema={'type':'object','additionalProperties':False,'required':['instance','model'],
-            'properties':{'instance':{'type':'string','enum':identities},
-                          'model':{'type':'string','enum':model_ids}}}
+            'properties':{'instance':{'type':'string','title':'AI connection','enum':identities},
+                          'model':{'type':'string','title':'Model','enum':model_ids}}}
     efforts=[]
     if model in model_ids:
         values['model']=model
         row=model_rows([next(row for row in models if row['id']==model)])[model]
         efforts,_=effort_choices(provider,row)
         if any(not text(value,100) for value in efforts):raise Refused('Initial reasoning metadata exceeds the typed selection bound.')
-        if efforts:schema['properties']['effort']={'type':'string','enum':efforts}
+        if efforts:schema['properties']['effort']={'type':'string','title':'Reasoning','enum':efforts}
     if 'effort' in draft:
         if draft['effort'] not in efforts:
             raise Refused('Initial reasoning choice is not advertised for this model.')
