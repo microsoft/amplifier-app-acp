@@ -82,7 +82,10 @@ async def query(request):
         finally:await close_provider(provider)
     first=rows[0] if rows else {}
     defaults=first.get('info',{}).get('defaults',{})
-    return {'providers':rows,'effective':{'instance':first.get('id'),'model':defaults.get('model') or defaults.get('default_model'),'effort':defaults.get('reasoning_effort') or first.get('effort')}}
+    from .bundle_selection import catalog_entry
+    name=getattr(bundle,'name',None)
+    label=catalog_entry(name)['label'] if isinstance(name,str) and 0<len(name)<=200 and '://' not in name else 'Custom bundle'
+    return {'bundleLabel':label,'providers':rows,'effective':{'instance':first.get('id'),'model':defaults.get('model') or defaults.get('default_model'),'effort':defaults.get('reasoning_effort') or first.get('effort')}}
 
 def main():
     output=os.fdopen(os.dup(sys.stdout.fileno()),'w')
