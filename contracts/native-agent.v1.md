@@ -14,6 +14,8 @@ semantics. This implementation negotiates protocol version 1. The retained
 it is not an independent protocol definition.
 
 Use standard capabilities before [Amplifier extensions](../docs/extensions.md).
+[Session titles](../docs/session-titles.md) use standard ACP `session_info_update`,
+including automatic naming completed after a prompt response.
 Optional behavior requires the advertised version and any operation-specific
 runtime capability. Launcher authorization remains necessary even when a schema
 exists. Missing support must not silently become a different execution path.
