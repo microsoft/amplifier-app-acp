@@ -1,10 +1,26 @@
 # Initial provider selection
 
 A peer advertising `agentCapabilities._meta["amplifier.dev/native"].initialSelection`
-with `{version:1, typedSelection:true, passive:true}` supports a typed selection on
+with `{version:1, typedSelection:true, passive:true, resolveMethod:"_amplifier/initial-selection"}` supports a typed selection on
 standard ACP `session/new`. This additive capability is enabled with the existing
 launcher `managedSessionRoots` grant, which also enables passive draft defaults
 and model discovery. It does not change the ACP protocol requirements.
+
+The advertised resolver accepts exact `{cwd, selection?}` parameters, where the
+optional selection is a partial typed `{instance?,model?,effort?}` draft. It uses
+the actual cwd and current selected bundle, rather than the global-only managed
+creation API. Its response is `{version:1,schema,values}`: a flat JSON object
+schema with string enums for `instance`, `model`, and supported `effort`,
+`additionalProperties:false`, and required `instance`/`model`. Bounds are 64
+provider instances (200 characters), 1,000 models (500 characters), and 32 effort
+choices (100 characters). No provider-specific reasoning logic belongs in the
+Host or client.
+
+Explicit invalid choices refuse. Omitted provider/model use configured metadata
+defaults when advertised; if no model default is advertised, draft values omit
+model and require the client to choose one. Omitted effort stays omitted, even
+when the provider has a default. The draft is never stored. Full selection
+validation delegates to this same resolver and requires both instance and model.
 
 A client negotiating `amplifier.dev/native` may supply:
 

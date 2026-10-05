@@ -35,7 +35,7 @@ async def test_selected_before_first_prompt_and_persisted_on_resume(tmp_path):
     selected={'instance':'work','model':'work-new','effort':'low'}
     try:
         caps=await initialize(client)
-        assert caps['agentCapabilities']['_meta'][NATIVE]['initialSelection']=={'version':1,'typedSelection':True,'passive':True}
+        assert caps['agentCapabilities']['_meta'][NATIVE]['initialSelection']=={'version':1,'typedSelection':True,'passive':True,'resolveMethod':'_amplifier/initial-selection'}
         result=await client.request('session/new',args(cwd,selected))
         assert 'result' in result,result
         reply=result['result'];sid=reply['sessionId']
@@ -95,6 +95,8 @@ async def test_nonempty_requires_capability_but_empty_remains_legacy(tmp_path,su
     try:
         init=await initialize(client,negotiated)
         assert ('initialSelection' in init['agentCapabilities']['_meta'][NATIVE])==supported
+        unavailable=await client.request('_amplifier/initial-selection',{'cwd':str(cwd)})
+        assert unavailable['error']['code']==-32601
         rejected=await client.request('session/new',args(cwd,{'instance':'work','model':'work-new'}))
         assert rejected['error']['data']['executed'] is False
         assert not list((tmp_path/'app/sessions').glob('*'))
@@ -106,13 +108,16 @@ async def test_nonempty_requires_capability_but_empty_remains_legacy(tmp_path,su
 
 
 def test_model_effort_overrides_provider_defaults_and_empty_is_authoritative():
-    from amplifier_acp.initial_selection import validate_catalog
+    from amplifier_acp.initial_selection import options, Refused
     schema={'fields':[{'id':'reasoning_effort','field_type':'choice','choices':['low']}]}
+    providers=[{'id':'work','configSchema':schema,'info':{'defaults':{'model':'m'}}}]
     selection={'instance':'work','model':'m','effort':'low'}
-    catalog={'modelsSupported':True,'models':[{'id':'m','defaults':{'supported_reasoning_efforts':[]}}]}
-    assert validate_catalog(selection,catalog,schema)=={'selectionRefused':True}
+    catalog={'instance':'work','modelsSupported':True,'models':[{'id':'m','defaults':{'supported_reasoning_efforts':[]}}]}
+    with pytest.raises(Refused):options(selection,providers,catalog)
     catalog['models'][0]['defaults']={}
-    assert validate_catalog(selection,catalog,schema)=={'validatedSelection':selection}
+    assert options(selection,providers,catalog)['values']==selection
+    catalog['models'][0]['id']='different'
+    assert options({},providers,catalog)['values']=={'instance':'work'}
 
 
 @pytest.mark.asyncio
@@ -153,6 +158,67 @@ async def test_preparation_timeout_is_a_bounded_prestart_refusal(monkeypatch):
     async def unavailable(*args,**kwargs):raise TimeoutError('private provider detail')
     monkeypatch.setattr('amplifier_acp.native.draft_defaults.resolve_defaults',unavailable)
     with pytest.raises(initial_selection.Refused) as error:
-        await initial_selection.validate({},'/unused',{'instance':'work','model':'m'})
+        await initial_selection.validate({},str(__import__('pathlib').Path.cwd()),{'instance':'work','model':'m'})
     assert error.value.data=={'executed':False,'runtimeStarted':False,'reason':'initial-selection-refused'}
     assert 'private' not in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_passive_resolver_and_create_share_workspace_only_configuration(tmp_path):
+    import yaml
+    config,cwd,audit,discovery,catalogs=setup(tmp_path)
+    values=json.loads(config.read_text());bundle=Path(values['bundle']);doc=yaml.safe_load(bundle.read_text())
+    source=doc['providers'][0]['source']
+    doc['bundle']['version']='1.0.0';doc['providers']=[]
+    bundle.write_text(yaml.safe_dump(doc))
+    def settings(label):
+        return {'bundle':{'app':[]},'config':{'providers':[{'module':'provider-fixture','source':source,'instance_id':label,
+            'config':{'fixtureLabel':label,'fixtureDefaultModel':label+'-model','fixtureModels':[{'id':label+'-model','defaults':{'supported_reasoning_efforts':['low']}}],
+                'modelDiscoveryAudit':str(discovery),'requestSelectionAudit':str(audit)}}]}}
+    (tmp_path/'home/settings.yaml').write_text(yaml.safe_dump(settings('global')))
+    local=cwd/'.amplifier';local.mkdir()
+    (local/'settings.local.yaml').write_text(yaml.safe_dump(settings('workspace')))
+    client=await Client.launch(config)
+    try:
+        await initialize(client)
+        resolved=await client.request('_amplifier/initial-selection',{'cwd':str(cwd),'selection':{'instance':'workspace'}})
+        assert 'result' in resolved,resolved
+        result=resolved['result']
+        import jsonschema
+        schema=json.loads((Path(__file__).parents[1]/'schemas/initial-selection.v1.json').read_text())
+        jsonschema.Draft202012Validator({'$ref':'#/$defs/resolveResponse','$defs':schema['$defs']}).validate(result)
+        assert result['values']=={'instance':'workspace','model':'workspace-model'}
+        assert result['schema']['properties']['model']['enum']==['workspace-model']
+        assert result['schema']['properties']['effort']['enum']==['low']
+        assert not list((tmp_path/'app/sessions').glob('*')) and not list((tmp_path/'home/projects').glob('*/sessions/*'))
+        assert not audit.exists()
+        # The old managed API remains intentionally global-only, and cannot be
+        # substituted for the new ordinary-workspace resolver by a host.
+        managed=await client.request('_amplifier/managed',{'operation':'defaults'})
+        assert managed['result']['effective']['instance']=='global',managed
+        selected={**result['values'],'effort':'low'}
+        created=await client.request('session/new',args(cwd,selected))
+        assert 'result' in created,created
+        assert created['result']['_meta'][NATIVE]['initialSelection']['selection']==selected
+        sid=created['result']['sessionId']
+        completed=await client.request('session/prompt',{'sessionId':sid,'prompt':[{'type':'text','text':'explicit owned workspace request'}]})
+        assert completed['result']['stopReason']=='end_turn',completed
+        assert json.loads(audit.read_text().splitlines()[0])==selected
+    finally:await client.close()
+
+
+@pytest.mark.asyncio
+async def test_passive_resolver_refuses_explicit_invalid_drafts_and_never_allocates(tmp_path):
+    config,cwd,audit,_,_=setup(tmp_path)
+    values=json.loads(config.read_text());values['workerCommand']=['/must-not-start'];config.write_text(json.dumps(values))
+    client=await Client.launch(config)
+    try:
+        await initialize(client)
+        for draft in ({'instance':'absent'},{'model':'absent'},{'instance':'work','model':'work-new','effort':'absent'},{'unexpected':True}):
+            reply=await client.request('_amplifier/initial-selection',{'cwd':str(cwd),'selection':draft})
+            assert reply['error']['data']['executed'] is False,reply
+        valid=await client.request('_amplifier/initial-selection',{'cwd':str(cwd),'selection':{'instance':'work','model':'work-new'}})
+        assert valid['result']['values']=={'instance':'work','model':'work-new'}
+        assert valid['result']['schema']['properties']['effort']['enum']==['low','high']
+        assert not list((tmp_path/'app/sessions').glob('*')) and not audit.exists()
+    finally:await client.close()

@@ -808,6 +808,12 @@ class Server:
                 while len(scopes)>128:scopes.pop(next(iter(scopes)))
                 self.message_scopes=scopes
             return result
+        if method=='_amplifier/initial-selection':
+            from . import initial_selection
+            if not self.config.get('managedSessionRoots'):raise RpcError(-32601,'Initial selection is not enabled.')
+            if set(params)-{'cwd','selection'}:raise initial_selection.Refused('Initial selection accepts only cwd and a typed draft.')
+            response,_=await initial_selection.resolve(self.config,params.get('cwd'),params.get('selection',{}))
+            return response
         if method=='_amplifier/session/new':
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
             from .configuration_clone import prepare
