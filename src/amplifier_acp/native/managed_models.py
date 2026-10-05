@@ -47,7 +47,11 @@ async def discover(provider, instance, module):
             if not isinstance(row['defaults'], dict):
                 raise CatalogUnavailable('model-catalog-invalid')
             row['defaults'] = {key: value for key, value in row['defaults'].items() if key in {
-                'model', 'max_tokens', 'temperature', 'reasoning_effort', 'thinking_budget'}}
+                'model', 'max_tokens', 'temperature', 'reasoning_effort', 'thinking_budget', 'supported_reasoning_efforts'}}
+            if 'supported_reasoning_efforts' in row['defaults']:
+                from ..configuration_options import model_rows
+                try:model_rows([row])
+                except ValueError:raise CatalogUnavailable('model-catalog-invalid') from None
         try:
             size += len(json.dumps(row, ensure_ascii=False, allow_nan=False).encode())
         except (TypeError, ValueError):

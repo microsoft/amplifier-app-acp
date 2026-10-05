@@ -55,7 +55,11 @@ async def query(request):
         try:
             if instance is not None:
                 from .managed_models import discover
-                return await discover(provider,instance,row['module'])
+                catalog=await discover(provider,instance,row['module'])
+                if 'initialSelection' in request:
+                    from amplifier_acp.initial_selection import validate_catalog
+                    return validate_catalog(request['initialSelection'],catalog,public(schema))
+                return catalog
             info=provider.get_info()
             if inspect.isawaitable(info):info=await info
             info=public(info)

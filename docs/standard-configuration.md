@@ -106,3 +106,5 @@ Focused tests exercise actual Core/Foundation subprocesses with inert providers:
 private browse, cache reuse, exact atomic standard selection, selected reasoning
 on an actual request, changed-model effort clearing, stale-token refusal,
 failed-discovery pin preservation, and cold reconnection without replay.
+
+New conversations may use the negotiated [initial selection extension](initial-selection.md) to validate and persist a complete provider/model/effort choice before starting.

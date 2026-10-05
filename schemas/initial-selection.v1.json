@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/microsoft/amplifier-app-acp/schemas/initial-selection.v1.json",
+  "title": "Negotiated native initial selection v1",
+  "$defs": {
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instance",
+        "model"
+      ],
+      "properties": {
+        "instance": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "effort": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "typedSelection",
+        "passive"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "typedSelection": {
+          "const": true
+        },
+        "passive": {
+          "const": true
+        }
+      }
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "selection"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "selection": {
+          "$ref": "#/$defs/selection"
+        }
+      }
+    }
+  }
+}

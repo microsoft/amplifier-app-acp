@@ -21,6 +21,17 @@ def _default_worker_command():
     if sys.dont_write_bytecode:command.append('-B')
     return [*command, '-m', 'amplifier_acp.native.runtime_worker']
 
+def selected_bundle(config):
+    """The root selected by a new worker, shared with pre-start validation."""
+    bundle=config.get('bundle')
+    app_home=Path(config.get('appHome') or os.environ.get('AMPLIFIER_WEB_HOME') or Path.home()/'.amplifier-unified').expanduser().resolve()
+    settings=app_home/'admin-settings.yaml'
+    if settings.exists():
+        import yaml
+        saved=(yaml.safe_load(settings.read_text()) or {}).get('bundle',{})
+        if 'active' in saved:bundle=saved['active']
+    return config.get('cloneBundle') or bundle
+
 class NativeError(RuntimeError):
     def __init__(self, message, *, data=None):
         super().__init__(message)
@@ -85,14 +96,7 @@ class NativeWorker:
             except BaseException:
                 self.process.terminate();await self.process.wait();raise
         self.reader = asyncio.create_task(self.read())
-        bundle=self.config.get('bundle')
-        app_home=Path(env.get('AMPLIFIER_WEB_HOME',Path.home()/'.amplifier-unified'))
-        settings=app_home/'admin-settings.yaml'
-        if settings.exists():
-            import yaml
-            saved=(yaml.safe_load(settings.read_text()) or {}).get('bundle',{})
-            if 'active' in saved:bundle=saved['active']
-        if self.config.get('cloneBundle'):bundle=self.config['cloneBundle']
+        bundle=selected_bundle(self.config)
         await self.write({'op':'start','session':{'id':self.session_id,'workspace':self.cwd,
             'workingDirectory':self.config.get('executionDirectory',self.cwd),'bundle':bundle, 'hostBridge':host_info is not None, 'hostInfo':host_info or {}, 'mcpServers':mcp_servers or []}})
         try:
