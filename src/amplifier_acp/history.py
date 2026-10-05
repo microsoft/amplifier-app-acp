@@ -84,6 +84,7 @@ def content_updates(row,position):
         return updates,diagnostics
     if isinstance(blocks,str):blocks=[{'type':'text','text':blocks}]
     if not isinstance(blocks,list):raise HistoryError('Malformed native message content.')
+    # Calls carry inputs; only a recorded role:tool result completes them.
     for block in blocks:
         if not isinstance(block,dict):raise HistoryError('Malformed native content block.')
         tag=block.get('type')
@@ -101,7 +102,7 @@ def content_updates(row,position):
             updates.append({'sessionUpdate':kind,'content':{'type':'resource_link','uri':block['image_url']['url'],'name':'Image'},'_meta':meta})
         elif tag in {'tool_call','tool_use'}:
             identity=block.get('id') or block.get('tool_call_id')
-            if identity:updates.append({'sessionUpdate':'tool_call','toolCallId':identity,'title':block.get('name','Tool'),'status':'completed','rawInput':block.get('arguments',block.get('input',{})),'_meta':meta})
+            if identity:updates.append({'sessionUpdate':'tool_call','toolCallId':identity,'title':block.get('name','Tool'),'status':'in_progress','rawInput':block.get('arguments',block.get('input',{})),'_meta':meta})
         elif tag in {'thinking','redacted_thinking','reasoning'}:continue
         else:diagnostics.append({'code':'unsupported_content_type','type':tag,'position':position})
     for call in row.get('tool_calls') or []:
@@ -111,7 +112,7 @@ def content_updates(row,position):
             try:arguments=json.loads(arguments)
             except ValueError:pass
         if call.get('id') and not any(u.get('toolCallId')==call['id'] for u in updates):
-            updates.append({'sessionUpdate':'tool_call','toolCallId':call['id'],'title':fn.get('name','Tool'),'status':'completed','rawInput':arguments,'_meta':meta})
+            updates.append({'sessionUpdate':'tool_call','toolCallId':call['id'],'title':fn.get('name','Tool'),'status':'in_progress','rawInput':arguments,'_meta':meta})
     return updates,diagnostics
 
 def _cursor(revision,offset):
