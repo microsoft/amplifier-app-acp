@@ -24,3 +24,27 @@ def image_attachment(config,block):
 
 def embedded_attachment(config,resource):
     return attachment(config,{'data':resource.get('blob'),'mimeType':resource.get('mimeType','application/octet-stream')},image_only=False)
+
+
+def prompt_content(config, blocks):
+    from .server import RpcError
+    text=[];attachments=[]
+    for block in blocks:
+        if not isinstance(block,dict):raise RpcError(-32602,'Content blocks must be objects.')
+        if block.get('type')=='text' and isinstance(block.get('text'),str):text.append(block['text'])
+        elif block.get('type')=='image':
+            if len(attachments)>=8:raise RpcError(-32602,'Attach up to 8 images per prompt.')
+            attachments.append(image_attachment(config,block))
+        elif block.get('type')=='resource' and isinstance(block.get('resource'),dict) and isinstance(block['resource'].get('text'),str):
+            text.append('Embedded reference material: '+json.dumps(block['resource'],ensure_ascii=False))
+        elif block.get('type')=='resource' and isinstance(block.get('resource'),dict) and isinstance(block['resource'].get('blob'),str):
+            if len(attachments)>=8:raise RpcError(-32602,'Attach up to 8 resources per prompt.')
+            attachments.append(embedded_attachment(config,block['resource']))
+            text.append('Embedded resource: '+str(block['resource'].get('uri','')))
+        elif block.get('type')=='resource_link' and isinstance(block.get('uri'),str):
+            # Explicit quoted reference, interpreted by configured tools; no implicit network read.
+            text.append('Referenced resource: '+json.dumps({k:block[k] for k in ('uri','name','description','mimeType') if k in block},ensure_ascii=False))
+        else:raise RpcError(-32602,'This content type is not advertised by the adapter.',{'type':block.get('type')})
+    value='\n'.join(text) or ('[Image attachment]' if attachments else '')
+    if not value.strip():raise RpcError(-32602,'A nonempty prompt is required.')
+    return value, attachments

@@ -137,7 +137,7 @@ async def test_persisted_target_mismatch_is_unknown_and_does_not_copy_reactions(
     monkeypatch.setattr(SessionHistoryStore,'save',altered)
     target=str(uuid.uuid4());args={'commandId':'mismatch','targetSessionId':target,'expectedHistoryRevision':page(directory)['revision']}
     params={'sessionId':'source','cwd':str(cwd),'operation':'fork','args':args}
-    with pytest.raises(ValueError,match='differs'):await server.dispatch('_amplifier/session',params)
+    with pytest.raises(ValueError,match='Persisted target rows differ from prepared copy'):await server.dispatch('_amplifier/session',params)
     assert not MessageMetadata(server.config['appHome'],target,actor_id='account').path.exists()
     assert (await server.dispatch('_amplifier/session',params))['receipt']['status']=='unknown'
 

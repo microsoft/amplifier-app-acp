@@ -1,6 +1,7 @@
 """Packaged ACP and real worker/loop; fixture provider performs no network calls."""
 import asyncio
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -28,8 +29,9 @@ async def open_fixture(tmp_path,*,boundary=False,gates=False,legacy=False):
                                     'config':{'engine':'boundary','token_meter':'actual','summarize_trigger':0.70,'summary_target_tokens':1500}}
     if gates:value['providers'][0]['config']['gateDirectory']=str(tmp_path/'gates')
     if legacy:
-        legacy_python=Path(__file__).resolve().parents[3]/'outputs/native-public-originals-source-20261004-r01/qualification/legacy-runtime/bin/python'
-        assert legacy_python.exists()
+        legacy_python=Path(os.environ.get('PUBLIC_MESSAGE_LEGACY_PYTHON') or Path(__file__).resolve().parents[3]/'outputs/native-public-originals-source-20261004-r01/qualification/legacy-runtime/bin/python')
+        if not legacy_python.exists():
+            pytest.skip('Optional separately installed legacy context runtime is unavailable')
         old=legacy_python.parent.parent/'lib/python3.13/site-packages/amplifier_module_context_simple'
         assert old.is_dir()
         value['session']['context']={'module':'context-simple','source':str(old)}
@@ -76,8 +78,26 @@ async def test_packaged_prompt_revise_fork_and_cold_resume_exact_originals(tmp_p
         selected=result['publicRows'][0]['locator']
         assert (await client.request('_amplifier/history',{'sessionId':sid,'cwd':str(cwd),'includePublicRows':True,'rowLocator':selected}))['result']['publicRows']==[result['publicRows'][0]]
         replacement=original('replacement','Revised literal')
+        args={'inputId':'replacement','operationId':'revise','targetMessageId':'second','expectedHistoryRevision':result['revision'],'text':'Revised expanded execution'}
+        before=(native/'transcript.jsonl').read_bytes()
+        calls=(tmp_path/'provider-prompts.jsonl').read_bytes()
+        # An older caller must not silently turn a rich input into text only.
+        refused=await client.request('_amplifier/native',{'sessionId':sid,'operation':'history.revise','args':args,'_meta':{META:replacement}})
+        assert refused['result']['accepted'] is False and refused['result']['executed'] is False,refused
+        assert (native/'transcript.jsonl').read_bytes()==before
+        assert (tmp_path/'provider-prompts.jsonl').read_bytes()==calls
+        context=[{'type':'text','text':args['text']},{'type':'resource_link','uri':replacement['blocks'][1]['reference']['id']}]
+        changed=json.loads(json.dumps(replacement));changed['blocks'][1]['reference']['id']='resource://different'
+        refused=await client.request('_amplifier/native',{'sessionId':sid,'operation':'history.revise','args':{**args,'prompt':context},'_meta':{META:changed}})
+        assert refused['result']['executed'] is False,refused
+        assert (native/'transcript.jsonl').read_bytes()==before
+        assert (tmp_path/'provider-prompts.jsonl').read_bytes()==calls
+        refused=await client.request('_amplifier/native',{'sessionId':sid,'operation':'history.revise','args':{**args,'prompt':[context[0],{'type':'unknown'}]},'_meta':{META:replacement}})
+        assert refused['result']['executed'] is False,refused
+        assert (native/'transcript.jsonl').read_bytes()==before
+        assert (tmp_path/'provider-prompts.jsonl').read_bytes()==calls
         revised=await client.request('_amplifier/native',{'sessionId':sid,'operation':'history.revise',
-            'args':{'inputId':'replacement','operationId':'revise','targetMessageId':'second','expectedHistoryRevision':result['revision'],'text':'Revised expanded execution'},
+            'args':{**args,'prompt':context},
             '_meta':{META:replacement}})
         assert revised.get('result',{}).get('stopReason')=='end_turn',revised
         current=await read(client,sid,cwd)
@@ -86,7 +106,7 @@ async def test_packaged_prompt_revise_fork_and_cold_resume_exact_originals(tmp_p
         assert any(r['publicMessage']==replacement for r in current['publicRows'])
         primary=[json.loads(x) for x in (native/'transcript.jsonl').read_text().splitlines()]
         retained=[r for r in primary if ENVELOPE in r.get('metadata',{})]
-        assert retained[-1]['content']=='Revised expanded execution' and retained[-1]['metadata'][ENVELOPE]==replacement
+        assert retained[-1]['content'].startswith('Revised expanded execution\nReferenced resource:') and retained[-1]['metadata'][ENVELOPE]==replacement
         assert second not in [r['metadata'][ENVELOPE] for r in retained]
         async with asyncio.timeout(10):
             while not (await client.request('_amplifier/retire',{'sessionId':sid}))['result']['retired']:
@@ -110,6 +130,25 @@ async def test_packaged_prompt_revise_fork_and_cold_resume_exact_originals(tmp_p
         assert resumed['result']['_meta']['amplifier.dev/native']['publicMessagePreservation']['supported'] is True
         assert any(r['publicMessage']==replacement for r in (await read(cold,sid,cwd))['publicRows'])
     finally:await cold.close()
+
+
+@pytest.mark.asyncio
+async def test_text_only_original_can_be_edited_by_older_caller(tmp_path):
+    client,sid,cwd,_=await open_fixture(tmp_path)
+    try:
+        public=original('plain','Original literal');public['blocks']=public['blocks'][:1]
+        assert (await prompt(client,sid,'plain','Original execution',public))['result']['stopReason']=='end_turn'
+        source=await read(client,sid,cwd)
+        before=await client.request('_amplifier/history/before',{'sessionId':sid,'cwd':str(cwd),'beforeTurnId':'plain','expectedRevision':source['revision'],'includeEditContext':True})
+        assert before['result']['editContext']=={'version':1,'targetMessageId':'plain','publicMessage':public}
+        result=await client.request('_amplifier/native',{'sessionId':sid,'operation':'history.revise','args':{
+            'inputId':'plain-edit','operationId':'plain-edit','targetMessageId':'plain',
+            'expectedHistoryRevision':source['revision'],'text':'Revised plain text'}})
+        assert result['result']['stopReason']=='end_turn',result
+        current=await read(client,sid,cwd)
+        expected={**public,'inputId':'plain-edit','blocks':[{'type':'text','text':'Revised plain text'}]}
+        assert any(row['publicMessage']==expected for row in current['publicRows'])
+    finally:await client.close()
 
 
 @pytest.mark.asyncio
