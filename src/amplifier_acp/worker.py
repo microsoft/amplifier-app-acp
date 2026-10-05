@@ -7,6 +7,20 @@ import sys
 import uuid
 from pathlib import Path
 
+def _default_worker_command():
+    """Carry interpreter safety settings across our default child boundary."""
+    command = [sys.executable]
+    if sys.flags.isolated:
+        command.append('-I')
+    else:
+        # Preserve individually selected settings without isolating developer
+        # launches that rely on their normal import environment.
+        if sys.flags.ignore_environment:command.append('-E')
+        if sys.flags.no_user_site:command.append('-s')
+        if sys.flags.safe_path:command.append('-P')
+    if sys.dont_write_bytecode:command.append('-B')
+    return [*command, '-m', 'amplifier_acp.native.runtime_worker']
+
 class NativeError(RuntimeError):
     def __init__(self, message, *, data=None):
         super().__init__(message)
@@ -61,7 +75,7 @@ class NativeWorker:
             raise NativeError('This native home has a qualified generation. Configure its explicit workerCommand or opt into managedGenerations before starting; the adapter will not mount a different environment silently.')
         env['AMPLIFIER_UNIFIED_RELEASE']=generation or ''
         if generation and (app_home/'updates/releases'/generation/'profiles-qualified.json').exists():env['AMPLIFIER_RUNTIME_IMMUTABLE']='1'
-        command = managed_command or self.config.get('workerCommand') or [sys.executable, '-m', 'amplifier_acp.native.runtime_worker']
+        command = managed_command or self.config.get('workerCommand') or _default_worker_command()
         self.process = await asyncio.create_subprocess_exec(*command, cwd=self.config.get('executionDirectory',self.cwd), env=env,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=sys.stderr, limit=48_000_001)
