@@ -16,6 +16,10 @@ provider instances (200 characters), 1,000 models (500 characters), and 32 effor
 choices (100 characters). No provider-specific reasoning logic belongs in the
 Host or client.
 
+Each enum descriptor includes a human-readable `title`: `AI connection`,
+`Model`, or `Reasoning`. Hosts can preserve these descriptors when projecting
+the standard AHP configuration schema; titles do not change selection values.
+
 Explicit invalid choices refuse. Omitted provider/model use configured metadata
 defaults when advertised; if no model default is advertised, draft values omit
 model and require the client to choose one. Omitted effort stays omitted, even

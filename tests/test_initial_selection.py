@@ -120,6 +120,41 @@ def test_model_effort_overrides_provider_defaults_and_empty_is_authoritative():
     assert options({},providers,catalog)['values']=={'instance':'work'}
 
 
+def titled_options():
+    from amplifier_acp.initial_selection import options
+    return options({},[{'id':'work','info':{'defaults':{'model':'m'}}}],
+        {'instance':'work','modelsSupported':True,'models':[
+            {'id':'m','defaults':{'supported_reasoning_efforts':['low','high']}}]})
+
+
+def resolve_response_validator():
+    import jsonschema
+    schema=json.loads((Path(__file__).parents[1]/'schemas/initial-selection.v1.json').read_text())
+    return jsonschema.Draft202012Validator({'$ref':'#/$defs/resolveResponse','$defs':schema['$defs']})
+
+
+def test_initial_enum_descriptors_have_titles_without_changing_selection():
+    response=titled_options()
+    resolve_response_validator().validate(response)
+    assert response['schema']['properties']=={
+        'instance':{'type':'string','title':'AI connection','enum':['work']},
+        'model':{'type':'string','title':'Model','enum':['m']},
+        'effort':{'type':'string','title':'Reasoning','enum':['low','high']}}
+    assert response['values']=={'instance':'work','model':'m'}
+    assert response['schema']['required']==['instance','model']
+
+
+@pytest.mark.parametrize('field',['instance','model','effort'])
+@pytest.mark.parametrize('invalid',['missing','non-string'])
+def test_initial_descriptor_schema_requires_string_title(field,invalid):
+    import jsonschema
+    response=titled_options()
+    descriptor=response['schema']['properties'][field]
+    if invalid=='missing':descriptor.pop('title',None)
+    else:descriptor['title']=42
+    with pytest.raises(jsonschema.ValidationError):resolve_response_validator().validate(response)
+
+
 @pytest.mark.asyncio
 async def test_saved_app_bundle_is_validated_and_effort_omission_stays_omitted(tmp_path):
     import yaml
