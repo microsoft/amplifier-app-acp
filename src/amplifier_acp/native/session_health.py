@@ -75,9 +75,15 @@ def recovery_context(messages):
         calls = row.get('tool_calls') or []
         if isinstance(content, list):
             calls = [*calls, *(block for block in content if isinstance(block, dict) and block.get('type') in {'tool_call', 'tool_use'})]
-        if row.get('role') in {'user', 'assistant'} and plain:
+        from amplifier_acp.public_message import row_envelope, validate_copy, ENVELOPE, COPY_SOURCE, HISTORY_ONLY
+        original=row_envelope(row)
+        if row.get('role') in {'user', 'assistant'} and (plain or original is not None):
             positions[index] = len(result)
             metadata = {key: value for key, value in (row.get('metadata') or {}).items() if key in {'timestamp', 'ephemeral', 'amplifier_input', 'amplifier_visible_reference'}}
+            if original is not None:
+                metadata[ENVELOPE]=original
+                if (row.get('metadata') or {}).get(COPY_SOURCE) is not None:metadata[COPY_SOURCE]=validate_copy(row['metadata'][COPY_SOURCE])
+                if not plain or (row.get('metadata') or {}).get(HISTORY_ONLY) is True:metadata[HISTORY_ONLY]=True
             result.append({'role': row['role'], 'content': plain, 'metadata': metadata})
         evidence = None
         if row.get('role') == 'tool':

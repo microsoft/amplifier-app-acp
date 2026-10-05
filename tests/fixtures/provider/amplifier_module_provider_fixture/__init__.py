@@ -31,6 +31,10 @@ class FixtureProvider:
         await asyncio.sleep(60)
         return True
     async def complete(self,request,**kwargs):
+        if self.config.get('promptAuditFile'):
+            import json
+            with Path(self.config['promptAuditFile']).open('a') as output:
+                output.write(json.dumps([message.model_dump(mode='json') for message in request.messages])+'\n')
         if self.config.get('requestSelectionAudit'):
             import json
             with Path(self.config['requestSelectionAudit']).open('a') as output:output.write(json.dumps({'instance':self.config.get('fixtureLabel'),'model':request.model,'effort':request.reasoning_effort})+'\n')

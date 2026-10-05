@@ -6,7 +6,7 @@ from pathlib import Path
 
 class Context:
     """Delegate the public context contract, annotating only exact admitted IDs."""
-    def __init__(self,previous,path):self.previous=previous;self.path=Path(path)
+    def __init__(self,previous,path,originals=None):self.previous=previous;self.path=Path(path);self.originals=originals
     def __getattr__(self,name):return getattr(self.previous,name)
     async def add_message(self,row):
         identity=(row.get('metadata') or {}).get('amplifier_input',{}).get('id')
@@ -20,7 +20,15 @@ class Context:
             quote = input_quote(self.path.with_name('message-interactions.sqlite3'), identity)
             if quote:
                 row = {**row, 'metadata': {**(row.get('metadata') or {}), 'replyTo': quote}}
-        return await self.previous.add_message(row)
+        original = self.originals.get(identity) if self.originals and identity and row.get('role') == 'user' else None
+        if original is not None:
+            from amplifier_acp.public_message import ENVELOPE, validate
+            original = validate(original, identity)
+            row = {**row, 'metadata': {**(row.get('metadata') or {}), ENVELOPE: original}}
+        result = await self.previous.add_message(row)
+        if original is not None:
+            self.originals.discard(identity)
+        return result
 
 def reserve(path,identity,metadata):
     path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)

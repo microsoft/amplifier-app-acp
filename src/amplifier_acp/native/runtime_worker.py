@@ -58,6 +58,8 @@ class Worker:
         from .history_hints import set_observer
         set_observer(publish)
         self.session = self.runtime = self.execution = None
+        from amplifier_acp.public_message import PendingOriginals
+        self.public_originals = PendingOriginals()
         self.approvals = {}
         self.operation_ids = set()
         self.operation_controls = 0
@@ -157,9 +159,20 @@ class Worker:
             return await self.bridge(operation, args)
         return bridge
 
+    def stage_original(self, input_id, original):
+        if original is None:return
+        from amplifier_acp.public_message import supports_context
+        if not supports_context(self.session.coordinator.get('context')):
+            publish({'type':'public.message.unavailable','input_id':input_id,
+                     'reason':'shared-request-view-unavailable','originalAuthority':'host'})
+            return
+        self.public_originals.stage(input_id,original)
+
     def observe(self, event):
         """Publish lifecycle metadata, never provider reasoning or tool inputs."""
         event = dict(event)
+        if event.get('type') in {'steering.held','steering.unknown'}:
+            self.public_originals.discard(event.get('input_id'))
         root_session_id = self.runtime.session_id if self.runtime else None
         event_session_id = event.get('sessionId') or event.get('session_id') or root_session_id
         event_root_id = event.get('rootSessionId') or event.get('root_session_id') or root_session_id
@@ -457,7 +470,7 @@ class Worker:
             self.naming=LiveSessionNaming(self.session.coordinator,self.home,publish,completed)
             from amplifier_acp.native.input_provenance import Context as ProvenanceContext
             self.input_provenance_path=self.home/'sessions'/config['id']/'input-provenance.sqlite3'
-            await self.session.coordinator.mount('context',ProvenanceContext(self.session.coordinator.get('context'),self.input_provenance_path))
+            await self.session.coordinator.mount('context',ProvenanceContext(self.session.coordinator.get('context'),self.input_provenance_path,self.public_originals))
             await self.ownership.register()
             self.execution = asyncio.create_task(self.session.execute(""))
             self.execution.add_done_callback(self.executed)
@@ -473,6 +486,8 @@ class Worker:
             from amplifier_acp.source_closure import ready_report
             source_ready = ready_report(report)
             if source_ready is not None: public["sourceClosure"] = source_ready
+            from amplifier_acp.public_message import mounted_capability
+            public["publicMessagePreservation"] = mounted_capability(self.session.coordinator.get("context"))
             publish({"type": "runtime.ready", "report": public})
         except asyncio.CancelledError:
             raise
@@ -874,6 +889,8 @@ class Worker:
             elif op in {"send", "retry"}:
                 from amplifier_module_loop_live.runtime import Input
                 from amplifier_acp.native.message_interactions import prepare_input
+                from amplifier_acp.public_message import input_original
+                original=input_original(data)
                 text = await prepare_input(self.session.coordinator, data['text'], data.get('reply_context'), max_chars=self.runtime.max_input_chars)
                 self.context_bindings[data['input_id']] = data.get('context_binding', {'clientId': None, 'targets': []})
                 self.context_bindings = dict(list(self.context_bindings.items())[-64:])
@@ -883,10 +900,15 @@ class Worker:
                         raise ValueError('Unrecognized prompt provenance')
                     from amplifier_acp.native.input_provenance import reserve
                     reserve(self.input_provenance_path, data['input_id'], provenance)
-                input_id = await self.runtime.submit(Input(
-                    "user", text, id=data["input_id"],
-                    attachments=tuple(data.get("attachments", [])),
-                    activation=self.activation))
+                self.stage_original(data['input_id'],original)
+                try:
+                    input_id = await self.runtime.submit(Input(
+                        "user", text, id=data["input_id"],
+                        attachments=tuple(data.get("attachments", [])),
+                        activation=self.activation))
+                except BaseException:
+                    self.public_originals.discard(data['input_id'])
+                    raise
                 result = {"accepted": True, "inputId": input_id}
             elif op == "control":
                 arguments = data.get("arguments", {})
@@ -894,6 +916,9 @@ class Worker:
                     from amplifier_acp.native.scheduled_input import admit
                     result = await admit(self.controls, self.runtime, arguments, self.activation)
                 elif data["operation"] == "steer.submit":
+                    if 'public_message' in arguments:
+                        from amplifier_acp.public_message import validate as validate_public
+                        validate_public(arguments['public_message'],arguments.get('inputId'))
                     capability=self.session.coordinator.get_capability('live.steering')
                     generation=self.runtime.generation
                     if not isinstance(capability,dict) or capability.get('version')!=1 or capability.get('mode')!='request_boundary' or not callable(capability.get('submit')):
@@ -904,8 +929,15 @@ class Worker:
                         from amplifier_acp.native.input_provenance import reserve
                         from amplifier_module_loop_live.runtime import Input
                         reserve(self.input_provenance_path,arguments['inputId'],{'inputOrigin':'steering','activeInputId':arguments['activeInputId'],**({'steeringProvenance':arguments['provenance']} if arguments.get('provenance') else {})})
+                        self.stage_original(arguments['inputId'],arguments.get('public_message'))
                         try:result=await capability['submit'](Input('steer',arguments['text'],id=arguments['inputId'],activation=self.activation),arguments['generationId'])
-                        except ValueError as error:result={'accepted':False,'executed':False,'reason':str(error)}
+                        except ValueError as error:
+                            self.public_originals.discard(arguments['inputId'])
+                            result={'accepted':False,'executed':False,'reason':str(error)}
+                        except BaseException:
+                            self.public_originals.discard(arguments['inputId'])
+                            raise
+                        if not result.get('accepted'):self.public_originals.discard(arguments['inputId'])
                 elif data["operation"] == "question.submit":
                     from amplifier_acp.native.question_input import admit
                     authority=(lambda value:self.bridge("questions.delivery.admit",value)) if self.start_config.get("hostInfo",{}).get("features",{}).get("questions") else None

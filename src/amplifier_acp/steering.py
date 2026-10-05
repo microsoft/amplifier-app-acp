@@ -4,7 +4,10 @@ from pathlib import Path
 from contextlib import contextmanager
 
 def validate(args):
-    if not isinstance(args,dict) or set(args)-{'inputId','activeInputId','text','provenance'}:raise ValueError('Unsupported steering fields')
+    if not isinstance(args,dict) or set(args)-{'inputId','activeInputId','text','provenance','public_message'}:raise ValueError('Unsupported steering fields')
+    if 'public_message' in args:
+        from .public_message import validate as validate_public
+        validate_public(args['public_message'],args.get('inputId'))
     for name in ('inputId','activeInputId'):
         if not isinstance(args.get(name),str) or not 1<=len(args[name])<=128:raise ValueError('Bounded steering and active input IDs required')
     if not isinstance(args.get('text'),str) or not args['text'].strip() or len(args['text'])>16000:raise ValueError('Bounded nonempty steering text required')

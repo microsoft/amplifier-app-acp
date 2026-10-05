@@ -71,6 +71,17 @@ def content_updates(row,position):
         else:diagnostics.append({'code':'unassociated_tool_result','position':position})
         return updates,diagnostics
     kind='user_message_chunk' if role=='user' else 'agent_message_chunk'
+    from .public_message import row_envelope
+    try:original=row_envelope(row)
+    except ValueError:
+        return [],[{'code':'invalid_public_message','position':position}]
+    if original is not None:
+        for index,block in enumerate(original['blocks']):
+            facts={**meta['amplifier.dev/history'],'originalBlockIndex':index,'publicProjectionVersion':1}
+            public=({'type':'text','text':block['text']} if block['type']=='text' else
+                    {'type':'resource_link','uri':block['reference']['id'],'name':block['name'],'mimeType':block['mimeType']})
+            updates.append({'sessionUpdate':kind,'content':public,'_meta':{'amplifier.dev/history':facts}})
+        return updates,diagnostics
     if isinstance(blocks,str):blocks=[{'type':'text','text':blocks}]
     if not isinstance(blocks,list):raise HistoryError('Malformed native message content.')
     for block in blocks:
@@ -146,7 +157,7 @@ class SegmentIntegrity:
         return b''.join(result)
 
 
-def _page(directory,*,cursor=None,limit=50,max_bytes=2_000_000,expected_revision=None,epoch=None,archive_id=None):
+def _page(directory,*,cursor=None,limit=50,max_bytes=2_000_000,expected_revision=None,epoch=None,archive_id=None,include_public_rows=False,session_id=None):
     if type(limit) is not int or not 1<=limit<=200:raise HistoryError('History turn limit must be an integer from 1 to 200.')
     path,diagnostics=source(Path(directory));revision,size=stamp(path);end=size
     if expected_revision is not None and revision!=expected_revision:raise HistoryError('Native history changed since inspection; request a fresh revision.')
@@ -183,8 +194,15 @@ def _page(directory,*,cursor=None,limit=50,max_bytes=2_000_000,expected_revision
                 if not buffer:break
             if offset==0 and not buffer:break
     if stamp(path)[0]!=revision:raise HistoryError('Native history changed during read; retry the read with a fresh cursor.')
-    updates=[];groups=[];current=None
+    updates=[];groups=[];current=None;public_rows=[]
+    from .public_message import public_row,locator
     for position,row in reversed(rows):
+        if include_public_rows:
+            try:original=public_row(session_id or Path(directory).name,row,position,epoch)
+            except ValueError:
+                original=None
+                diagnostics.append({'code':'invalid_public_row','position':position})
+            if original is not None:public_rows.append(original)
         values,issues=content_updates(row,position);diagnostics.extend(issues)
         if not values:continue
         marker=(row.get('metadata') or {}).get('amplifier_input') or {}
@@ -195,14 +213,16 @@ def _page(directory,*,cursor=None,limit=50,max_bytes=2_000_000,expected_revision
             groups.append(current)
         reference=message_reference(directory,row,position,epoch,archive_id=archive_id)
         for value in values:
+            if include_public_rows and (row.get('metadata') or {}).get('amplifier_public_message') is not None:
+                value['_meta']['amplifier.dev/history']['rowLocator']=locator(session_id or Path(directory).name,row,position,epoch)
             if reference:value['_meta']['amplifier.dev/history']['messageReference']=reference
             value['_meta']['amplifier.dev/history'].update(turnId=current['id'],messageId=('archive:'+archive_id+':' if archive_id else '')+identity,**({'archiveId':archive_id,'historicalOnly':True,'mutationAuthority':'none'} if archive_id else {}))
         current['updates'].extend(values);updates.extend(values)
-    return {'updates':updates,'turnGroups':groups,'nextCursor':_cursor(revision,consumed) if consumed>0 else None,'revision':revision,'diagnostics':diagnostics}
+    return {'updates':updates,'turnGroups':groups,'nextCursor':_cursor(revision,consumed) if consumed>0 else None,'revision':revision,'diagnostics':diagnostics,**({'publicRows':public_rows,'publicRowsComplete':consumed==0 and not diagnostics} if include_public_rows else {})}
 
-def page(directory,*,cursor=None,limit=50,max_bytes=2_000_000,expected_revision=None,app_home=None,history_cwd=None):
+def page(directory,*,cursor=None,limit=50,max_bytes=2_000_000,expected_revision=None,app_home=None,history_cwd=None,include_public_rows=False):
     if app_home is None:
-        return _page(directory,cursor=cursor,limit=limit,max_bytes=max_bytes,expected_revision=expected_revision)
+        return _page(directory,cursor=cursor,limit=limit,max_bytes=max_bytes,expected_revision=expected_revision,include_public_rows=include_public_rows)
     from .native.history_revision import context_head,segment,_directory,_read
     directory=Path(directory);path,_=source(directory);revision,_=stamp(path)
     head=context_head(app_home,directory.name,history_cwd);archive=None;inner=cursor
@@ -226,13 +246,14 @@ def page(directory,*,cursor=None,limit=50,max_bytes=2_000_000,expected_revision=
             receipt=_read(_directory(app_home,directory.name)/('context-'+archive+'.json'))
             if receipt.get('status')!='succeeded':raise HistoryError('Context clear is unresolved; preserved originals require exact receipt inspection.')
             epoch=descriptor['sourceEpoch'];previous=descriptor['previousArchive']
-        result=_page(selected,cursor=inner,limit=limit,max_bytes=max_bytes,epoch=epoch,archive_id=archive)
+        result=_page(selected,cursor=inner,limit=limit,max_bytes=max_bytes,epoch=epoch,archive_id=archive,include_public_rows=include_public_rows,session_id=directory.name)
         next_cursor=(continuation(archive,result['nextCursor']) if result['nextCursor'] else continuation(previous,None) if previous else None)
         result.update(revision=revision,nextCursor=next_cursor)
+        if include_public_rows:result['publicRowsComplete']=next_cursor is None and not result['diagnostics']
         if stamp(path)[0]!=revision or context_head(app_home,directory.name,history_cwd)!=head:raise HistoryError('History changed during read.')
-        if result['turnGroups'] or not next_cursor:return result
+        if result['turnGroups'] or result.get('publicRows') or not next_cursor:return result
         archive=previous;inner=None
-    return {'updates':[],'turnGroups':[],'revision':revision,'nextCursor':continuation(archive,inner),'diagnostics':[{'code':'empty_segment_page_bound'}]}
+    return {'updates':[],'turnGroups':[],'revision':revision,'nextCursor':continuation(archive,inner),'diagnostics':[{'code':'empty_segment_page_bound'}],**({'publicRows':[],'publicRowsComplete':False} if include_public_rows else {})}
 
 
 def _forward(directory,*,epoch=None,archive_id=None):

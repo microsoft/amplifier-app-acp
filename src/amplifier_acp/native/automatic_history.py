@@ -53,8 +53,11 @@ def display_message(row, index, session, *, include_internal=False):
         return None
     if not include_internal and (row.get('metadata') or {}).get('ephemeral'):
         return None
-    text = text_content(row)
-    if not text:
+    from amplifier_acp.public_message import row_envelope
+    try:original=row_envelope(row)
+    except ValueError:return None
+    text = ''.join(block['text'] for block in original['blocks'] if block['type']=='text') if original is not None else text_content(row)
+    if not text and original is None:
         return None
     from .session_store import message_time
     metadata=row.get('metadata') or {}
@@ -81,4 +84,4 @@ def display_message(row, index, session, *, include_internal=False):
     return {'id': display_identity(session, index, row['role'], text), 'role': row['role'],
             'text': text, 'via': 'chat', 'source': 'native', 'nativeIndex': index,
             'createdAt': message_time(row) or session.get('createdAt', 0), 'timestampKnown': message_time(row) is not None,
-            **input_identity, **observation, **reply}
+            **input_identity, **observation, **reply, **({'publicMessage':original} if original is not None else {})}

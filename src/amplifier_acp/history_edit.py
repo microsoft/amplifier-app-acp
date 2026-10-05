@@ -23,7 +23,10 @@ def receipt(server,params):
 
 async def revise(worker,args,publish):
     required={'inputId','operationId','targetMessageId','expectedHistoryRevision','text'}
-    if not isinstance(args,dict) or set(args)!=required:raise ValueError('Exact history revision arguments required')
+    if not isinstance(args,dict) or set(args)-{'public_message'}!=required:raise ValueError('Exact history revision arguments required')
+    if 'public_message' in args:
+        from .public_message import validate as validate_public
+        validate_public(args['public_message'],args.get('inputId'))
     for key in required-{'text'}:
         if not isinstance(args[key],str) or not 1<=len(args[key])<=200:raise ValueError('Bounded native history revision identities required')
     if not isinstance(args['text'],str) or not args['text'].strip() or len(args['text'])>worker.runtime.max_input_chars:raise ValueError('Bounded replacement text required')
@@ -66,7 +69,12 @@ async def revise(worker,args,publish):
         write(file,proof)
         publish({'type':'history.revised',**{key:proof[key] for key in ('operationId','inputId','targetMessageId','beforeMessageId','beforeTurnId','retainedThroughTurnId','previousRevision','historyRevision','eventsPreserved')}})
         from amplifier_module_loop_live.runtime import Input
-        accepted=await worker.runtime.submit(Input('user',args['text'],id=args['inputId'],activation=worker.activation))
+        if args.get('public_message') is not None:worker.stage_original(args['inputId'],args['public_message'])
+        try:
+            accepted=await worker.runtime.submit(Input('user',args['text'],id=args['inputId'],activation=worker.activation))
+        except BaseException:
+            if args.get('public_message') is not None:worker.public_originals.discard(args['inputId'])
+            raise
         write(file,{**proof,'status':'admitted','accepted':True});fence.unlink()
         return {'accepted':True,'inputId':accepted,'historyRevision':proof['historyRevision'],'operationId':args['operationId']}
     except BaseException as error:
