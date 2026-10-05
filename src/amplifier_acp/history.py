@@ -49,6 +49,7 @@ def provenance(row):
     if type(metadata.get('questionRevision')) is int:result['questionRevision']=metadata['questionRevision']
     if isinstance(metadata.get('answerProvenance'),dict) and len(json.dumps(metadata['answerProvenance']).encode())<=8192:result['answerProvenance']=metadata['answerProvenance']
     native={key:value for key,value in marker.items() if key in {'id','kind','source','call_id'} and isinstance(value,str) and len(value)<=8192}
+    if type(marker.get('version')) is int and marker['version']==1:native['version']=marker['version']
     if native:result['nativeInput']=native
     return result
 
