@@ -674,3 +674,20 @@ else:
     if outcome=='adopted-disabled':assert global_providers[0]['config']['token_file_path']==str(candidate)
     else:assert not global_providers
     await manager.close()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('module,field', [('provider-openai','api_key'),('provider-anthropic','api_key'),('provider-gemini','api_key'),('provider-github-copilot','github_token')])
+async def test_connection_discovery_offers_configured_key_reference_without_secret(manager,tmp_path,monkeypatch,module,field):
+    from amplifier_acp.native.setup import PROVIDER_ENV
+    for name in PROVIDER_ENV[module]:monkeypatch.delenv(name,raising=False)
+    monkeypatch.setenv('OWNED_TEST_KEY','private-fixture-value-not-a-real-key')
+    monkeypatch.setenv('UNRELATED_SECRET','do-not-offer')
+    manager.store.update(tmp_path,'global',lambda settings:settings.update({'config':{'providers':[{'id':'existing','module':module,'config':{field:'${OWNED_TEST_KEY}'}}]}}))
+    checked=manager.credential_check(str(tmp_path),module)
+    assert checked['available'] and checked['envVar']=='OWNED_TEST_KEY'
+    assert 'UNRELATED_SECRET' not in str(checked) and 'private-fixture-value-not-a-real-key' not in str(checked)
+    explicit=manager.credential_check(str(tmp_path),module,'EXPLICIT_MISSING')
+    assert not explicit['available'] and explicit['envVar']=='EXPLICIT_MISSING'
+    await manager.perform('providers.save',{'workspace':str(tmp_path),'module':module,'id':'new','config':{}})
+    row=next(row for row in manager.store.read(tmp_path)['config']['providers'] if row['id']=='new')
+    assert row['config'][field]=='${OWNED_TEST_KEY}'

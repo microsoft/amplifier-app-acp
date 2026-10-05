@@ -367,7 +367,10 @@ class RuntimeControls:
             from amplifier_acp.configuration_clone import snapshot
             return snapshot(app_home(), self.session.session_id, str(args.get("historyCwd") or self.coordinator.config.get("working_dir") or Path.cwd()), args.get('bundle'))
         if operation == "configuration.inspect":
-            return self.configuration()
+            providers = await self.provider_control("configuration.providers", {"includeAuthentication": False})
+            return {**self.configuration(), "effectiveProvider": providers["effective"],
+                    "providerSelection": providers["selection"], "providerPinned": providers["pinned"],
+                    "providerNote": "plan contains configured defaults. effectiveProvider is the active conversation selection; providerSelection is its explicit override."}
         if operation == "history.snapshot":
             self.require_idle()
             await self.checkpoint()

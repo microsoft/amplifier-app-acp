@@ -35,7 +35,7 @@ class Session:
     def __init__(self,server,identity,cwd):
         self.server,self.identity,self.cwd=server,identity,cwd
         self.bundle_override=None;self.execution_directory=cwd;self.relocating=False
-        self.worker=None; self.prompt=None; self.input_id=None; self.cancelled=False
+        self.worker=None; self.prompt=None; self.input_id=None; self.cancelled=False; self.prompt_calls={}
         self.streamed=False; self.had_deltas=False; self.last_model_id=None; self.awaiting_children=False; self.tools=set(); self.lock=asyncio.Lock();self.report={}
         from .steering import Receipts
         from .relocation import home
@@ -194,6 +194,8 @@ class Session:
             if text:await self.update('agent_message_chunk',content={'type':'text','text':text});self.streamed=True
         elif kind=='execution.event':
             event=row.get('event',{})
+            if self.prompt and not self.prompt.done() and event.get('kind')=='llm' and event.get('lifecycle')!='background' and event.get('id'):
+                self.prompt_calls[event['id']]=event.get('usage',{})
             if event.get('kind')=='llm' and event.get('phase')=='running' and event.get('lifecycle')!='background' and event.get('sessionId')==self.identity and event.get('id')!=self.last_model_id:
                 self.last_model_id=event.get('id');self.streamed=False;self.had_deltas=False
             if event.get('kind')=='tool':
@@ -223,7 +225,9 @@ class Session:
                 return
             if kind=='generation.finished':
                 if not self.streamed and row.get('text'):await self.update('agent_message_chunk',content={'type':'text','text':row['text']})
-                self.prompt.set_result({'stopReason':'cancelled' if self.cancelled else 'end_turn'})
+                from .prompt_usage import prompt_usage
+                usage=prompt_usage(self.prompt_calls)
+                self.prompt.set_result({'stopReason':'cancelled' if self.cancelled else 'end_turn',**({'usage':usage} if usage is not None else {})})
             elif kind=='generation.detached' and self.cancelled:self.prompt.set_result({'stopReason':'cancelled'})
             else:
                 data={k:row[k] for k in ('error_type','error_category','retryable','cancellation') if k in row}
@@ -270,9 +274,18 @@ class Session:
         async with self.lock:return await self.configure_idle(identity,value)
 
     async def configure_idle(self,identity,value):
+        advertised=getattr(self,'model_choices',{}).get(value) if identity=='model' else None
         await self.start()
         # Validate against current owner state, not a stale client/private draft.
         await self.refresh_options(notify=False)
+        # A cold worker loses its in-memory discovery cache. A deliberate
+        # selection may re-read that one advertised provider, then validate the
+        # token against current choices. Never accept a stale choice blindly.
+        if advertised and value not in self.model_choices:
+            provider=next((row for row in self.provider_state.get('providers',[]) if row.get('id')==advertised['instance']),None)
+            if provider and provider.get('modelCatalog',{}).get('state')=='not-loaded':
+                await self.worker.control('configuration.providerModels',{'provider':advertised['instance']})
+                await self.refresh_options(notify=False)
         option=next((r for r in self.config_options if r['id']==identity),None)
         choices=[item for row in (option or {}).get('options',[]) for item in row.get('options',[row])]
         if not option or value not in {r['value'] for r in choices}:raise RpcError(-32602,'Unknown session configuration option or value.')
@@ -420,6 +433,7 @@ class Session:
                 if previous.get('delivery')=='accepted':
                     raise RpcError(-32001,'This input was already admitted. Read native history; it was not replayed.',{'outcome':'already-admitted','commandId':command_id,'replayed':False})
             self.cancelled=False;self.streamed=False;self.had_deltas=False;self.last_model_id=None;self.awaiting_children=False;self.pending_input_failure=None
+            self.prompt_calls={}
             self.prompt=asyncio.get_running_loop().create_future()
             try:
                 admitted=await self.worker.command('send',public_input_transport='acp',text=value,input_id=self.input_id,attachments=attachments,**({'reply_context':quote} if quote is not None else {}),**({'input_provenance':provenance} if provenance is not None else {}),**({'public_message':public_message} if public_message is not None else {}))
@@ -460,6 +474,7 @@ class Session:
             if previous.get('delivery')=='accepted':
                 raise RpcError(-32001,'Input was already admitted; inspect its history.',{'outcome':'already-admitted','commandId':identity,'replayed':False})
             self.input_id=identity;self.cancelled=False;self.streamed=False;self.had_deltas=False;self.last_model_id=None;self.awaiting_children=False;self.pending_input_failure=None
+            self.prompt_calls={}
             self.prompt=asyncio.get_running_loop().create_future()
             try:
                 try:result=await worker.control(operation,args)

@@ -231,6 +231,21 @@ class SetupManager:
                 workspace=workspace.parent
         return load_config(workspace,home=self.home,global_only=self.global_only)
 
+    def credential_check(self,workspace,module,env_var=None):
+        config=self.config(workspace)  # Also loads the owned keys.env.
+        result=environment_credential(module,env_var=env_var)
+        if env_var is not None or not result['supported']:return result
+        names=list(PROVIDER_ENV.get(module,()))
+        for row in config.providers:
+            if row.get('module')!=module:continue
+            value=row.get('config',{}).get(credential_field(module))
+            reference=re.fullmatch(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}',value) if isinstance(value,str) else None
+            if reference and reference.group(1) not in names:names.append(reference.group(1))
+        chosen=next((name for name in names if os.environ.get(name)),result['envVar'])
+        if chosen:result=environment_credential(module,env_var=chosen)
+        result['alternatives']=[name for name in names if name!=chosen]
+        return result
+
     @contextmanager
     def read_snapshot(self,workspace):
         """Reuse one config only within a synchronous inventory computation."""
@@ -408,7 +423,7 @@ class SetupManager:
                 elif not config.get(field):
                     if old.get(field):config[field]=old[field]
                     else:
-                        credential=environment_credential(module)
+                        credential=self.credential_check(workspace,module)
                         if credential['supported'] and credential['available']:config[field]='${'+credential['envVar']+'}'
                 if module=='provider-openai-chatgpt':
                     same_provider=existing is not None and existing['module']==module
@@ -506,8 +521,7 @@ class SetupManager:
         self.store.path(workspace,scope) # Validate scope even on reads.
         if action=='providers.credentials':
             cli=bool(await asyncio.to_thread(github_cli_token)) if args['module']=='provider-github-copilot' else False
-            self.config(workspace) # Load app-owned keys as well as the launch environment.
-            return {'credentialCheck':{**environment_credential(args['module'],env_var=args.get('envVar')), 'githubCliAvailable':cli,'requestedEnvVar':args.get('envVar',''), 'checkedAt':time.time()}}
+            return {'credentialCheck':{**self.credential_check(workspace,args['module'],env_var=args.get('envVar')), 'githubCliAvailable':cli,'requestedEnvVar':args.get('envVar',''), 'checkedAt':time.time()}}
         if action=='providers.list':return {'providers':self.provider_rows(workspace),'providersWorkspace':str(workspace),'providersLoadedAt':time.time()}
         if action in {'providers.schema','providers.models','providers.test','providers.testMessage'}:
             return await (self.probe(action,args,workspace) if action in {'providers.test','providers.testMessage'} else self.cached_probe(action,args,workspace))

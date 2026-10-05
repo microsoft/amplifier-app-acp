@@ -1,5 +1,5 @@
 {
-  "updated": "2026-09-23",
+  "updated": "2026-10-05",
   "models": [
     {
       "id": "gpt-live-1",
@@ -60,62 +60,62 @@
         {
           "id": "quartz",
           "name": "Quartz",
-          "description": "English \u00b7 Australian influence \u00b7 feminine"
+          "description": "English · Australian influence · feminine presentation · generated voice."
         },
         {
           "id": "ripple",
           "name": "Ripple",
-          "description": "English \u00b7 Australian influence \u00b7 masculine"
+          "description": "English · Australian influence · masculine presentation · natural voice."
         },
         {
           "id": "vesper",
           "name": "Vesper",
-          "description": "English \u00b7 British influence \u00b7 masculine"
+          "description": "English · British influence · masculine presentation · natural voice."
         },
         {
           "id": "willow",
           "name": "Willow",
-          "description": "English \u00b7 Irish influence \u00b7 feminine"
+          "description": "English · Irish influence · feminine presentation · natural voice."
         },
         {
           "id": "stone",
           "name": "Stone",
-          "description": "English \u00b7 Irish influence \u00b7 masculine"
+          "description": "English · Irish influence · masculine presentation · natural voice."
         },
         {
           "id": "gleam",
           "name": "Gleam",
-          "description": "English \u00b7 North American influence \u00b7 feminine"
+          "description": "English · North American influence · feminine presentation · natural voice."
         },
         {
           "id": "meridian",
           "name": "Meridian",
-          "description": "English \u00b7 North American influence \u00b7 masculine"
+          "description": "English · North American influence · masculine presentation · natural voice."
         },
         {
           "id": "bossa",
           "name": "Bossa",
-          "description": "Portuguese \u00b7 Brazilian influence \u00b7 feminine"
+          "description": "Portuguese · Brazilian influence · feminine presentation · natural voice."
         },
         {
           "id": "tempo",
           "name": "Tempo",
-          "description": "Portuguese \u00b7 Brazilian influence \u00b7 masculine"
+          "description": "Portuguese · Brazilian influence · masculine presentation · natural voice."
         },
         {
           "id": "beacon",
           "name": "Beacon",
-          "description": "English \u00b7 Filipino influence \u00b7 masculine"
+          "description": "English · Filipino influence · masculine presentation · generated voice."
         },
         {
           "id": "delta",
           "name": "Delta",
-          "description": "English \u00b7 Southern U.S. influence \u00b7 feminine"
+          "description": "English · Southern U.S. influence · feminine presentation · generated voice."
         },
         {
           "id": "cinder",
           "name": "Cinder",
-          "description": "English \u00b7 Southern U.S. influence \u00b7 masculine"
+          "description": "English · Southern U.S. influence · masculine presentation · generated voice."
         }
       ],
       "reference": "https://developers.openai.com/api/reference/resources/live/primary-websocket"

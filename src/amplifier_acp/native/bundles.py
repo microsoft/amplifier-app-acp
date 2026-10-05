@@ -362,7 +362,8 @@ class BundleManager:
                 # registrations. Keep the capability catalog below unfiltered.
                 names = offered_profiles(config, registry)
                 from .bundle_selection import catalog_entry
-                catalog = sorted((catalog_entry(name, catalog_metadata(config, registry, name)) for name in names),
+                catalog = sorted(({**catalog_entry(name, catalog_metadata(config, registry, name)),
+                                   'source': config.resolve_source(config.registrations.get(name) or (registry.get(name) or {}).get('uri') or name)} for name in names),
                                  key=lambda row: (row['label'].casefold(), row['name'].casefold(), row['name']))
                 return {"bundles": self.public_entries(settings), "registeredBundles": catalog}
             def mutate(current):

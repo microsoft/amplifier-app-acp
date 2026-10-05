@@ -222,7 +222,7 @@ def _perform(server,params):
     try:
         if directory.exists():raise Refused('Native identity was created by another writer')
         directory.mkdir(parents=True,exist_ok=False,mode=0o700)
-        metadata={'session_id':identity,'parent_id':None,'created_at':time.time(),'status':'created','name':title,'name_source':'user','working_dir':cwd,'bundle':selected_bundle,'bundle_name':selected_bundle,'location':location(selected)}
+        metadata={'session_id':identity,'parent_id':None,'created_at':time.time(),'status':'created','name':title,'name_source':'manual' if params.get('title') else 'fallback','working_dir':cwd,'bundle':selected_bundle,'bundle_name':selected_bundle,'location':location(selected)}
         SessionHistoryStore(directory,session_id=identity).save([],metadata,preserve_system=True)
         if saved:
             write(path.parent/'configuration.json',copied_configuration(saved['plan'],params['source']['sourceCwd'],cwd))

@@ -114,3 +114,15 @@ async def test_cancellation_joins_native_creation_before_gate_can_release(tmp_pa
     monkeypatch.setattr(module,'perform',effect)
     task=asyncio.create_task(module.dispatch(None,{}));await asyncio.to_thread(entered.wait,5);task.cancel();await asyncio.sleep(.02);assert not task.done();release.set()
     with pytest.raises(asyncio.CancelledError):await task
+
+@pytest.mark.parametrize('title,source,automatic', [(None,'fallback',True),('My title','manual',False)])
+def test_initial_title_preserves_automatic_naming_policy(tmp_path,monkeypatch,title,source,automatic):
+    monkeypatch.setenv('AMPLIFIER_SESSION_STATE_HOME',str(tmp_path/'leases'))
+    config,_=configuration(tmp_path);values,params,cwd=allocated(tmp_path,config)
+    if title is None:params.pop('title')
+    else:params['title']=title
+    server=Server(values,None);perform(server,params)
+    from amplifier_acp.native.naming import read,automatic_metadata
+    metadata=read(server.directory(str(cwd),params['sessionId']))
+    assert metadata['name_source']==source
+    assert automatic_metadata(metadata)==automatic
