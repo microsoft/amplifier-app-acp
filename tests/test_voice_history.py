@@ -37,3 +37,28 @@ async def test_voice_record_idempotent_resume_and_busy(tmp_path,monkeypatch):
   assert voices[0]['metadata']['amplifier_voice']['recordedOnly']
   assert hashlib.sha256(transcript.read_bytes()).hexdigest()==checksum
  finally:await client.close()
+
+@pytest.mark.asyncio
+async def test_voice_delegation_plain_input_and_persisted_delivery(tmp_path):
+ from test_public_message_runtime import open_fixture
+ client,sid,cwd,config=await open_fixture(tmp_path)
+ try:
+  delivery={'version':1,'callId':'call-plain','sourceItemIds':['spoken-one'],'context':[{'role':'user','text':'Good morning'},{'role':'assistant','text':'Good morning. How can I help?'}]}
+  result=await client.request('session/prompt',{'sessionId':sid,'prompt':[{'type':'text','text':'What can you help with?'}], '_meta':{'amplifier.dev/command':{'commandId':'voice-plain'},'amplifier.dev/input':{'inputOrigin':'voice','voiceDelivery':delivery}}})
+  assert result.get('result',{}).get('stopReason')=='end_turn',result
+  history=await client.request('_amplifier/history',{'sessionId':sid,'cwd':str(cwd)})
+  updates=history['result']['updates']
+  user=[row for row in updates if row['sessionUpdate']=='user_message_chunk']
+  assert user[0]['content']['text']=='What can you help with?'
+  assert user[0]['_meta']['amplifier.dev/history']['voiceDelivery']['callId']=='call-plain'
+  assert any(row['_meta']['amplifier.dev/history'].get('voiceDelivery') for row in updates if row['sessionUpdate']=='agent_message_chunk')
+  observed=(tmp_path/'provider-prompts.jsonl').read_text()
+  assert 'Good morning' in observed and 'What can you help with?' in observed
+  typed=await client.request('session/prompt',{'sessionId':sid,'prompt':[{'type':'text','text':'A typed follow-up'}],'_meta':{'amplifier.dev/command':{'commandId':'typed'}}})
+  assert 'result' in typed,typed
+  bound=await client.request('_amplifier/native',{'sessionId':sid,'operation':'voice.delivery.record','args':{'callId':'call-plain','inputId':'typed','commandId':'typed-delivery'}})
+  assert bound.get('result',{}).get('recorded'),bound
+  history=await client.request('_amplifier/history',{'sessionId':sid,'cwd':str(cwd)})
+  group=next(g for g in history['result']['turnGroups'] if g['id']=='typed')
+  assert group['updates'][0]['_meta']['amplifier.dev/history']['voiceDelivery']['source']=='chat'
+ finally:await client.close()

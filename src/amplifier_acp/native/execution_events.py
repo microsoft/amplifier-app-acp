@@ -140,8 +140,9 @@ def public_tool_detail(value):
 
 
 class ExecutionEvents:
-    def __init__(self, root_id, emit):
+    def __init__(self, root_id, emit, detail_directory=None):
         self.root_id, self.emit = root_id, emit
+        self.detail_directory = detail_directory
         self.producer_id = str(uuid.uuid4())
         self.turn_id = None
         self.calls = {}
@@ -165,7 +166,7 @@ class ExecutionEvents:
                 if observed != child:
                     self.children[sid] = observed
                     self.publish(observed)
-        row = {**row, "revision": self.nodes.get(row["id"], {}).get("revision", 0) + 1}
+        row = {**self.nodes.get(row["id"], {}), **row, "revision": self.nodes.get(row["id"], {}).get("revision", 0) + 1}
         row = {**row, "liveObservation": True}
         self.nodes[row["id"]] = row
         self.emit({"type": "execution.event", "event": dict(row)})
@@ -386,6 +387,40 @@ class ExecutionEvents:
             return wrapper
         return provider
 
+    def capture(self, row, event, data):
+        if self.detail_directory is None or event not in {'llm:request','llm:response'}:
+            return row
+        field = 'request' if event == 'llm:request' else 'response'
+        raw = data.get('raw_' + field, data.get('raw'))
+        if raw is None:
+            return row
+        # Capture only adapter-supplied wire records. Never reconstruct a request.
+        from .provider_recording import redact_request
+        from pathlib import Path
+        import hashlib, os
+        try:
+            safe, truncated = redact_request(raw, limit=200000)
+            text = json.dumps(safe, ensure_ascii=False, indent=2)
+            body = text.encode()
+            if len(body) > 1000000:
+                text = text[:100000] + '\n[capture limit]'
+                body = text.encode(); truncated = True
+            digest = hashlib.sha256(body).hexdigest()
+            directory = Path(self.detail_directory)
+            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            name = row['id'].removeprefix('llm:') + '.' + field + '.json'
+            temporary = directory / (name + '.' + str(uuid.uuid4()) + '.tmp')
+            with temporary.open('x') as stream:
+                os.chmod(temporary, 0o600)
+                stream.write(text)
+            temporary.replace(directory / name)
+            return {**row, field+'Detail': {'callId':row['id'], 'field':field,
+                'sha256':digest, 'length':len(text), 'lines':text.count('\n')+1},
+                field+'Capture':{'redacted':True,'truncated':truncated}}
+        except Exception:
+            # Diagnostic failure cannot affect generation or export unsanitized data.
+            return row
+
     def hook(self, sid, event, data):
         if data.get("session_id", sid) != sid:
             return
@@ -426,6 +461,11 @@ class ExecutionEvents:
             current = CURRENT_CALL.get()
             if current:
                 row = self.nodes.get(current)
+                if row:
+                    captured = self.capture(row, event, data)
+                    if captured != row:
+                        self.publish(captured)
+                        row = captured
                 if row and event == "provider:retry":
                     self.publish({**row,"phase":"retrying"})
                 elif row and current in self.streaming_calls and event == "llm:response" and data.get("usage") is not None:
@@ -459,7 +499,7 @@ class ExecutionEvents:
                 self.requests.pop(task, None)
             elif event == "provider:retry":
                 row["phase"] = "retrying"
-            self.publish(row)
+            self.publish(self.capture(row, event, data))
 
     def usage(self):
         calls = [row for row in self.nodes.values() if row["kind"] == "llm"]

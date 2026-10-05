@@ -360,7 +360,7 @@ class Worker:
             if install_overrides is not None:
                 os.environ["UV_OVERRIDE"] = str(install_overrides)
             self.runtime = Runtime(session_id=config["id"], observer=self.observe, max_input_chars=200_000)
-            self.telemetry = ExecutionEvents(config["id"], publish)
+            self.telemetry = ExecutionEvents(config["id"], publish, self.home/'sessions'/config["id"]/'model-calls')
             workspace = Path(config.get("workspace") or config.get("workingDirectory") or os.getcwd()).expanduser().resolve(strict=True)
             from amplifier_acp.managed_session import runtime_scope
             managed_scope=runtime_scope(str(workspace),config["id"],{"managedSessionRoots":json.loads(os.environ.get("AMPLIFIER_ACP_MANAGED_ROOTS","[]"))})
@@ -471,6 +471,8 @@ class Worker:
             from amplifier_acp.native.input_provenance import Context as ProvenanceContext
             self.input_provenance_path=self.home/'sessions'/config['id']/'input-provenance.sqlite3'
             await self.session.coordinator.mount('context',ProvenanceContext(self.session.coordinator.get('context'),self.input_provenance_path,self.public_originals))
+            from amplifier_acp.native.passive_feedback import install as install_feedback
+            self.passive_feedback = install_feedback(self.controls, self.input_provenance_path.parent)
             await self.ownership.register()
             self.execution = asyncio.create_task(self.session.execute(""))
             self.execution.add_done_callback(self.executed)
@@ -896,8 +898,8 @@ class Worker:
                 self.context_bindings = dict(list(self.context_bindings.items())[-64:])
                 provenance = data.get('input_provenance')
                 if provenance is not None:
-                    if provenance != {'inputOrigin': 'coordination'}:
-                        raise ValueError('Unrecognized prompt provenance')
+                    from amplifier_acp.native.input_provenance import validate_prompt
+                    validate_prompt(provenance)
                     from amplifier_acp.native.input_provenance import reserve
                     reserve(self.input_provenance_path, data['input_id'], provenance)
                 self.stage_original(data['input_id'],original)
@@ -928,7 +930,7 @@ class Worker:
                     else:
                         from amplifier_acp.native.input_provenance import reserve
                         from amplifier_module_loop_live.runtime import Input
-                        reserve(self.input_provenance_path,arguments['inputId'],{'inputOrigin':'steering','activeInputId':arguments['activeInputId'],**({'steeringProvenance':arguments['provenance']} if arguments.get('provenance') else {})})
+                        reserve(self.input_provenance_path,arguments['inputId'],{'inputOrigin':'steering','activeInputId':arguments['activeInputId'],**({'voiceDelivery':arguments['voiceDelivery']} if arguments.get('voiceDelivery') else {}),**({'steeringProvenance':arguments['provenance']} if arguments.get('provenance') else {})})
                         self.stage_original(arguments['inputId'],arguments.get('public_message'))
                         try:result=await capability['submit'](Input('steer',arguments['text'],id=arguments['inputId'],activation=self.activation),arguments['generationId'])
                         except ValueError as error:
@@ -946,6 +948,9 @@ class Worker:
                     from amplifier_acp.native.observation_input import admit
                     result = await admit(self.controls, self.runtime, arguments, self.activation,
                         authorize=lambda value: self.bridge("observation.admit", value),provenance_path=self.input_provenance_path)
+                elif data["operation"] == "voice.delivery.record":
+                    from amplifier_acp.native.voice_history import bind_delivery
+                    result = await bind_delivery(self.controls, arguments)
                 elif data["operation"] == "voice.transcript.record":
                     from amplifier_acp.native.voice_history import record
                     result = await record(self.controls, arguments)

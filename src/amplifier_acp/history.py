@@ -43,6 +43,13 @@ def provenance(row):
         if value is None and name=='createdAt':value=metadata.get('timestamp')
         if isinstance(value,str) and len(value)<=8192:result[name]=value
         elif name=='createdAt' and type(value) in (int,float):result[name]=value
+    delivery = metadata.get('voiceDelivery')
+    if isinstance(delivery, dict) and delivery.get('version') == 1:
+        result['voiceDelivery'] = {key:value for key,value in delivery.items() if key != 'context'}
+    feedback = metadata.get('amplifier_context_event')
+    if isinstance(feedback, dict) and feedback.get('kind') == 'reaction' and len(json.dumps(feedback).encode()) <= 32768:
+        result['feedbackEvent'] = feedback
+        result['recordedOnly'] = True
     quote = metadata.get('replyTo')
     if isinstance(quote, dict) and len(json.dumps(quote).encode()) <= 32768:
         result['replyTo'] = quote
@@ -65,14 +72,14 @@ def steering_target(row):
 
 
 def starts_turn(row,current):
-    if current is None or (row.get('metadata') or {}).get('amplifier_voice'):return True
+    if current is None or (row.get('metadata') or {}).get('amplifier_voice') or (row.get('metadata') or {}).get('amplifier_context_event'):return True
     return row.get('role')=='user' and steering_target(row)!=current
 
 
 def visible(row):
     metadata=row.get('metadata') or {}
     marker=metadata.get('amplifier_input') or {}
-    return (row.get('role') in {'user','assistant','tool'} and metadata.get('ephemeral') is not True
+    return (row.get('role') in {'user','assistant','tool'} and (metadata.get('ephemeral') is not True or metadata.get('amplifier_context_event', {}).get('kind') == 'reaction')
             and marker.get('kind','user') in {'user','steer'} and marker.get('source','user')=='user')
 
 def content_updates(row,position):
@@ -227,7 +234,7 @@ def _page(directory,*,cursor=None,limit=50,max_bytes=2_000_000,expected_revision
         identity=message_id(row,position,epoch)
         voice=(row.get('metadata') or {}).get('amplifier_voice')
         if starts_turn(row,current['id'] if current else None):
-            current={'id':marker.get('id') or identity,'updates':[],'state':'unknown',**({'recordedOnly':True} if voice else {}),**({'archiveId':archive_id,'historicalOnly':True} if archive_id else {})}
+            current={'id':marker.get('id') or identity,'updates':[],'state':'unknown',**({'recordedOnly':True} if voice or (row.get('metadata') or {}).get('amplifier_context_event') else {}),**({'archiveId':archive_id,'historicalOnly':True} if archive_id else {})}
             groups.append(current);group_positions.append(position)
         reference=message_reference(directory,row,position,epoch,archive_id=archive_id)
         for value in values:
