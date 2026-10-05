@@ -173,6 +173,8 @@ async def test_builtin_work_and_catalog_order_use_displayed_names_without_loadin
     assert [row['name'] for row in result['registeredBundles']] == [
         'alpha', 'anchors', 'anchors-work', 'anchors-amp-dev', 'foundation', 'work', 'Zulu']
     assert next(row for row in result['registeredBundles'] if row['name']=='work')['label']=='Work'
+    from amplifier_acp.native.host.config import WORK_SOURCE
+    assert next(row for row in result['registeredBundles'] if row['name']=='work')['source']==WORK_SOURCE
     assert not (tmp_path/'foundation/registry.json').exists()
 
 
