@@ -43,7 +43,7 @@ async def query(request):
         cache_dir=config.registry_home/'cache',
         source_resolver=source_resolver)
     source_resolver.restore_declarations(prepared)
-    rows=[]
+    rows=[];constructs={}
     for row in providers:
         if row.get('enabled') is False:continue
         cls=provider_class(row['module'])
@@ -62,10 +62,24 @@ async def query(request):
             info={key:info[key] for key in ('id','display_name','defaults') if key in info}
             schema={'fields':[field for field in schema.get('fields',[]) if field.get('id')=='reasoning_effort']}
             identity=row.get('instance_id') or row.get('id') or row['module'].removeprefix('provider-')
+            if identity in constructs:raise ValueError('Duplicate provider instance')
+            constructs[identity]=(cls,values,row['module'])
             priority=getattr(provider,'priority',getattr(provider,'config',{}).get('priority',100))
             rows.append({'id':identity,'module':row['module'],'effort':values.get('reasoning_effort'),'info':info,'configSchema':public(schema),'priority':priority})
         finally:await close_provider(provider)
     rows.sort(key=lambda row:row['priority'])
+    if 'initialSelection' in request:
+        from amplifier_acp.initial_selection import options, Refused
+        from .managed_models import discover
+        draft=request['initialSelection']
+        selected=draft.get('instance') or (rows[0]['id'] if rows else None)
+        if selected not in constructs:return {'selectionRefused':True}
+        cls,values,module=constructs[selected]
+        provider=construct_provider(cls,values)
+        try:
+            try:return {'initialOptions':options(draft,rows,await discover(provider,selected,module))}
+            except Refused:return {'selectionRefused':True}
+        finally:await close_provider(provider)
     first=rows[0] if rows else {}
     defaults=first.get('info',{}).get('defaults',{})
     return {'providers':rows,'effective':{'instance':first.get('id'),'model':defaults.get('model') or defaults.get('default_model'),'effort':defaults.get('reasoning_effort') or first.get('effort')}}
