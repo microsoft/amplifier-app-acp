@@ -118,6 +118,15 @@ class Session:
     async def update(self,session_update,**data):
         await self.server.notify('session/update',{'sessionId':self.identity,'update':{'sessionUpdate':session_update,**data}})
 
+    async def publish_title(self):
+        # The event is only an invalidation. A later manual edit remains the
+        # authority even when an earlier generated-name notification is delayed.
+        from .native.naming import read
+        try:title=read(self.server.directory(self.cwd,self.identity)).get('name')
+        except (OSError,ValueError,TypeError):return
+        if isinstance(title,str) and 0<len(title)<=200:
+            await self.update('session_info_update',title=title)
+
     async def permission(self,row):
         options=[]
         for value in row.get('options') or ['allow','deny']:
@@ -146,6 +155,9 @@ class Session:
             await self.server.notify('_amplifier/event',{'sessionId':self.identity,'event':{'type':'workers.changed'}})
         root=row.get('sessionId') or row.get('session_id') or self.identity
         is_root=root==self.identity
+        if (is_root and kind=='session.naming' and isinstance(row.get('name'),str)
+                and 0<len(row['name'])<=200 and type(row.get('nameRevision')) is int and row['nameRevision']>=0):
+            await self.publish_title()
         if is_root and kind in {'generation.failed','generation.started'}:
             from .lifecycle_failure import save as save_failure,supersede
             if kind=='generation.failed':save_failure(self.server,self.identity,row,self.input_id)
@@ -563,6 +575,7 @@ class Server:
         finally:self.pending.pop(identity,None)
 
     async def handle(self,row):
+        opened=None
         identity=row.get('id') if isinstance(row,dict) else None
         params=row.get('params') if isinstance(row,dict) else None
         tracked=self.sessions.get(params.get('sessionId')) if isinstance(params,dict) and row.get('method')!='_amplifier/retire' else None
@@ -579,7 +592,10 @@ class Server:
                 return
             if not isinstance(row.get('params',{}),dict):raise RpcError(-32602,'Parameters must be an object.')
             value=await self.dispatch(row['method'],row.get('params',{}))
-            if identity is not None:await self.send({'jsonrpc':'2.0','id':identity,'result':value})
+            if identity is not None:
+                await self.send({'jsonrpc':'2.0','id':identity,'result':value})
+                if row['method'] in {'session/new','session/load','session/resume'}:
+                    opened=self.sessions.get(value.get('sessionId') or row.get('params',{}).get('sessionId'))
         except RpcError as exc:
             if identity is not None:await self.send({'jsonrpc':'2.0','id':identity,'error':{'code':exc.code,'message':exc.message,**({'data':exc.data} if exc.data is not None else {})}})
         except (NativeError,ValueError,KeyError,OSError) as exc:
@@ -590,6 +606,11 @@ class Server:
 
         finally:
             if tracked:tracked.active_requests-=1
+        if opened:
+            # Publish only after the response exposes the session identity. A
+            # projection failure cannot change an already successful response.
+            try:await opened.publish_title()
+            except Exception as exc:print(f'ACP title publication failed: {type(exc).__name__}',file=sys.stderr)
 
     def directory(self,cwd,identity):
         from .native.session_files import project_slug,validate_id
