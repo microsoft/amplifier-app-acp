@@ -238,11 +238,12 @@ insertion confirmed. Held means it missed that generation without insertion;
 it never becomes a fresh turn. Interrupted context insertion is unknown.
 A late held event may follow the original prompt's normal completion.
 
-Passive history and standard load/resume replay preserve a recorded integer
+Passive history and standard load replay preserve a recorded integer
 `amplifier_input.version:1` as `nativeInput.version:1`, together with the existing
 bounded input facts and `activeInputId`. Legacy, malformed or unknown versions
 are not upgraded. These are recorded associations, not execution authorization;
 a public-original `rowLocator` is not required for an existing `messageReference`.
+Standard resume remounts canonical context without replaying history.
 
 Already admitted corrections cannot be withdrawn or replaced. Exact duplicate
 requests inspect the saved disposition without queueing again; changed content
