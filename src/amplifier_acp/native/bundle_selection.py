@@ -145,6 +145,7 @@ def _failure_reference(error, session_id):
 async def switch(worker, args):
     """Called under the worker's command lock and Foundation writer ownership."""
     from ..bundle_commands import BundlePreflightRefusal, BundleActivationFailure
+    from ..source_closure import SourceClosureDenied
     try:
         worker.controls.require_idle()
         checked, resolved_root = await inspect_bundle(worker.controls, worker.workspace, args['bundle'])
@@ -157,7 +158,7 @@ async def switch(worker, args):
             return {'requiresModelChoice': True, 'preview': worker.bundle_preview}
     except Exception as exc:
         diagnostic = _failure_reference(exc, worker.runtime.session_id)
-        if isinstance(exc, ValueError):
+        if isinstance(exc, (ValueError, SourceClosureDenied)):
             raise BundlePreflightRefusal('Bundle activation preflight refused; no activation was applied', diagnostic=diagnostic) from exc
         # Cache, module or transport errors are evidence, not a no-effect proof.
         raise BundleActivationFailure(diagnostic=diagnostic) from exc
