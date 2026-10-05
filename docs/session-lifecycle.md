@@ -70,7 +70,8 @@ Live model/account acceptance is separate from fixture validation.
 
 ## Edit one native history boundary and continue
 
-`native.historyEdits` advertises `{version:1,completion:"settled",active:false}`.
+`native.historyEdits` advertises
+`{version:1,completion:"settled",active:false,originalContextVersion:1}`.
 The admitted `_amplifier/native` operation `history.revise` accepts exactly
 `{inputId,operationId,targetMessageId,expectedHistoryRevision,text}`. The host
 reserves the replacement input identity under ordinary turn admission first.
@@ -105,6 +106,27 @@ message/input ID. It never starts a worker. The revision must still match at
 edit admission. The resulting proof's `retainedThroughTurnId` is null for an empty
 prefix, otherwise the last retained canonical turn ID. Clients can capture this
 page before the edit and replace their displayed prefix only after commit proof.
+
+With `originalContextVersion:1`, the passive before-read also accepts
+`includeEditContext:true` and returns `editContext:{version:1,targetMessageId,
+publicMessage}` for the selected canonical row. This is an opaque public original,
+not attachment access authority. The Host resolves its saved resource references
+through their owning capability and sends the resulting ordinary ACP content as
+optional `args.prompt` on `history.revise`. Its first block must be the replacement
+execution text. Literal public text may differ from that expanded execution text;
+capture provenance and attachment descriptors must remain unchanged. Missing
+context, substituted descriptors, unsupported legacy rich inputs, or malformed
+content are refused before rewriting history. Older callers can still edit plain
+text but cannot silently drop the attachments of a preserved rich input.
+
+Native rechecks the source revision, rebinds the original row's frozen quote to
+the replacement input identity, and submits through the existing input decoder
+and runtime. It does not resolve the quote again, replay the original input, or
+copy any client transcript. Quote metadata uses the existing bounded input
+provenance store; an oversized record is refused before the history journal is
+written. Both context-simple and context-managed use this same admission path.
+Host/Resources grant retention remains separate from canonical descriptor
+preservation, including when editing a copied row in a fork.
 
 ## Guarded readable recovery and configured bundle fork
 

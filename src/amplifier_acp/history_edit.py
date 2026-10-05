@@ -23,7 +23,7 @@ def receipt(server,params):
 
 async def revise(worker,args,publish):
     required={'inputId','operationId','targetMessageId','expectedHistoryRevision','text'}
-    if not isinstance(args,dict) or set(args)-{'public_message'}!=required:raise ValueError('Exact history revision arguments required')
+    if not isinstance(args,dict) or set(args)-{'public_message','prompt'}!=required:raise ValueError('Exact history revision arguments required')
     if 'public_message' in args:
         from .public_message import validate as validate_public
         validate_public(args['public_message'],args.get('inputId'))
@@ -46,6 +46,53 @@ async def revise(worker,args,publish):
         marker=(original.get('metadata') or {}).get('amplifier_input',{})
         if marker.get('kind','user')!='user':raise ValueError('Choose an original user input, not an injected steering correction')
     except ValueError as error:return {'accepted':False,'executed':False,'reason':str(error)}
+    # Resolve only the selected canonical row, under the same revision that is
+    # rechecked by rewind. The caller may replace text, not its saved context.
+    from .public_message import row_envelope, supports_context
+    from .native.message_interactions import prepare_input
+    from .message_metadata import digest
+    saved = row_envelope(original)
+    public = args.get('public_message')
+    cards = []
+    if saved is not None:
+        cards = [block for block in saved['blocks'] if block['type'] == 'attachment']
+        if public is None and not cards:
+            public = {**saved, 'inputId': args['inputId'], 'blocks': [{'type': 'text', 'text': args['text']}]}
+        # Literal public text may differ from expanded execution text. Only the
+        # immutable descriptors/capture must match the canonical source row.
+        if (public is None or public['capture'] != saved['capture']
+                or [block for block in public['blocks'] if block['type'] == 'attachment'] != cards):
+            return {'accepted': False, 'executed': False, 'reason': 'The edit must preserve the original attachment descriptors.'}
+        if not supports_context(worker.session.coordinator.get('context')):
+            return {'accepted': False, 'executed': False, 'reason': 'The mounted context cannot preserve the original message.'}
+    elif (original.get('attachments') or (original.get('metadata') or {}).get('attachments')
+          or isinstance(original.get('content'), list) and any(not isinstance(block, dict) or block.get('type') != 'text' for block in original['content'])):
+        return {'accepted': False, 'executed': False, 'reason': 'This legacy input has no qualified attachment context for editing.'}
+    prompt = args.get('prompt', [{'type': 'text', 'text': args['text']}])
+    if (not isinstance(prompt, list) or not prompt or prompt[0] != {'type': 'text', 'text': args['text']}
+            or len(prompt) > 257 or len(json.dumps(prompt).encode()) > 8*1024*1024
+            or cards and len(prompt) < 1 + len(cards)
+            or not cards and len(prompt) != 1):
+        return {'accepted': False, 'executed': False, 'reason': 'A qualified replacement prompt preserving original context is required.'}
+    from .content import prompt_content
+    from .server import RpcError
+    try:
+        value, attachments = prompt_content({'appHome': str(app_home())}, prompt)
+    except (ValueError, RpcError) as error:
+        return {'accepted': False, 'executed': False, 'reason': str(error)}
+    quote = (original.get('metadata') or {}).get('replyTo')
+    if quote is not None:
+        quote = {**quote, 'inputId': args['inputId']}
+        quote.pop('id', None)
+        quote['id'] = digest(quote)
+    try:
+        value = await prepare_input(worker.session.coordinator, value, quote, max_chars=worker.runtime.max_input_chars)
+    except ValueError as error:
+        return {'accepted': False, 'executed': False, 'reason': str(error)}
+    provenance = {'inputOrigin':'history-edit','editedMessageId':message_id(original,position,getattr(rows,'epoch',None)),
+                  'historyOperationId':args['operationId'], **({'replyTo':quote} if quote is not None else {})}
+    if len(json.dumps(provenance,sort_keys=True,separators=(',',':'),ensure_ascii=False,allow_nan=False).encode()) > 16384:
+        return {'accepted': False, 'executed': False, 'reason': 'The saved edit context exceeds the input provenance bound.'}
     from .native.session_store import text_content
     displayed=[]
     for index,(offset,row) in enumerate(rows):
@@ -63,17 +110,17 @@ async def revise(worker,args,publish):
     from .native.history_revision import rewind,receipt_path
     try:
         from .native.input_provenance import reserve
-        reserve(worker.input_provenance_path,args['inputId'],{'inputOrigin':'history-edit','editedMessageId':target_id,'historyOperationId':args['operationId']})
+        reserve(worker.input_provenance_path,args['inputId'],provenance)
         await rewind(worker.controls,{'operationId':args['operationId'],'source':{'id':identity,'workspace':cwd,'status':'idle','messages':displayed},'messageId':target_id})
         proof={**record,'status':'rewritten','historyRevision':stamp(directory/'transcript.jsonl')[0]}
         write(file,proof)
         publish({'type':'history.revised',**{key:proof[key] for key in ('operationId','inputId','targetMessageId','beforeMessageId','beforeTurnId','retainedThroughTurnId','previousRevision','historyRevision','eventsPreserved')}})
         from amplifier_module_loop_live.runtime import Input
-        if args.get('public_message') is not None:worker.stage_original(args['inputId'],args['public_message'])
+        if public is not None:worker.stage_original(args['inputId'],public)
         try:
-            accepted=await worker.runtime.submit(Input('user',args['text'],id=args['inputId'],activation=worker.activation))
+            accepted=await worker.runtime.submit(Input('user',value,id=args['inputId'],attachments=tuple(attachments),activation=worker.activation))
         except BaseException:
-            if args.get('public_message') is not None:worker.public_originals.discard(args['inputId'])
+            if public is not None:worker.public_originals.discard(args['inputId'])
             raise
         write(file,{**proof,'status':'admitted','accepted':True});fence.unlink()
         return {'accepted':True,'inputId':accepted,'historyRevision':proof['historyRevision'],'operationId':args['operationId']}
@@ -102,5 +149,11 @@ def before(server,params):
     from .relocation import home
     rows,_,revision=canonical(directory,params.get('expectedRevision'),app_home=home(server))
     target=bound(rows,params.get('beforeTurnId'),user=True);offset=rows[target][0]
-    if not offset:return {'updates':[],'turnGroups':[],'nextCursor':None,'revision':revision,'diagnostics':[]}
-    return history.page(directory,cursor=history._cursor(revision,offset),limit=params.get('limit',50),expected_revision=revision,app_home=home(server))
+    result = ({'updates': [], 'turnGroups': [], 'nextCursor': None, 'revision': revision, 'diagnostics': []}
+              if not offset else history.page(directory,cursor=history._cursor(revision,offset),limit=params.get('limit',50),expected_revision=revision,app_home=home(server)))
+    if params.get('includeEditContext') is True:
+        from .public_message import row_envelope
+        original = rows[target][1]
+        result['editContext'] = {'version': 1, 'targetMessageId': params['beforeTurnId'],
+                                 'publicMessage': row_envelope(original)}
+    return result

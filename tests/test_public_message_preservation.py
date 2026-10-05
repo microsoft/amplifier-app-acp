@@ -205,7 +205,9 @@ async def test_default_work_real_mount_measured_request_and_summary(tmp_path,mon
     from amplifier_acp.native.input_provenance import Context
     from unittest.mock import AsyncMock
     # Exact current Work source snapshot; no preparation/install or provider call.
-    work=Path(__file__).resolve().parents[3]/'outputs/native-public-originals-source-20261004-r01/reference/work'
+    import os
+    work=Path(os.environ.get('PUBLIC_MESSAGE_WORK_SOURCE') or Path(__file__).resolve().parents[3]/'outputs/native-public-originals-source-20261004-r01/reference/work')
+    if not work.is_dir():pytest.skip('Optional real Work source snapshot is unavailable; set PUBLIC_MESSAGE_WORK_SOURCE')
     behavior=yaml.safe_load((work/'behaviors/work-local.yaml').read_text())
     session=yaml.safe_load((work/'bundles/work-session.yaml').read_text())
     root=(work/'bundle.md').read_text().split('---',2)[1]
