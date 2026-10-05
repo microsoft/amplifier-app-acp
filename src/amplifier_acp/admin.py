@@ -28,6 +28,13 @@ class AdminLauncherRefusal(ValueError):
   self.data={'executed':False,'replayed':False,'reason':'native-admin-launcher-disabled',
              'operation':operation,'launcherOption':launcher_option}
 
+class AdminPreflightRefusal(ValueError):
+ """Request validation failed before lifecycle admission or owner dispatch."""
+ def __init__(self,error,operation):
+  super().__init__(str(error))
+  self.data={'executed':False,'replayed':False,'reason':'native-admin-preflight-refused'}
+  if isinstance(operation,str) and operation in OPERATIONS:self.data['operation']=operation
+
 class Administration:
  def __init__(self,config,on_idle=None):
   from .preparation_policy import configure as configure_preparation
@@ -63,8 +70,7 @@ class Administration:
   from .native.shared_settings import read_yaml
   settings=read_yaml(self.home/'admin-settings.yaml').get('bundle',{})
   return settings.get('active') if 'active' in settings else self.config.get('bundle')
- @runtime_preparation.governed
- async def perform(self,cwd,operation,args,*,fence=None):
+ def preflight(self,cwd,operation,args):
   # Validate all request authority before imports, files, probes or network effects.
   workspace=self.workspace(cwd)
   if operation not in OPERATIONS:raise ValueError('Unknown native administration operation.')
@@ -81,6 +87,13 @@ class Administration:
   if settings_dir.exists() and not settings_dir.resolve().is_relative_to(Path(workspace)):
    raise ValueError('Workspace settings escape the authorized workspace.')
   if len(json.dumps(args).encode())>512*1024:raise ValueError('Administration request exceeds size limit.')
+  return workspace
+ @runtime_preparation.governed
+ async def perform(self,cwd,operation,args,*,fence=None):
+  try:workspace=self.preflight(cwd,operation,args)
+  except AdminLauncherRefusal:raise
+  except (ValueError,TypeError,OSError) as error:
+   raise AdminPreflightRefusal(error,operation) from error
   ticket=self.lifecycle.enter(operation,fence);request=asyncio.current_task();self.requests.add(request)
   task=asyncio.create_task(self.execute(workspace,operation,args));self.effects.add(task)
   try:return await asyncio.shield(task)
