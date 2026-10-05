@@ -38,7 +38,7 @@ def provenance(row):
     metadata=row.get('metadata') or {};marker=metadata.get('amplifier_input') or {}
     result={'authorization':'unverified-native-history','inputOrigin':'unknown'}
     # Only recorded facts. Input(kind=user) is not proof of current human consent.
-    for name in ('inputOrigin','questionId','observationId','scheduledRunId','voiceId','voiceItemId','createdAt'):
+    for name in ('inputOrigin','activeInputId','questionId','observationId','scheduledRunId','voiceId','voiceItemId','createdAt'):
         value=metadata.get(name,row.get(name))
         if value is None and name=='createdAt':value=metadata.get('timestamp')
         if isinstance(value,str) and len(value)<=8192:result[name]=value
@@ -51,6 +51,22 @@ def provenance(row):
     native={key:value for key,value in marker.items() if key in {'id','kind','source','call_id'} and isinstance(value,str) and len(value)<=8192}
     if native:result['nativeInput']=native
     return result
+
+def steering_target(row):
+    """Recorded association only; missing or conflicting facts remain unknown."""
+    metadata=row.get('metadata') or {};marker=metadata.get('amplifier_input') or {}
+    target=metadata.get('activeInputId')
+    if (row.get('role')=='user' and marker.get('kind')=='steer'
+            and metadata.get('inputOrigin')=='steering'
+            and isinstance(target,str) and 0<len(target)<=8192):
+        return target
+    return None
+
+
+def starts_turn(row,current):
+    if current is None or (row.get('metadata') or {}).get('amplifier_voice'):return True
+    return row.get('role')=='user' and steering_target(row)!=current
+
 
 def visible(row):
     metadata=row.get('metadata') or {}
@@ -191,11 +207,11 @@ def _page(directory,*,cursor=None,limit=50,max_bytes=2_000_000,expected_revision
                 try:row=json.loads(raw)
                 except ValueError:raise HistoryError('Native transcript contains a malformed record; history was preserved.')
                 if not isinstance(row,dict) or not isinstance(row.get('role'),str):raise HistoryError('Native transcript record has no role.')
-                rows.append((position,row));turns+=int(row.get("role")=="user" and visible(row));consumed=position;buffer=clean[:split+1] if split>=0 else b''
+                rows.append((position,row));turns+=int(row.get("role")=="user" and visible(row) and steering_target(row) is None);consumed=position;buffer=clean[:split+1] if split>=0 else b''
                 if not buffer:break
             if offset==0 and not buffer:break
     if stamp(path)[0]!=revision:raise HistoryError('Native history changed during read; retry the read with a fresh cursor.')
-    updates=[];groups=[];current=None;public_rows=[]
+    updates=[];groups=[];group_positions=[];current=None;public_rows=[]
     from .public_message import public_row,locator
     for position,row in reversed(rows):
         if include_public_rows:
@@ -209,9 +225,9 @@ def _page(directory,*,cursor=None,limit=50,max_bytes=2_000_000,expected_revision
         marker=(row.get('metadata') or {}).get('amplifier_input') or {}
         identity=message_id(row,position,epoch)
         voice=(row.get('metadata') or {}).get('amplifier_voice')
-        if row.get('role')=='user' or current is None or voice:
+        if starts_turn(row,current['id'] if current else None):
             current={'id':marker.get('id') or identity,'updates':[],'state':'unknown',**({'recordedOnly':True} if voice else {}),**({'archiveId':archive_id,'historicalOnly':True} if archive_id else {})}
-            groups.append(current)
+            groups.append(current);group_positions.append(position)
         reference=message_reference(directory,row,position,epoch,archive_id=archive_id)
         for value in values:
             if include_public_rows and (row.get('metadata') or {}).get('amplifier_public_message') is not None:
@@ -219,6 +235,13 @@ def _page(directory,*,cursor=None,limit=50,max_bytes=2_000_000,expected_revision
             if reference:value['_meta']['amplifier.dev/history']['messageReference']=reference
             value['_meta']['amplifier.dev/history'].update(turnId=current['id'],messageId=('archive:'+archive_id+':' if archive_id else '')+identity,**({'archiveId':archive_id,'historicalOnly':True,'mutationAuthority':'none'} if archive_id else {}))
         current['updates'].extend(values);updates.extend(values)
+    # The reverse window can include an orphan or mismatched steering row.
+    # Keep the requested newest complete groups and leave exact older bytes for
+    # the next cursor instead of exceeding the complete-turn page contract.
+    if len(groups)>limit:
+        groups=groups[-limit:];consumed=group_positions[-limit]
+        updates=[value for group in groups for value in group['updates']]
+        public_rows=[row for row in public_rows if row['locator']['position']>=consumed]
     return {'updates':updates,'turnGroups':groups,'nextCursor':_cursor(revision,consumed) if consumed>0 else None,'revision':revision,'diagnostics':diagnostics,**({'publicRows':public_rows,'publicRowsComplete':consumed==0 and not diagnostics} if include_public_rows else {})}
 
 def page(directory,*,cursor=None,limit=50,max_bytes=2_000_000,expected_revision=None,app_home=None,history_cwd=None,include_public_rows=False):
@@ -278,7 +301,7 @@ def _forward(directory,*,epoch=None,archive_id=None):
             if values:
                 marker=(row.get('metadata') or {}).get('amplifier_input') or {}
                 identity=message_id(row,position,epoch)
-                if row.get('role')=='user' or current is None or (row.get('metadata') or {}).get('amplifier_voice'):
+                if starts_turn(row,current):
                     current=marker.get('id') or identity
                 reference=message_reference(directory,row,position,epoch,archive_id=archive_id)
                 for update in values:
