@@ -191,12 +191,16 @@ class Session:
                 identity=str(event.get('sessionId') or self.identity)+':'+str(identity)
                 status={'running':'in_progress','completed':'completed','error':'failed','cancelled':'failed'}.get(event.get('phase'),'pending')
                 data={'toolCallId':identity,'status':status}
+                if 'input' in event:data['rawInput']=event['input']
+                if 'output' in event:
+                    data['rawOutput']=event['output']
+                    output=event['output']
+                    text=output if isinstance(output,str) else json.dumps(output,ensure_ascii=True,separators=(',',':'))
+                    data['content']=[{'type':'content','content':{'type':'text','text':text}}]
                 if identity not in self.tools:
                     self.tools.add(identity);data.update(title=event.get('label','Tool'),kind='other')
-                    if 'input' in event:data['rawInput']=event['input']
                     await self.update('tool_call',**data)
                 else:
-                    if 'output' in event:data['rawOutput']=event['output']
                     await self.update('tool_call_update',**data)
         elif kind in {'generation.finished','generation.failed','generation.detached'} and is_root:
             if not self.prompt or self.prompt.done():return

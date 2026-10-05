@@ -13,6 +13,8 @@ from functools import wraps
 
 import math
 
+import json
+
 
 import inspect
 
@@ -64,6 +66,77 @@ def public_usage(value):
     except (KeyError, TypeError, ValueError):
         result["costType"] = "unavailable"
     return with_gross_tokens(result)
+
+
+TOOL_DETAIL_BYTES = 16384
+_DETAIL_NOTICE = "[Preview truncated; inspect retained session history for fuller output.]"
+_SECRET_FIELDS = ("api_key", "secret", "password", "authorization", "cookie", "access_token",
+                  "refresh_token", "github_token", "copilot_agent_token")
+
+
+def public_tool_detail(value):
+    """Bound public hook data before serialization; never walk an entire result.
+
+    Small JSON payloads retain their shape. Oversized/deep values get a textual
+    preview in existing ACP fields, not a new resource or compatibility schema.
+    Credential-field redaction follows the existing public configuration policy.
+    Arbitrary strings are tool-authored content, not a credential scanner.
+    """
+    remaining, nodes, truncated = TOOL_DETAIL_BYTES // 2, 256, False
+    def visit(item, depth=0):
+        nonlocal remaining, nodes, truncated
+        nodes -= 1
+        if nodes < 0 or depth > 8 or remaining < 256:
+            truncated = True
+            return _DETAIL_NOTICE
+        if isinstance(item, str):
+            # Slice before encoding, including hostile very large Unicode values.
+            preview = item[:remaining // 6]
+            if len(preview) != len(item):
+                truncated = True
+                preview += _DETAIL_NOTICE
+            remaining -= len(json.dumps(preview, ensure_ascii=True))
+            return preview
+        if item is None or isinstance(item, (bool, int, float)):
+            if isinstance(item, float) and not math.isfinite(item):return None
+            if isinstance(item, int) and item.bit_length() > 1024:
+                truncated = True
+                return _DETAIL_NOTICE
+            remaining -= len(json.dumps(item))
+            return item
+        if isinstance(item, dict):
+            result = {}
+            for index, (key, entry) in enumerate(item.items()):
+                if index >= 64 or nodes <= 0 or remaining < 256:
+                    truncated = True
+                    break
+                if not isinstance(key, str):
+                    truncated = True
+                    continue
+                name = key[:160]
+                if name != key:
+                    truncated = True
+                    continue
+                remaining -= len(json.dumps(name)) + 4
+                result[name] = "[REDACTED]" if any(term in name.lower() for term in _SECRET_FIELDS) else visit(entry, depth + 1)
+            return result
+        if isinstance(item, (list, tuple)):
+            result = []
+            for index, entry in enumerate(item):
+                if index >= 64 or nodes <= 0 or remaining < 256:
+                    truncated = True
+                    break
+                remaining -= 2
+                result.append(visit(entry, depth + 1))
+            return result
+        # Do not invoke arbitrary repr/model_dump or traverse binary payloads.
+        truncated = True
+        return "[Unsupported live preview value]"
+    result = visit(value)
+    if truncated:
+        text = json.dumps(result, ensure_ascii=True, separators=(",", ":"))
+        return text[:(TOOL_DETAIL_BYTES - len(_DETAIL_NOTICE) - 4) // 2] + "\n" + _DETAIL_NOTICE
+    return result
 
 
 class ExecutionEvents:
@@ -328,8 +401,8 @@ class ExecutionEvents:
                 "label": str(data.get("tool_name") or "Tool")[:120], "startedAt": now}
             row = dict(row)
             row["phase"] = {"tool:pre": "running", "tool:post": "completed", "tool:error": "error"}[event]
-            # The observer supplies transient lifecycle metadata only. Tool
-            # inputs/results are read from their native event-log records.
+            # Export bounded public details from the authoritative loop hooks.
+            # Store lifecycle metadata only; details are transient ACP updates.
             row["liveObservation"] = True
             if event == "tool:pre":
                 row["endedAt"] = None
@@ -341,7 +414,14 @@ class ExecutionEvents:
                     row["phase"] = "error"
 
             self.calls[key] = row
-            self.publish(row)
+            detail = {}
+            if "tool_input" in data:
+                detail["input"] = public_tool_detail(data["tool_input"])
+            if event == "tool:post":
+                detail["output"] = public_tool_detail(result)
+            elif event == "tool:error" and "error" in data:
+                detail["output"] = public_tool_detail(data["error"])
+            self.publish({**row, **detail})
         elif event in {"llm:request", "llm:response", "provider:retry"}:
             current = CURRENT_CALL.get()
             if current:
