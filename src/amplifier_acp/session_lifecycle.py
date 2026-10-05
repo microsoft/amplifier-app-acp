@@ -305,6 +305,15 @@ class Lifecycle:
             context=[row for _,row in retained]
             controls=copied.get('control-state.json',{})
             copied={'control-state.json':({'selection':controls['selection']} if 'selection' in controls and not args.get('resetModel') else {})}
+        from .public_message import row_envelope, COPY_SOURCE, HISTORY_ONLY, locator
+        for source_index,target_index in positions.items():
+            position,original=selected[source_index]
+            envelope=row_envelope(original)
+            if envelope is not None:
+                target_row=context[target_index]
+                target_row['metadata']={**(target_row.get('metadata') or {}),COPY_SOURCE:{'version':1,
+                    'source':locator(self.identity,original,position,getattr(rows,'epoch',None)),
+                    'disposition':'history-only' if (target_row.get('metadata') or {}).get(HISTORY_ONLY) is True else 'retained'}}
         from .message_copy import prepare
         reactions=prepare(self.server,self.identity,target,selected,positions,context)
         return context,metadata,revision,copied,managed,reactions
@@ -336,7 +345,11 @@ class Lifecycle:
             SessionHistoryStore(destination,session_id=target).save(context,safe,preserve_system=preserve_system)
             from .message_copy import publish
             target_revision=history.inspect(destination)['revision']
-            target_rows,_,_=canonical(destination,target_revision,app_home=home(self.server)) if reactions else ([],None,None)
+            verify_originals=any((row.get('metadata') or {}).get('amplifier_public_message') is not None for row in context)
+            target_rows,_,_=canonical(destination,target_revision,app_home=home(self.server)) if reactions or verify_originals else ([],None,None)
+            if target_rows or verify_originals:
+                expected=[row for row in context if preserve_system or row.get('role') not in {'system','developer'}]
+                if [row for _,row in target_rows] != expected:raise ValueError('Persisted target rows differ from prepared copy; creation remains unknown')
             reaction_copy=publish(self.server,target,target_rows,reactions)
             for name,value in copied.items():write(target_app/name,value)
             write(target_app/'execution-location.json',{'sessionId':target,'historyCwd':cwd,'executionDirectory':execution,'executionRevision':0})
@@ -355,13 +368,20 @@ class Lifecycle:
             if not history.visible(row):continue
             chunks=[u for u in updates if u['sessionUpdate'] in {'user_message_chunk','agent_message_chunk'}]
             if not chunks:continue
+            from .public_message import row_envelope
+            original=row_envelope(row)
             texts=[];refs=[]
             for update in chunks:
                 block=update['content']
                 if block['type']=='text':texts.append(block['text'])
                 else:
-                    attachments+=1;refs.append({'type':block['type'],**({'uri':block['uri']} if 'uri' in block else {}),'omittedPayload':True})
-            public.append({'id':message_id(row,position,getattr(rows,'epoch',None)),'role':row['role'],'text':'\n'.join(texts),**({'attachments':refs} if refs else {}),**({} if args.get('minimal') else {'provenance':history.provenance(row)})})
+                    attachments+=1
+                    from .public_message import row_envelope
+                    original=row_envelope(row)
+                    index=(update.get('_meta',{}).get('amplifier.dev/history') or {}).get('originalBlockIndex')
+                    refs.append({**original['blocks'][index],'omittedPayload':True} if original is not None else
+                                {'type':block['type'],**({'uri':block['uri']} if 'uri' in block else {}),'omittedPayload':True})
+            public.append({'id':message_id(row,position,getattr(rows,'epoch',None)),'role':row['role'],'text':('' if original is not None else '\n').join(texts),**({'publicMessage':original} if original is not None else {}),**({'attachments':refs} if refs else {}),**({} if args.get('minimal') else {'provenance':history.provenance(row)})})
         fmt=args.get('format','json')
         if fmt=='json':body=json.dumps({'sessionId':self.identity,'historyRevision':revision,'messages':public},ensure_ascii=False,indent=2).encode();mime='application/json';extension='json'
         elif fmt=='markdown':
