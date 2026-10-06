@@ -182,6 +182,7 @@ class Worker:
             event['rootSessionId'] = event_root_id
         root_generation = event_session_id == root_session_id and event_root_id == root_session_id
         if root_generation and event.get('type') == 'generation.started':
+            self.peer_terminal = None
             self.root_generation_outcome = None
             self.terminal_checkpointed = False
             self.pending_input_failure = None
@@ -200,9 +201,9 @@ class Worker:
             finish_scheduled_input(self.controls, event)
             from amplifier_acp.native.observation_input import finish as finish_observation_input
             finish_observation_input(self.controls, event)
-        if event.get('type') == 'generation.started':
+        if root_generation and event.get('type') == 'generation.started':
             self.context_inputs = []
-        if event.get('type') in {'input.delivered', 'steering.applied'} and event.get('input_id'):
+        if root_generation and event.get('type') in {'input.delivered', 'steering.applied'} and event.get('input_id'):
             if event['input_id'] not in self.context_inputs:
                 self.context_inputs = (self.context_inputs + [event['input_id']])[-8:]
         if self.naming:self.naming.observe(event)
@@ -214,6 +215,11 @@ class Worker:
             arguments = (job.get("tool_call") or {}).get("arguments", {})
             if isinstance(arguments, dict) and isinstance(arguments.get("agent"), str):
                 event["agent"] = arguments["agent"]
+        if root_generation and event.get('type') == 'generation.finished':
+            from .peer_results import terminal
+            proof = terminal(self, event)
+            if proof is not None:
+                event['peerTerminal'] = proof
         if root_generation and event.get('type') == 'generation.failed':
             # loop-live emits this before final job joining/checkpoint. It is
             # not terminal proof until the owning execute task has settled.
@@ -471,6 +477,8 @@ class Worker:
             from amplifier_acp.native.host.naming import LiveSessionNaming
             completed=[identity for event in config.get('generations',[]) if event.get('event')=='generation.finished' for identity in event.get('input_ids',[]) if identity in {t['id'] for t in config.get('execution',{}).get('turns',[])}]
             self.naming=LiveSessionNaming(self.session.coordinator,self.home,publish,completed)
+            from .peer_results import install as install_peer_results
+            install_peer_results(self)
             from amplifier_acp.native.input_provenance import Context as ProvenanceContext
             self.input_provenance_path=self.home/'sessions'/config['id']/'input-provenance.sqlite3'
             await self.session.coordinator.mount('context',ProvenanceContext(self.session.coordinator.get('context'),self.input_provenance_path,self.public_originals))
