@@ -80,6 +80,15 @@ class FixtureProvider:
         if self.config.get('coordinationFixture') and 'spawn-persistent' in str(prompt) and not getattr(self,'coordinationSpawned',False):
             self.coordinationSpawned=True
             return ChatResponse(content=[TextBlock(text='Starting persistent fixture worker.')],tool_calls=[ToolCall(id='delegate-fixture',name='delegate',arguments={'agent':'fixture-child','instruction':'child-initial','persistent':True})],finish_reason='tool_calls')
+        if self.config.get('workerRecoveryFixture') and request.messages[-1].role != 'tool':
+            if prompt == 'spawn-file-worker':
+                return ChatResponse(content=[],tool_calls=[ToolCall(id='delegate-file-worker',name='delegate',arguments={'agent':'fixture-child','instruction':'child-create-file','persistent':True})],finish_reason='tool_calls')
+            if str(prompt).startswith('resume-file-worker '):
+                return ChatResponse(content=[],tool_calls=[ToolCall(id='resume-file-worker',name='delegate',arguments={'session_id':str(prompt).split(' ',1)[1],'instruction':'child-after-stop'})],finish_reason='tool_calls')
+            if prompt == 'child-create-file':
+                return ChatResponse(content=[],tool_calls=[ToolCall(id='child-write',name='write_file',arguments={'file_path':'worker-created.txt','content':'Preserved worker output before stop.\n'})],finish_reason='tool_calls')
+            if prompt == 'child-after-stop':
+                return ChatResponse(content=[],tool_calls=[ToolCall(id='child-read',name='read_file',arguments={'file_path':'worker-created.txt'})],finish_reason='tool_calls')
         if 'steering-late' in str(prompt):
             checkpoint=self.coordinator.get_capability('live.checkpoint')
             async def paused_checkpoint(*args,**kwargs):
@@ -137,10 +146,13 @@ async def mount(coordinator,config=None):
             return ToolResult(success=True,output={'released':True})
     if config and config.get('gateDirectory'):await coordinator.mount('tools',Wait(),name='fixture_wait')
 
-    if config and config.get('coordinationFixture'):
+    if config and (config.get('coordinationFixture') or config.get('workerRecoveryFixture')):
         class Delegate:
-            name='delegate';description='Run the actual native child fixture';input_schema={'type':'object','properties':{'agent':{'type':'string'},'instruction':{'type':'string'}},'required':['agent','instruction']}
+            name='delegate';description='Run the actual native child fixture';input_schema={'type':'object','properties':{'agent':{'type':'string'},'session_id':{'type':'string'},'instruction':{'type':'string'}},'required':['instruction']}
             async def execute(self,args):
-                result=await coordinator.get_capability('live.children').spawn(args['agent'],args['instruction'],coordinator.get_capability('live.children').sessions[coordinator.session_id])
+                if args.get('session_id'):
+                    result=await coordinator.get_capability('session.resume')(args['session_id'],args['instruction'])
+                else:
+                    result=await coordinator.get_capability('live.children').spawn(args['agent'],args['instruction'],coordinator.get_capability('live.children').sessions[coordinator.session_id])
                 return ToolResult(success=True,output=result)
         await coordinator.mount('tools',Delegate(),name='delegate')
