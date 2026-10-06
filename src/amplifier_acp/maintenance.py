@@ -22,7 +22,8 @@ OPERATIONS={'maintenance.preview','maintenance.acquire','maintenance.snapshot',
 CACHE_OPERATIONS={'maintenance.cache.scan','maintenance.cache.page','maintenance.cache.preview','maintenance.cache.clear'}
 CAPTURE_OPERATIONS={'maintenance.capture.acquire','maintenance.capture.inspect','maintenance.capture.release'}
 from .app_reset import FIELDS as APP_RESET_FIELDS
-OPERATIONS |= CACHE_OPERATIONS | CAPTURE_OPERATIONS | set(APP_RESET_FIELDS)
+from .bundle_reference_repair import FIELDS as BUNDLE_REFERENCE_FIELDS
+OPERATIONS |= CACHE_OPERATIONS | CAPTURE_OPERATIONS | set(APP_RESET_FIELDS) | set(BUNDLE_REFERENCE_FIELDS)
 PARTS={'session-history','session-state','native-settings'}
 CHUNK=256*1024
 MAX_FILES=2048
@@ -453,10 +454,16 @@ class Maintenance:
         from .cache_maintenance import FIELDS as CACHE_FIELDS
         fields.update(CACHE_FIELDS)
         fields.update(APP_RESET_FIELDS)
+        fields.update(BUNDLE_REFERENCE_FIELDS)
         from .capture_scope import FIELDS as CAPTURE_FIELDS
         fields.update(CAPTURE_FIELDS)
         if fields[operation] is not None and set(args)-fields[operation]:raise ValueError('Unsupported maintenance operation fields')
         async with self.lock:
+            if operation in BUNDLE_REFERENCE_FIELDS and not hasattr(self,'bundle_references'):
+                from .bundle_reference_repair import BundleReferences
+                self.bundle_references=BundleReferences(self)
+            if operation in {'maintenance.bundleReferences.preview','maintenance.bundleReferences.page'}:
+                return await self.run(getattr(self.bundle_references,operation.rsplit('.',1)[1]),workspace,args)
             if operation in APP_RESET_FIELDS and not hasattr(self,'app_reset'):
                 from .app_reset import AppReset
                 self.app_reset=AppReset(self)
@@ -494,7 +501,8 @@ class Maintenance:
                 if prior[1]['state']=='refused':result.update(accepted=False,executed=False)
                 return result
             try:
-                if operation in APP_RESET_FIELDS:result=await self.run(self.app_reset.perform,workspace,operation,args)
+                if operation=='maintenance.bundleReferences.apply':result=await self.run(self.bundle_references.apply,workspace,args)
+                elif operation in APP_RESET_FIELDS:result=await self.run(self.app_reset.perform,workspace,operation,args)
                 elif operation=='maintenance.acquire':
                     result=await self.run(self.acquire,workspace,args)
                     self.timer=asyncio.create_task(self.expire(result['leaseId'],max(0,result['expiresAt']-time.time())))
@@ -513,7 +521,7 @@ class Maintenance:
                 receipt={**receipt,'state':'succeeded','result':result,'settledAt':time.time()}
             except BaseException as error:
                 archive_failure=operation.startswith('maintenance.archive.') and isinstance(error,Exception)
-                known=(operation=='maintenance.acquire' and isinstance(error,Exception) and (self.lease is None or self.lease['released'])) or ((operation.startswith('maintenance.restore.') or operation in CACHE_OPERATIONS | CAPTURE_OPERATIONS | set(APP_RESET_FIELDS)) and getattr(error,'data',{}).get('executed') is False)
+                known=(operation=='maintenance.acquire' and isinstance(error,Exception) and (self.lease is None or self.lease['released'])) or ((operation.startswith('maintenance.restore.') or operation in CACHE_OPERATIONS | CAPTURE_OPERATIONS | set(APP_RESET_FIELDS) | set(BUNDLE_REFERENCE_FIELDS)) and getattr(error,'data',{}).get('executed') is False)
                 receipt={**receipt,'state':'refused' if known else 'failed' if archive_failure else 'unknown','errorType':type(error).__name__,'settledAt':time.time(),**({'executed':False} if known else {}),**({'settled':True,'canonicalFilesChanged':0} if archive_failure else {})}
                 await self.run(self.save,workspace,signature,receipt)
                 if archive_failure:

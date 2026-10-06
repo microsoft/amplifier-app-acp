@@ -38,6 +38,12 @@ interpreter path, native home, or workspace authority from browser arguments.
 
 ## Remaining owner duties
 
+Legacy Work root-chat metadata can now be reviewed and repaired through the
+optional [saved reference contract](bundle-reference-repair.md). This is a cold,
+explicit metadata operation with per-chat leases and exact receipt recovery;
+ambiguous, changed and busy records are preserved. It is separate from migration
+of the other product owners and does not replay historical work.
+
 - Distribution self-update and optional component installation need the installed
   distribution's artifact manifest, explicit admission receipt, safe replacement
   and restart callback, and a fresh-process adoption proof. Native runtime
