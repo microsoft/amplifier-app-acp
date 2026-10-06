@@ -13,13 +13,15 @@ from native_setup import configuration
 @pytest.mark.asyncio
 async def test_stopped_child_explicit_cold_resume_preserves_history_and_workspace_file(tmp_path):
     filesystem = importlib.util.find_spec('amplifier_module_tool_filesystem')
-    if filesystem is None:
-        pytest.skip('Installed official filesystem module required')
+    delegate = importlib.util.find_spec('amplifier_module_tool_delegate')
+    if filesystem is None or delegate is None:
+        pytest.skip('Installed official filesystem and delegate modules required')
     config, cwd = configuration(tmp_path)
     value = json.loads(config.read_text())
     bundle = Path(value['bundle'])
     bundle.write_text(bundle.read_text().replace('config: {}', 'config:\n      workerRecoveryFixture: true')
         + 'tools:\n  - module: tool-filesystem\n    source: ' + str(Path(filesystem.origin).parent)
+        + '\n  - module: tool-delegate\n    source: ' + str(Path(delegate.origin).parent)
         + '\nagents:\n  fixture-child:\n    description: File recovery fixture\n    instruction: Use the fixture provider.\n')
     async def initialize(client):
         await client.request('initialize', {'protocolVersion': 1, 'clientCapabilities': {'_meta': {'amplifier.dev/native': {'version': 1}}}})
@@ -76,8 +78,10 @@ async def test_stopped_child_explicit_cold_resume_preserves_history_and_workspac
         after = [json.loads(line) for line in history.read_text().splitlines() if line.strip()]
         assert after[:len(before)] == before
         assert len(after) > len(before)
-        assert sum(row.get('role') == 'user' and row.get('content') == 'child-create-file' for row in after) == 1
-        assert sum(row.get('role') == 'user' and row.get('content') == 'child-after-stop' for row in after) == 1
+        user_tasks = [str(row.get('content')).rsplit('[YOUR TASK]\n', 1)[-1].strip()
+                      for row in after if row.get('role') == 'user']
+        assert user_tasks.count('child-create-file') == 1
+        assert user_tasks.count('child-after-stop') == 1
         calls = [call for row in after for call in row.get('tool_calls', [])]
         names = [call['tool'] for call in calls]
         assert names.count('write_file') == names.count('read_file') == 1, calls
