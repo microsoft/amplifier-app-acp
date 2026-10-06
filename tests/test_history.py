@@ -74,3 +74,33 @@ async def test_passive_inspection_over_stdio_never_launches_configured_worker(tm
         assert result['result']['turnGroups'][0]['id']=='turn-0'
         assert not any(row.get('params',{}).get('event',{}).get('type')=='runtime.ready' for row in client.events)
     finally:await client.close()
+
+
+@pytest.mark.asyncio
+async def test_missing_workspace_is_explicit_exact_passive_history_not_runtime_access(tmp_path):
+    from client import Client
+    from amplifier_acp.native.session_files import project_slug
+    home=tmp_path/'home';cwd=tmp_path/'gone';sid='22222222-2222-4222-8222-222222222222'
+    directory=home/'projects'/project_slug(str(cwd))/'sessions'/sid;directory.parent.mkdir(parents=True)
+    file=history(directory,2);metadata=directory/'metadata.json'
+    metadata.write_text(json.dumps({'session_id':sid,'working_dir':str(cwd)}))
+    originals=(file.read_bytes(),metadata.read_bytes())
+    config=tmp_path/'config.json';config.write_text(json.dumps({'home':str(home),'appHome':str(tmp_path/'app'),'workerCommand':['/must-not-start-for-passive-history']}))
+    client=await Client.launch(config)
+    try:
+        initialized=await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
+        assert initialized['result']['agentCapabilities']['_meta']['amplifier.dev/native']['history']['missingWorkspaceRead']['execution'] is False
+        request={'sessionId':sid,'cwd':str(cwd)}
+        assert 'error' in await client.request('_amplifier/history',request)
+        stamp=await client.request('_amplifier/history/inspect',{**request,'readOnlyMissingWorkspace':True})
+        assert stamp['result']['available']
+        result=await client.request('_amplifier/history',{**request,'readOnlyMissingWorkspace':True,'expectedRevision':stamp['result']['revision'],'limit':1})
+        assert result['result']['turnGroups'][0]['id']=='turn-1'
+        assert 'error' in await client.request('session/load',{**request,'mcpServers':[]})
+        assert not cwd.exists() and not client.events
+        assert originals==(file.read_bytes(),metadata.read_bytes())
+        metadata.write_text(json.dumps({'session_id':sid,'working_dir':str(tmp_path/'different')}))
+        assert 'error' in await client.request('_amplifier/history',{**request,'readOnlyMissingWorkspace':True})
+        metadata.write_bytes(originals[1]);cwd.symlink_to(tmp_path/'elsewhere')
+        assert 'error' in await client.request('_amplifier/history',{**request,'readOnlyMissingWorkspace':True})
+    finally:await client.close()

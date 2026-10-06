@@ -383,3 +383,10 @@ The public bridge and generic Host own title serialization and projection.
 Manual saves persist canonical Native metadata first; generation captures the
 Host title revision before its model call and commits only after both Host and
 Native revisions agree. These methods alone do not restore the composed UI.
+
+Passive history readers may negotiate `history.missingWorkspaceRead.version: 1`.
+An explicit `readOnlyMissingWorkspace: true` reads an ordinary missing-folder
+history only when its canonical workspace and native identity exactly match
+bounded metadata. It rejects managed histories and symlink paths, creates no
+folder, starts no runtime, and grants no message mutation scope. Restoring the
+original directory returns the session to normal workspace validation.
