@@ -79,3 +79,23 @@ async def test_admin_process_death_releases_os_gate_but_does_not_supply_host_rel
   # A new native process proves availability only, never the old host's outcome.
   assert 'receiptId' not in next_['result'] and not (Path(values['home'])/'projects').exists()
  finally:await replacement.close()
+
+@pytest.mark.asyncio
+async def test_protocol_original_distribution_release_after_replacement(tmp_path):
+ client,cwd,values,config=await start(tmp_path)
+ context={**CONTEXT,'purpose':'distribution-update'}
+ held=(await client.request('_amplifier/admin/lifecycle',{'cwd':str(cwd),'operation':'acquire','args':context}))['result']
+ assert held['acquired'];await client.close()
+ replacement=await Client.launch(config)
+ try:
+  initialized=await replacement.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
+  assert initialized['result']['agentCapabilities']['_meta']['amplifier.dev/native']['admin']['lifecycle']['reconcileRelease']=={'version':1,'durable':True,'receipt':True}
+  proof={**{k:context[k] for k in ('fenceId','commandId','dataScope')},'outcome':'ready','instanceId':'replacement-host','receiptId':'trusted-ready-receipt','verified':True}
+  request={'cwd':str(cwd),'operation':'reconcileRelease','args':{**context,'outcome':'ready','proof':proof}}
+  assert 'error' in await replacement.request('_amplifier/admin/lifecycle',{**request,'cwd':str(tmp_path)})
+  assert 'error' in await replacement.request('_amplifier/admin/lifecycle',{**request,'operation':'acquire','args':context})
+  result=(await replacement.request('_amplifier/admin/lifecycle',request))['result']
+  assert result['released'] and result['lease']==held['lease'] and result['workerStarted'] is False
+  assert (await replacement.request('_amplifier/admin/lifecycle',request))['result']==result
+  assert not (Path(values['home'])/'projects').exists()
+ finally:await replacement.close()

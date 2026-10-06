@@ -87,6 +87,33 @@ class AdminLifecycle:
         if operation=='inspect':
             if args:raise ValueError('Administration lifecycle inspection takes no selectors')
             return self.inspect()
+        if operation=='reconcileRelease':
+            expected=context(args)
+            if set(args)!=CONTEXT|{'outcome','proof'} or expected['purpose']!='distribution-update':raise AdminFenced('Exact original distribution release required')
+            outcome=args['outcome'];proof=args['proof']
+            keys={'verified','fenceId','commandId','outcome','instanceId','dataScope','receiptId'}
+            if not isinstance(proof,dict) or set(proof)!=keys or proof.get('verified') is not True or outcome not in {'ready','unchanged'} or proof.get('outcome')!=outcome or any(proof.get(k)!=expected[k] for k in ('fenceId','commandId','dataScope')):raise AdminFenced('Authenticated exact distribution release proof required')
+            if any(not isinstance(proof.get(k),str) or not 1<=len(proof[k])<=200 or any(ord(c)<32 for c in proof[k]) for k in ('instanceId','receiptId')) or (proof['instanceId']==expected['instanceId'])!=(outcome=='unchanged'):raise AdminFenced('Distribution release must bind the observed host instance')
+            row=self.admission.receipt(expected)
+            if row.get('reconcileRequest'):
+                if row['reconcileRequest']!=args:raise AdminFenced('Distribution release receipt binds different proof')
+                return copy.deepcopy(row['reconcileResult'])
+            # Do not reacquire the original admission or infer that a missing,
+            # refused, pending or aborted attempt reached retirement.
+            lease=row.get('result',{}).get('lease',{})
+            if row['state']!='acquired' or row.get('result',{}).get('acquired') is not True or any(lease.get(k)!=v for k,v in expected.items()):raise AdminFenced('Original acquired distribution admission required')
+            durable=self.admission.intake()
+            if not durable or durable['context']!=expected or self.fence or self.closing or any(self.work().values()):raise AdminFenced('Native administration cannot reconcile this original admission')
+            try:gate=AdminGate(self.owner.config,exclusive=True)
+            except MaintenanceBusy:raise AdminFenced('Another native writer remains active') from None
+            try:
+                if self.admission.receipt(expected)!=row or self.admission.intake()!=durable:raise AdminFenced('Original distribution admission changed during reconciliation')
+                result={'released':True,'reconciled':True,'intakeClosed':False,'lease':copy.deepcopy(lease),'adminInstanceId':self.instance,'workerStarted':False}
+                # One transaction records proof and completion and removes only
+                # this original durable hold while actual writer exclusion lasts.
+                self.admission.update(expected,state='released',reconcileRequest=copy.deepcopy(args),reconcileResult=result)
+                return result
+            finally:gate.release()
         if operation in {'abortAdmission','admissionReceipt','refuseAdmission'}:
             expected=context(args)
             if expected['purpose']!='distribution-update':raise AdminFenced('Admission abort requires the original distribution admission')
