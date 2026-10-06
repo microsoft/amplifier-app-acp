@@ -88,6 +88,7 @@ class Worker:
         self.mounted_settings_stamp = {}
         self.config_inputs = ()
         self.command_lock = asyncio.Lock()
+        self.peer_stop_epoch = 0
         self.memory_task = None
         self.start_config = None
         self.remounting = False
@@ -709,6 +710,8 @@ class Worker:
         """Serialize admission with parking and bind a per-work write token."""
 
         op = data.get("op")
+        if op == 'stop':
+            self.peer_stop_epoch += 1
         if self.retiring or self.draining:
             # Only an exact live reply settles work already owned by cleanup.
             # This grants no command admission, activation or Host mutation.
@@ -953,6 +956,12 @@ class Worker:
                     from amplifier_acp.native.question_input import admit
                     authority=(lambda value:self.bridge("questions.delivery.admit",value)) if self.start_config.get("hostInfo",{}).get("features",{}).get("questions") else None
                     result=await admit(self.controls,self.runtime,arguments,self.activation,authorize=authority,provenance_path=self.input_provenance_path)
+                elif data["operation"] in {"peer.submit", "peer.steer"}:
+                    from amplifier_acp.native.peer_input import admit
+                    result = await admit(self.controls, self.runtime, arguments, self.activation,
+                        authorize=lambda value: self.bridge('coordination.delivery.admit', value),
+                        stop_epoch=lambda: (self.peer_stop_epoch, self.retiring, self.draining, self.transport_closed, self.ownership.yielding),
+                        provenance_path=self.input_provenance_path, originals=self.public_originals, steering=data['operation'] == 'peer.steer')
                 elif data["operation"] == "observation.submit":
                     from amplifier_acp.native.observation_input import admit
                     result = await admit(self.controls, self.runtime, arguments, self.activation,

@@ -101,3 +101,32 @@ async def submit(session,args):
             return session.steering.update(args['inputId'],result)
         except BaseException:
             session.steering.update(args['inputId'],{'disposition':'unknown','reason':'admission-or-effect-unconfirmed'});raise
+
+
+async def submit_peer(session, args):
+    """Same durable disposition journal; saved peer authority is checked in worker."""
+    from .native.peer_input import validate as validate_peer
+    validate_peer(args, steering=True)
+    async with session.steering_lock:
+        original = session.steering.read(args['inputId'])
+        if original:
+            exact = {**args, 'activeInputId': original['activeInputId']}
+            receipt = session.steering.read(args['inputId'], exact)
+            if receipt['disposition'] == 'reserved':
+                receipt = session.steering.update(args['inputId'], {'disposition': 'unknown', 'reason': 'admission-unconfirmed'})
+            return {**receipt, 'replayed': False}
+        if not session.prompt or session.prompt.done() or session.generation_id != args['targetGenerationId'] or not session.worker or session.worker.closed or session.cancelled:
+            return {'accepted': False, 'executed': False, 'reason': 'The exact peer steering generation is unavailable'}
+        from .message_metadata import guard_input_identity
+        from .relocation import home
+        guard_input_identity(home(session.server)/'sessions'/session.identity/'message-interactions.sqlite3', args['inputId'])
+        command = {**args, 'activeInputId': session.input_id}
+        session.steering.reserve(command, session.generation_id)
+        try:
+            result = await session.worker.control('peer.steer', command)
+            if not result.get('accepted'):
+                return session.steering.update(args['inputId'], {**result, 'disposition': 'rejected'})
+            return session.steering.update(args['inputId'], result)
+        except BaseException:
+            session.steering.update(args['inputId'], {'disposition': 'unknown', 'reason': 'peer-admission-unconfirmed'})
+            raise

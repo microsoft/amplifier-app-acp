@@ -44,6 +44,9 @@ def provenance(row):
         if isinstance(value,str) and len(value)<=8192:result[name]=value
         elif name=='createdAt' and type(value) in (int,float):result[name]=value
     delivery = metadata.get('voiceDelivery')
+    peer = metadata.get('peerEnvelope')
+    if metadata.get('inputOrigin') == 'peer' and isinstance(peer, dict) and len(json.dumps(peer).encode()) <= 12000:
+        result['peerEnvelope'] = peer
     if isinstance(delivery, dict) and delivery.get('version') == 1:
         result['voiceDelivery'] = {key:value for key,value in delivery.items() if key != 'context'}
     feedback = metadata.get('amplifier_context_event')
@@ -65,7 +68,10 @@ def steering_target(row):
     metadata=row.get('metadata') or {};marker=metadata.get('amplifier_input') or {}
     target=metadata.get('activeInputId')
     if (row.get('role')=='user' and marker.get('kind')=='steer'
-            and metadata.get('inputOrigin')=='steering'
+            and (metadata.get('inputOrigin')=='steering' or
+                 (metadata.get('inputOrigin')=='peer' and
+                  isinstance(metadata.get('peerEnvelope'),dict) and
+                  metadata['peerEnvelope'].get('mode')=='steer'))
             and isinstance(target,str) and 0<len(target)<=8192):
         return target
     return None
