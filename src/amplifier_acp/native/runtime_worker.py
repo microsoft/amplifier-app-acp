@@ -186,6 +186,8 @@ class Worker:
             self.pending_input_failure = None
             capability=self.session.coordinator.get_capability('live.steering')
             if isinstance(capability,dict):event['activeSteering']={key:capability[key] for key in ('version','mode','cancellable') if key in capability}
+            if isinstance(capability,dict) and capability.get('version')==1 and capability.get('mode')=='request_boundary' and callable(self.session.coordinator.get_capability('live.attachments.encode')):
+                event['activeSteering']['content']={'version':1,'attachments':True,'quotedReplies':True}
         elif root_generation and event.get('type') in {'generation.finished', 'generation.failed', 'generation.detached'}:
             self.root_generation_outcome = {
                 'generation.finished': 'completed',
@@ -927,12 +929,19 @@ class Worker:
                         result={'accepted':False,'executed':False,'reason':'This mounted runtime has no anchored request-boundary steering capability.'}
                     elif not generation or generation['id']!=arguments.get('generationId') or generation.get('initial_input_id')!=arguments.get('activeInputId'):
                         result={'accepted':False,'executed':False,'reason':'The requested generation ended before steering admission.'}
+                    elif arguments.get('contentVersion')==1 and not callable(self.session.coordinator.get_capability('live.attachments.encode')):
+                        result={'accepted':False,'executed':False,'reason':'This mounted runtime has no steering attachment encoder.'}
                     else:
                         from amplifier_acp.native.input_provenance import reserve
                         from amplifier_module_loop_live.runtime import Input
                         reserve(self.input_provenance_path,arguments['inputId'],{'inputOrigin':'steering','activeInputId':arguments['activeInputId'],**({'voiceDelivery':arguments['voiceDelivery']} if arguments.get('voiceDelivery') else {}),**({'steeringProvenance':arguments['provenance']} if arguments.get('provenance') else {})})
                         self.stage_original(arguments['inputId'],arguments.get('public_message'))
-                        try:result=await capability['submit'](Input('steer',arguments['text'],id=arguments['inputId'],activation=self.activation),arguments['generationId'])
+                        try:
+                            text=arguments['text']
+                            if arguments.get('contentVersion')==1:
+                                from amplifier_acp.native.message_interactions import prepare_input
+                                text=await prepare_input(self.session.coordinator,text,arguments.get('reply_context'),max_chars=self.runtime.max_input_chars)
+                            result=await capability['submit'](Input('steer',text,id=arguments['inputId'],attachments=tuple(arguments.get('attachments',[])),activation=self.activation),arguments['generationId'])
                         except ValueError as error:
                             self.public_originals.discard(arguments['inputId'])
                             result={'accepted':False,'executed':False,'reason':str(error)}

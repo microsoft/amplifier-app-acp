@@ -229,6 +229,19 @@ text at 16,000 characters, provenance at 8 KiB. `activeInputId` must identify th
 currently collected ACP prompt. Wait for its `generation.started` event carrying
 `activeInputId` before sending. No second prompt collector is created.
 
+Rich corrections replace `text` with `prompt` (the standard ACP text and
+attachment blocks) and an optional canonical `reply` reference. They require
+`activeSteering.content:{version:1,attachments:true,quotedReplies:true}` in both
+the adapter handshake and the current generation report. Quoted replies require
+a trusted message principal. The mounted loop must support attachment encoding;
+the context must support public-original preservation. Host captures the literal
+message independently of file expansion and quote rendering. Native validates
+and converts prompt content before reserving the quote or steering receipt.
+`prompt` has 1–33 blocks, begins with at most 16,000 characters of text, and is
+bounded at 8 MiB. Malformed attachments do not reserve an input. The same anchored
+input receipt, quote authority, and loop steering boundary serve rich and plain
+corrections; a rich correction never starts an additional turn.
+
 The adapter reserves a durable exact-request receipt before native dispatch.
 Acceptance means queued, not delivered. Response `{accepted:true,inputId,
 activeInputId,generationId,disposition}` may race authoritative events.
