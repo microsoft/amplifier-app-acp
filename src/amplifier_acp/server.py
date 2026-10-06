@@ -83,7 +83,7 @@ class Session:
             if location['blocked']:raise RpcError(-32000,'Native relocation outcome is unresolved; inspect its receipt before execution.',{'outcome':'unknown','replayed':False})
             self.execution_directory=location['executionDirectory']
         if self.worker and (self.worker.closed or self.worker.transport_closed or self.cancelled):await self.worker.close()
-        if self.worker and self.worker.process.returncode is None:return
+        if self.worker and self.worker.process and self.worker.process.returncode is None:return
         config={**self.server.config,'executionDirectory':self.execution_directory,**({'cloneBundle':self.bundle_override} if self.bundle_override else {})}
         self.coordination.lost()
         self.worker=NativeWorker(self.identity,self.cwd,config,self.observe,self.bridge)
@@ -162,6 +162,12 @@ class Session:
             from .lifecycle_failure import save as save_failure,supersede
             if kind=='generation.failed':save_failure(self.server,self.identity,row,self.input_id)
             else:supersede(self.server,self.identity)
+        if is_root and kind=='runtime.error' and row.get('phase')=='worker_startup' and row.get('inputSubmitted') is False:
+            from .lifecycle_failure import save_startup
+            save_startup(self.server,self.identity,row)
+        if is_root and kind=='runtime.ready':
+            from .lifecycle_failure import supersede
+            supersede(self.server,self.identity,source='recorded-native-startup')
         if is_root and kind=='generation.started':
             self.generation_id=row.get('generation_id')
             if self.prompt and not self.prompt.done():row={**row,'activeInputId':self.input_id}

@@ -47,6 +47,19 @@ def read(server,identity):
     if not isinstance(value,dict) or len(str(value))>8192:raise ValueError('Recorded native failure exceeds its inspection bound')
     return value
 
-def supersede(server,identity):
+def save_startup(server,identity,row):
+    """Retain bounded setup guidance without importing private exception text."""
+    from .native.session_health import failure_details
+    detail=failure_details('',row.get('errorType'))
+    if detail['category']=='unknown':detail=failure_details('','RuntimeStartupError')
+    receipt=row.get('diagnosticReceipt')
+    if isinstance(receipt,str) and re.fullmatch(r'startup-[a-f0-9]{32}\.log',receipt):
+        detail['diagnosticReceipt']=receipt
+    write(location(home(server),identity)/'lifecycle-failure.json',{
+        **detail,'stage':'worker_startup','inputSubmitted':False,'recordedAt':time.time(),
+        'source':'recorded-native-startup','current':True})
+
+def supersede(server,identity,*,source=None):
     value=read(server,identity)
-    if value and value.get('current'):write(location(home(server),identity)/'lifecycle-failure.json',{**value,'current':False})
+    if value and value.get('current') and (source is None or value.get('source')==source):
+        write(location(home(server),identity)/'lifecycle-failure.json',{**value,'current':False})

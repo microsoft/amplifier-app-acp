@@ -55,6 +55,46 @@ class NativeWorker:
         self._close_lock = asyncio.Lock()
 
     async def start(self, host_info=None, mcp_servers=None):
+        try:
+            return await self._start(host_info, mcp_servers)
+        except asyncio.CancelledError:
+            await self.close()
+            raise
+        except Exception as exc:
+            # Once readers exist, the worker's original runtime error owns its
+            # diagnostic. Qualification and spawn failures need the same local
+            # evidence before a process/reader can report them.
+            if hasattr(self, 'reader'):
+                await self.close()
+                raise
+            await self.close()
+            from .native.worker_diagnostics import save_startup_failure, setup_failure_detail
+            from .native.session_health import failure_details
+            from .native.update_diagnostics import exception_type, probe_record, PROBE_PREFIX
+            facts = getattr(exc, 'diagnostic_facts', {})
+            try:
+                probe = probe_record(PROBE_PREFIX + json.dumps(facts.get('probe', {}))) if isinstance(facts, dict) else None
+            except Exception:
+                probe = None
+            kind = (probe or {}).get('errorType') or exception_type(exc)
+            detail = failure_details('', kind)
+            if detail['category'] == 'unknown':
+                detail = failure_details('', 'RuntimeStartupError')
+            app_home = Path(self.config.get('appHome') or os.environ.get('AMPLIFIER_WEB_HOME') or Path.home()/'.amplifier-unified').expanduser().resolve()
+            diagnostic = await asyncio.to_thread(save_startup_failure,
+                {'runtime_id': self.session_id, 'phase': 'runtime-setup'}, None,
+                failure=setup_failure_detail(exc), home=app_home)
+            data = {**detail, 'phase': 'worker_startup', 'inputSubmitted': False, 'replayed': False}
+            if diagnostic:
+                data['diagnosticReceipt'] = diagnostic.name
+            failure = NativeError(detail['summary'] + ' ' + detail['guidance'], data=data)
+            try:
+                await self.observe({'type': 'runtime.error', **data})
+            except Exception:
+                pass  # A lost notification must not replace the startup error.
+            raise failure from exc
+
+    async def _start(self, host_info=None, mcp_servers=None):
         env = os.environ.copy()
         # An inherited shell's venv must not redirect Foundation installers.
         env.pop('VIRTUAL_ENV',None)
@@ -87,6 +127,7 @@ class NativeWorker:
         env['AMPLIFIER_UNIFIED_RELEASE']=generation or ''
         if generation and (app_home/'updates/releases'/generation/'profiles-qualified.json').exists():env['AMPLIFIER_RUNTIME_IMMUTABLE']='1'
         command = managed_command or self.config.get('workerCommand') or _default_worker_command()
+        bundle=selected_bundle(self.config)
         self.process = await asyncio.create_subprocess_exec(*command, cwd=self.config.get('executionDirectory',self.cwd), env=env,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=sys.stderr, limit=48_000_001)
@@ -96,7 +137,6 @@ class NativeWorker:
             except BaseException:
                 self.process.terminate();await self.process.wait();raise
         self.reader = asyncio.create_task(self.read())
-        bundle=selected_bundle(self.config)
         await self.write({'op':'start','session':{'id':self.session_id,'workspace':self.cwd,
             'workingDirectory':self.config.get('executionDirectory',self.cwd),'bundle':bundle, 'hostBridge':host_info is not None, 'hostInfo':host_info or {}, 'mcpServers':mcp_servers or []}})
         try:

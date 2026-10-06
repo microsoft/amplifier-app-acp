@@ -11,7 +11,7 @@ import uuid
 PROBE_PREFIX = 'AMPLIFIER_UPDATE_PROBE='
 ERROR_TYPES = {'Exception','CommandFailure','CommandTimeout','AssertionError','ImportError','ModuleNotFoundError','FileNotFoundError','PermissionError',
                'OSError','RuntimeError','ValueError','TimeoutError','CancelledError','ModuleActivationError',
-               'BundleNotFoundError','BundleLoadError','BundleValidationError','BundleDependencyError','HostComponentConflict','ConfiguredModuleError'}
+               'BundleNotFoundError','BundleLoadError','BundleValidationError','BundleDependencyError','HostComponentConflict','ConfiguredModuleError','AmbiguousBundleReferenceError'}
 PREPARATION_REASONS = {'ModuleActivationError':'module-prepare-failed','BundleNotFoundError':'bundle-not-found',
                        'BundleLoadError':'bundle-load-failed','BundleValidationError':'bundle-validation-failed',
                        'BundleDependencyError':'bundle-dependency-failed', 'HostComponentConflict':'host-component-conflict','ConfiguredModuleError':'configured-module-failed'}
@@ -87,4 +87,3 @@ class CommandTimeout(TimeoutError):
     def __init__(self,duration):
         super().__init__('Update command exceeded its time limit')
         self.diagnostic_facts={'durationMs':round(duration*1000),'errorType':'TimeoutError','timedOut':True}
-
