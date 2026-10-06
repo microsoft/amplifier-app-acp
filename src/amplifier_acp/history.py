@@ -34,6 +34,34 @@ def inspect(directory):
     return {'available':True,'revision':revision,'diagnostics':diagnostics}
 
 
+def exact_message(directory, identity, expected_revision, *, app_home=None):
+    """Select one complete current source without loading an execution runtime.
+
+    Use the existing canonical identity and size contract, including duplicate
+    refusal. A historical user role is reference data, never new admission.
+    """
+    if not isinstance(identity, str) or not identity or len(identity) > 512:
+        raise HistoryError('Exact historical message identity required')
+    from .session_lifecycle import canonical, bound
+    rows, _, revision = canonical(Path(directory), expected_revision, app_home=app_home)
+    position, row = rows[bound(rows, identity, user=True)]
+    updates, diagnostics = content_updates(row, position)
+    if diagnostics or any(update.get('sessionUpdate') != 'user_message_chunk' for update in updates):
+        raise HistoryError('Complete historical user message projection is unavailable')
+    # The source quotation is the original visible text; attachments never
+    # become a text source or acquire a new access grant through this read.
+    text = ''.join(update['content']['text'] for update in updates if update['content']['type'] == 'text')
+    message = {'id': identity, 'role': 'user', 'text': text,
+               '_meta': {'amplifier.dev/history': provenance(row)}}
+    result = {'revision': revision, 'selection': 'exact-message', 'message': message,
+              'complete': True, 'execution': False}
+    if len(json.dumps(result, ensure_ascii=False).encode()) > 65536:
+        raise HistoryError('Historical message exceeds the complete-source byte bound')
+    if stamp(source(Path(directory))[0])[0] != revision:
+        raise HistoryError('Native history changed during selected source projection')
+    return result
+
+
 def provenance(row):
     metadata=row.get('metadata') or {};marker=metadata.get('amplifier_input') or {}
     result={'authorization':'unverified-native-history','inputOrigin':'unknown'}

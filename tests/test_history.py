@@ -21,6 +21,43 @@ def test_tail_pages_preserve_whole_turns_and_stable_ids(tmp_path):
     assert [r['id'] for r in d['turnGroups']]==['turn-0'];assert d['nextCursor'] is None
     assert all(u['_meta']['amplifier.dev/history']['turnId']=='turn-5' for u in a['turnGroups'][0]['updates'])
 
+def test_exact_old_source_refuses_duplicate_changed_and_oversized_originals(tmp_path):
+    from amplifier_acp.history import exact_message, inspect
+    p=tmp_path/'session';file=history(p,75)
+    (p/'metadata.json').write_text('{}')
+    original=file.read_bytes();revision=inspect(p)['revision']
+    selected=exact_message(p,'turn-0',revision)
+    assert selected['message']['text']=='0' and selected['complete'] and not selected['execution']
+    assert selected['message']['_meta']['amplifier.dev/history']['authorization']=='unverified-native-history'
+    assert file.read_bytes()==original
+    with file.open('a') as out:out.write(json.dumps({'role':'user','content':'duplicate','metadata':{'amplifier_input':{'id':'turn-0'}}})+'\n')
+    with pytest.raises(ValueError,match='changed'):exact_message(p,'turn-0',revision)
+    with pytest.raises(ValueError,match='ambiguous'):exact_message(p,'turn-0',inspect(p)['revision'])
+    file.write_text(json.dumps({'role':'user','content':'x'*65536,'metadata':{'amplifier_input':{'id':'large'}}})+'\n')
+    with pytest.raises(ValueError,match='complete-source byte bound'):exact_message(p,'large',inspect(p)['revision'])
+
+@pytest.mark.asyncio
+async def test_exact_source_over_stdio_is_not_limited_to_recent_turns_or_a_worker(tmp_path):
+    from client import Client
+    from amplifier_acp.native.session_files import project_slug
+    home=tmp_path/'home';cwd=tmp_path/'cwd';cwd.mkdir();sid='33333333-3333-4333-8333-333333333333'
+    directory=home/'projects'/project_slug(str(cwd))/'sessions'/sid;directory.parent.mkdir(parents=True)
+    file=history(directory,75);(directory/'metadata.json').write_text(json.dumps({'session_id':sid,'working_dir':str(cwd)}))
+    original=file.read_bytes();config=tmp_path/'config.json'
+    config.write_text(json.dumps({'home':str(home),'appHome':str(tmp_path/'app'),'workerCommand':['/must-not-start-for-exact-history']}))
+    client=await Client.launch(config)
+    try:
+        initialized=await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
+        assert initialized['result']['agentCapabilities']['_meta']['amplifier.dev/native']['history']['exactMessageRead']['version']==1
+        scope={'sessionId':sid,'cwd':str(cwd)}
+        revision=(await client.request('_amplifier/history/inspect',scope))['result']['revision']
+        result=await client.request('_amplifier/history/message',{**scope,'messageId':'turn-0','expectedRevision':revision})
+        assert result['result']['message']['text']=='0' and result['result']['execution'] is False
+        assert file.read_bytes()==original and not client.events
+        denied=await client.request('_amplifier/history/message',{**scope,'messageId':'turn-0','expectedRevision':'changed'})
+        assert 'error' in denied
+    finally:await client.close()
+
 def test_cursor_rejects_changed_history_and_traversal(tmp_path):
     p=tmp_path/'session';file=history(p);a=page(p,limit=1)
     with file.open('a') as out:out.write('{"role":"user","content":"later"}\n')
