@@ -49,6 +49,8 @@ def provenance(row):
         result['peerEnvelope'] = peer
     if isinstance(delivery, dict) and delivery.get('version') == 1:
         result['voiceDelivery'] = {key:value for key,value in delivery.items() if key != 'context'}
+    if result.get('inputOrigin') == 'peer' and isinstance(peer, dict) and peer.get('mode') == 'notify' and metadata.get('passive') is True:
+        result['recordedOnly'] = True
     feedback = metadata.get('amplifier_context_event')
     if isinstance(feedback, dict) and feedback.get('kind') == 'reaction' and len(json.dumps(feedback).encode()) <= 32768:
         result['feedbackEvent'] = feedback
@@ -77,7 +79,14 @@ def steering_target(row):
     return None
 
 
+def passive_peer(row):
+    metadata=row.get('metadata') or {};event=metadata.get('amplifier_context_event') or {}
+    return (row.get('role')=='user' and metadata.get('inputOrigin')=='peer'
+            and metadata.get('passive') is True and event.get('kind')=='peer-notification')
+
+
 def starts_turn(row,current):
+    if passive_peer(row):return current is None
     if current is None or (row.get('metadata') or {}).get('amplifier_voice') or (row.get('metadata') or {}).get('amplifier_context_event'):return True
     return row.get('role')=='user' and steering_target(row)!=current
 
@@ -85,7 +94,7 @@ def starts_turn(row,current):
 def visible(row):
     metadata=row.get('metadata') or {}
     marker=metadata.get('amplifier_input') or {}
-    return (row.get('role') in {'user','assistant','tool'} and (metadata.get('ephemeral') is not True or metadata.get('amplifier_context_event', {}).get('kind') == 'reaction')
+    return (row.get('role') in {'user','assistant','tool'} and (metadata.get('ephemeral') is not True or metadata.get('amplifier_context_event', {}).get('kind') in {'reaction', 'peer-notification'})
             and marker.get('kind','user') in {'user','steer'} and marker.get('source','user')=='user')
 
 def content_updates(row,position):
@@ -100,6 +109,8 @@ def content_updates(row,position):
             updates.append({'sessionUpdate':'tool_call_update','toolCallId':identity,'status':'completed','rawOutput':blocks,'_meta':meta})
         else:diagnostics.append({'code':'unassociated_tool_result','position':position})
         return updates,diagnostics
+    # starts_turn keeps passive notices inside the generation's original turn;
+    # the chunk still preserves the canonical row role and peer attribution.
     kind='user_message_chunk' if role=='user' else 'agent_message_chunk'
     from .public_message import row_envelope
     try:original=row_envelope(row)
@@ -221,7 +232,7 @@ def _page(directory,*,cursor=None,limit=50,max_bytes=2_000_000,expected_revision
                 try:row=json.loads(raw)
                 except ValueError:raise HistoryError('Native transcript contains a malformed record; history was preserved.')
                 if not isinstance(row,dict) or not isinstance(row.get('role'),str):raise HistoryError('Native transcript record has no role.')
-                rows.append((position,row));turns+=int(row.get("role")=="user" and visible(row) and steering_target(row) is None);consumed=position;buffer=clean[:split+1] if split>=0 else b''
+                rows.append((position,row));turns+=int(row.get("role")=="user" and visible(row) and not passive_peer(row) and steering_target(row) is None);consumed=position;buffer=clean[:split+1] if split>=0 else b''
                 if not buffer:break
             if offset==0 and not buffer:break
     if stamp(path)[0]!=revision:raise HistoryError('Native history changed during read; retry the read with a fresh cursor.')

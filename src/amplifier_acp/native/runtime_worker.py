@@ -476,6 +476,9 @@ class Worker:
             await self.session.coordinator.mount('context',ProvenanceContext(self.session.coordinator.get('context'),self.input_provenance_path,self.public_originals))
             from amplifier_acp.native.passive_feedback import install as install_feedback
             self.passive_feedback = install_feedback(self.controls, self.input_provenance_path.parent)
+            if config.get('hostInfo', {}).get('features', {}).get('peerNotifications'):
+                from amplifier_acp.native.passive_peer import install as install_peer
+                self.passive_peer = install_peer(self.controls, self.bridge)
             await self.ownership.register()
             self.execution = asyncio.create_task(self.session.execute(""))
             self.execution.add_done_callback(self.executed)
