@@ -75,7 +75,8 @@ async def ensure(home, generation, session, *, shared_home=None):
         registry_home=receipt / "foundation",
         shared_home=shared_home,
     )
-    bundle = session.get("bundle") or config.active_bundle
+    from .host.bundle_paths import canonical_bundle_reference
+    bundle = canonical_bundle_reference(config, session.get("bundle") or config.active_bundle)
     key = configuration_key(config.settings, home, receipt)
     # Explicit local bundles can shadow a named offering. Their content is not
     # represented by the app's Git generation and must be qualified separately.

@@ -155,7 +155,7 @@ async def test_picker_lists_standalone_registrations_not_namespace_roots(tmp_pat
     }}))
     result=await manager.perform('bundles.list',{'workspace':str(tmp_path)})
     names={row['name'] for row in result['registeredBundles']}
-    assert names == {'anchors','foundation','my-root','work','anchors-work'}
+    assert names == {'anchors','anchors-amp-dev','my-root','work','work-amp-dev','anchors-work'}
     assert any(row['role']=='behavior' and row['uri']=='foundation:behaviors/addon' for row in result['bundles'])
 
 
@@ -171,7 +171,7 @@ async def test_builtin_work_and_catalog_order_use_displayed_names_without_loadin
     }}})
     result = await manager.perform('bundles.list', {'workspace': str(tmp_path)})
     assert [row['name'] for row in result['registeredBundles']] == [
-        'alpha', 'anchors', 'anchors-work', 'anchors-amp-dev', 'foundation', 'work', 'Zulu']
+        'alpha', 'anchors', 'anchors-work', 'anchors-amp-dev', 'work', 'work-amp-dev', 'Zulu']
     assert next(row for row in result['registeredBundles'] if row['name']=='work')['label']=='Work'
     from amplifier_acp.native.host.config import WORK_SOURCE
     assert next(row for row in result['registeredBundles'] if row['name']=='work')['source']==WORK_SOURCE
@@ -188,7 +188,7 @@ async def test_composition_reorder_preserves_aliases_and_disabled_entries(tmp_pa
     await manager.perform('bundles.reorder',{**args,'ids':[by_name['B'],by_name['A']],'expectedIds':[by_name['A'],by_name['B']]})
     saved=manager.store.read(tmp_path)
     assert saved['bundle']['app']==['foundation:B','foundation:A']
-    assert saved['bundle']['added']['Alias']=='foundation:Alias'
+    assert saved['bundle']['added']['alias']=='foundation:Alias'
     with pytest.raises(ValueError,match='changed'):
         await manager.perform('bundles.reorder',{**args,'ids':[by_name['A'],by_name['B']],'expectedIds':[by_name['A'],by_name['B']]})
     assert manager.store.read(tmp_path)==saved
@@ -199,6 +199,70 @@ def test_offered_profiles_never_promotes_historical_cache_aliases():
     from amplifier_acp.native.bundles import offered_profiles
     config=SimpleNamespace(registrations={'foundation':'current','anchors':'current','work':'current'},settings={})
     cache={'amplifier-dev':{},'exp-delegation':{},'anchors-amp-dev':{}}
-    assert offered_profiles(config,cache)==['anchors','foundation','work']
-    config.registrations['amplifier-dev']='explicit-current'
+    assert offered_profiles(config,cache)==['anchors','work']
+    config.registrations['amplifier-dev']='source-override'
+    assert 'amplifier-dev' not in offered_profiles(config,cache)
+    config.settings['bundle']={'added':{'amplifier-dev':'explicit-current'}}
     assert 'amplifier-dev' in offered_profiles(config,cache)
+
+
+async def test_disabled_builtin_amp_dev_stays_disabled_after_reload(tmp_path):
+    from amplifier_acp.native.host.config import PRECONFIGURED_BUNDLES
+    manager = BundleManager(tmp_path)
+    args = {'workspace': str(tmp_path)}
+    result = await manager.perform('bundles.add', {**args, 'name': 'work-amp-dev',
+        'uri': PRECONFIGURED_BUNDLES['work-amp-dev'], 'role': 'standalone'})
+    row = next(row for row in result['bundles'] if row['name'] == 'work-amp-dev')
+    await manager.perform('bundles.toggle', {**args, 'id': row['id'], 'enabled': False})
+    reloaded = BundleManager(tmp_path)
+    saved = reloaded.store.read(tmp_path)
+    result = await reloaded.perform('bundles.list', args)
+    assert 'work-amp-dev' not in {row['name'] for row in result['registeredBundles']}
+    assert reloaded.store.read(tmp_path) == saved
+
+
+async def test_new_standalone_ids_are_lowercase_kebab_case_and_collisions_refuse(tmp_path):
+    manager = BundleManager(tmp_path)
+    args = {'workspace': str(tmp_path), 'role': 'standalone'}
+    result = await manager.perform('bundles.add', {**args, 'name': 'My_Work Bundle',
+        'uri': 'foundation:custom'})
+    saved = manager.store.read(tmp_path)
+    assert saved['bundle']['added']['my-work-bundle'] == 'foundation:custom'
+    assert next(row for row in result['bundles'] if row['role'] == 'standalone')['name'] == 'my-work-bundle'
+    with pytest.raises(ValueError, match='already registered'):
+        await manager.perform('bundles.add', {**args, 'name': 'MY-WORK-BUNDLE',
+            'uri': 'foundation:different'})
+    assert manager.store.read(tmp_path) == saved
+
+
+@pytest.mark.parametrize('name', ['anchors', 'anchors-amp-dev', 'work', 'work-amp-dev'])
+def test_builtin_roots_preserve_selected_bundle_and_user_bindings(tmp_path, name):
+    from amplifier_acp.native.host.config import HostConfig, PRECONFIGURED_BUNDLES
+    settings = {'bundle': {'active': 'chosen-root'}}
+    config = HostConfig(tmp_path/'app', tmp_path, settings, tmp_path/'registry')
+    assert config.registrations[name] == PRECONFIGURED_BUNDLES[name]
+    settings['bundle']['added'] = {name: 'file:///custom/root.md'}
+    assert config.registrations[name] == 'file:///custom/root.md'
+    settings['sources'] = {'bundles': {name: 'file:///override/root.md'}}
+    assert config.registrations[name] == 'file:///override/root.md'
+    assert config.active_bundle == 'chosen-root'
+
+
+async def test_catalog_read_preserves_history_defaults_and_settings(tmp_path):
+    from amplifier_acp.native.host.config import PRECONFIGURED_BUNDLES
+    manager = BundleManager(tmp_path)
+    manager.store.update(tmp_path, 'global', lambda _: {
+        'bundle': {'active': 'foundation', 'added': {'Custom': 'foundation:custom'}}})
+    history = tmp_path/'sessions'/'old-chat'
+    history.mkdir(parents=True)
+    (history/'metadata.json').write_text('{"bundle_name":"Work","name":"Keep my name"}')
+    (history/'transcript.jsonl').write_text('{"role":"user","content":"do not replay"}\n')
+    before = {p: p.read_bytes() for p in history.iterdir()}
+    settings = manager.store.read(tmp_path)
+    result = await manager.perform('bundles.list', {'workspace': str(tmp_path)})
+    catalog = {row['name']: row for row in result['registeredBundles']}
+    assert set(catalog) == set(PRECONFIGURED_BUNDLES) | {'Custom'}
+    assert catalog['work-amp-dev']['label'] == 'Work · Amplifier development'
+    assert catalog['work-amp-dev']['source'] == PRECONFIGURED_BUNDLES['work-amp-dev']
+    assert manager.store.read(tmp_path) == settings
+    assert {p: p.read_bytes() for p in history.iterdir()} == before

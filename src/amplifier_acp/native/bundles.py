@@ -26,7 +26,8 @@ MAX_DOCUMENT = 256 * 1024
 MODULE_KEYS = {"session", "providers", "tools", "hooks", "agents", "context", "spawn"}
 # Conversation profiles known to the host/ecosystem. Other roots are explicitly
 # registered through bundle.added (the standalone role in the management UI).
-STANDALONE_PROFILES = {"foundation", "anchors", "anchors-amp-dev", "amplifier-dev", "exp-delegation", "work"}
+from .host.config import PRECONFIGURED_BUNDLES
+STANDALONE_PROFILES = set(PRECONFIGURED_BUNDLES)
 SECRET_KEYS = {"api_key", "apikey", "token", "access_token", "refresh_token", "id_token", "auth_token", "secret", "client_secret", "password", "passwd", "authorization", "cookie", "cookies", "credentials", "private_key", "bearer_token"}
 
 
@@ -375,13 +376,19 @@ class BundleManager:
                     if role not in {"behavior", "standalone"}:
                         raise ValueError("Choose behavior or standalone.")
                     name = args.get("name") or PurePosixPath(uri.split("#subdirectory=")[-1]).stem
-                    name = re.sub(r"[^A-Za-z0-9_-]+", "-", name).strip("-")[:100] or "bundle"
+                    # Standalone names are IDs, not display labels. Preserve
+                    # existing alias spelling on reads; new registrations use
+                    # lowercase kebab-case so labels cannot create casing traps.
+                    name = (re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:100].rstrip("-") or "bundle"
+                            if role == "standalone" else
+                            re.sub(r"[^A-Za-z0-9_-]+", "-", name).strip("-")[:100] or "bundle")
                     existing = next((row for row in entries if row["uri"] == uri and row["role"] == role), None)
+                    if role == "standalone" and any(row is not existing and row["role"] == role
+                            and row["name"].casefold() == name for row in entries):
+                        raise ValueError("That standalone bundle ID is already registered; choose another lowercase ID.")
                     if existing:
                         existing.update(enabled=True, name=name)
                     else:
-                        if role == "standalone" and any(row["role"] == role and row["name"] == name for row in entries):
-                            raise ValueError("That standalone bundle name is already registered; choose another name.")
                         entries.append({"id": uuid.uuid4().hex, "uri": uri, "name": name, "role": role, "enabled": True})
                     if review is not None:
                         saved = next(row for row in entries if row["uri"] == uri and row["role"] == role)

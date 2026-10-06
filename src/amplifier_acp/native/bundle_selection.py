@@ -45,6 +45,8 @@ async def inspect_bundle(controls, workspace, bundle):
     managed = runtime_scope(workspace, controls.session.session_id)
     config = load_config(workspace, session_id=controls.session.session_id,
                          global_only=bool(managed))
+    from .host.bundle_paths import canonical_bundle_reference
+    bundle = canonical_bundle_reference(config, bundle)
     execution_workspace = Path(controls.session.coordinator.get_capability('session.working_dir') or config.workspace).expanduser().resolve()
     root = await load_root_bundle(config, bundle, execution_workspace=execution_workspace)
     _, loaded, resolved = root
@@ -180,14 +182,15 @@ async def switch(worker, args):
         worker.session = worker.controls = worker.naming = worker.execution = None
     try:
         await dispose()
-        journal.select(args['bundle'], reset_model=args.get('resetModel', False))
-        new_config = {**old_config, 'bundle': args['bundle']}
+        selected_bundle = checked['bundle']
+        journal.select(selected_bundle, reset_model=args.get('resetModel', False))
+        new_config = {**old_config, 'bundle': selected_bundle}
         new_config.pop('selection', None)  # The current pin is in control-state.json.
         await asyncio.wait_for(worker.start(new_config, raise_errors=True, recover_bundle=False,
                                             resolved_root=resolved_root), 600)
         journal.commit()
         worker.bundle_preview = None
-        return {'bundle': args['bundle'], 'configuration': worker.controls.configuration(),
+        return {'bundle': selected_bundle, 'configuration': worker.controls.configuration(),
                 'providers': await worker.controls.perform('configuration.providers'), 'historyPreserved': True}
     except BaseException as exc:
         diagnostic = _failure_reference(exc, worker.runtime.session_id)
@@ -213,6 +216,7 @@ BUNDLE_LABELS = {
     'anchors': ('Anchors', 'General-purpose tools, instructions, and agents.'),
     'anchors-amp-dev': ('Anchors · Amplifier development', 'Anchors with Amplifier ecosystem knowledge and tooling.'),
     'work': ('Work', 'A small tool set with live delegation and managed context.'),
+    'work-amp-dev': ('Work · Amplifier development', 'Work with Amplifier ecosystem knowledge and tooling.'),
     'anchors-work': ('Anchors + Work', 'Anchors capabilities with Work execution and context handling.'),
 }
 

@@ -38,7 +38,7 @@ async def test_exact_receipt_classifies_only_proven_inspection_refusal(tmp_path,
 @pytest.mark.asyncio
 async def test_source_denial_after_dispose_keeps_unknown_and_restores_history(tmp_path,monkeypatch):
  worker,controls,session=worker_fixture(tmp_path,monkeypatch)
- monkeypatch.setattr(bundle_selection,'inspect_bundle',AsyncMock(return_value=({'modelCompatible':True},object())))
+ monkeypatch.setattr(bundle_selection,'inspect_bundle',AsyncMock(return_value=({'modelCompatible':True,'bundle':'target'},object())))
  journal=bundle_selection.BundleTransaction(worker.home,worker.workspace,'fixture-session')
  journal.native.mkdir(parents=True);journal.local.mkdir(parents=True)
  metadata=journal.native/'metadata.json';metadata.write_text(json.dumps({'bundle':'original','bundle_name':'original'}))
