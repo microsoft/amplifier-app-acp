@@ -87,16 +87,32 @@ def runtime_scope(cwd,identity=None,config=None):
         raise Refused('Managed directory has no native creation authority; ordinary session creation cannot adopt it')
     return None
 
-def options(config):
+def bundle_choices(config):
+    # Explicit launcher allowlists (including an empty one) remain authoritative.
+    # Product launchers can use the same global root catalog as workspace chats.
     choices=config.get('forkBundles',{})
+    if 'forkBundles' not in config and config.get('managedBundleCatalog') is True:
+        from .native.host.config import read_config
+        from .native.bundles import offered_profiles
+        shared=Path(config['home']).expanduser().resolve(strict=True)
+        settings=read_config(shared,home=app_home(config),shared_home=shared,global_only=True,
+                             registry_home=config.get('registryHome'))
+        choices={name:settings.registrations[name] for name in offered_profiles(settings)}
     if not isinstance(choices,dict) or len(choices)>64 or any(not isinstance(k,str) or not 1<=len(k)<=200 or not isinstance(v,str) or not 1<=len(v)<=4096 for k,v in choices.items()):raise Refused('Configured managed bundle choices are invalid')
-    return {'version':1,'bundles':[{'id':key,'name':key,'revision':digest([key,value])} for key,value in choices.items()],'defaultBundle':{'kind':'engine-default'},'configurationScope':'global-and-session','runtimeStarted':False}
+    return choices
+
+def options(config):
+    from .native.bundle_selection import catalog_entry
+    choices=bundle_choices(config)
+    return {'version':1,'bundles':[{'id':key,'name':key,'label':catalog_entry(key)['label'],
+        'description':catalog_entry(key)['description'],'revision':digest([key,value])}
+        for key,value in choices.items()],'defaultBundle':{'kind':'engine-default'},'configurationScope':'global-and-session','runtimeStarted':False}
 
 def bundle(config,args):
     if 'bundle' not in args:
         if 'bundleRevision' in args:raise Refused('Bundle revision requires a configured alias')
         return bounded(config.get('bundle'),'configured default bundle',4096)
-    choices=config.get('forkBundles',{})
+    choices=bundle_choices(config)
     alias=bounded(args['bundle'],'bundle alias',200)
     selected=choices.get(alias) if isinstance(choices,dict) else None
     if not isinstance(selected,str) or args.get('bundleRevision')!=digest([alias,selected]):raise Refused('Configured bundle alias or revision changed')
@@ -256,7 +272,8 @@ async def dispatch(server,params):
         if set(params)-{'operation','bundle','bundleRevision'}:raise Refused('Managed defaults accepts only a configured alias and revision')
         selected=bundle(server.config,params)
         from .native.draft_defaults import resolve_defaults
-        result=await resolve_defaults(app_home(server.config),str(Path(server.config['home']).resolve()),selected,global_only=True)
+        result=await resolve_defaults(app_home(server.config),str(Path(server.config['home']).resolve()),selected,global_only=True,
+                                      registry_home=server.config.get('registryHome'))
         result.pop('bundle',None)
         if len(encoded(result))>262144 or len(result.get('providers',[]))>64:raise Refused('Managed provider metadata exceeds its bound')
         return {**result,'bundleSelection':({'kind':'configured','id':params['bundle'],'revision':params['bundleRevision']} if 'bundle' in params else {'kind':'engine-default'}),'configurationScope':'global-and-session','runtimeStarted':False}

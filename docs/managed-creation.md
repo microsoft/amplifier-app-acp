@@ -16,6 +16,16 @@ its hash is SHA256 of recursively sorted compact UTF8 JSON excluding the hash.
 No links, hard-linked marker, external root, extra field, conflicting command or
 existing native identity is adopted. Bundle aliases/revisions use the existing
 launcher `forkBundles` mapping; omission uses the configured default bundle.
+
+Product launchers may set `managedBundleCatalog: true` to offer the same global
+registered root bundles as workspace chats. This reads shared settings only,
+honors disabled roots and custom registrations, and never mounts a session or
+fetches sources. An explicit `forkBundles` mapping, including `{}`, overrides
+this catalog policy. Selection still binds the alias and current source revision;
+changed or disabled choices refuse instead of silently choosing another source.
+Rows retain stable `id`/`name` values and provide a human-readable `label` and
+`description`. Provider default/model probes use the launcher's `registryHome`,
+matching worker preparation without inheriting workspace settings.
 A saved provider/model selection is typed and preserved, never guessed.
 
 Creation reserves a native-owned `appHome/sessions/<id>/managed-creation.json`

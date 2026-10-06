@@ -101,7 +101,8 @@ async def resolve(config, params):
     if cursor is not None:
         bounded(cursor, 'model page cursor', 1024)
     result = await resolve_defaults(app_home(config), str(Path(config['home']).resolve()),
-                                    selected, global_only=True, model_instance=instance)
+                                    selected, global_only=True, model_instance=instance,
+                                    registry_home=config.get('registryHome'))
     for key in ('bundle', 'modelInstance', 'globalOnly'):
         result.pop(key, None)
     choice = ({'kind': 'configured', 'id': params['bundle'], 'revision': params['bundleRevision']}

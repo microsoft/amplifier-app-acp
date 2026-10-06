@@ -76,7 +76,7 @@ async def test_managed_defaults_resolves_only_exact_alias_without_session(tmp_pa
     client=await Client.launch(config)
     try:
         await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
-        choices=(await client.request('_amplifier/managed',{'operation':'options'}))['result'];choice=choices['bundles'][0];assert choice=={'id':'approved','name':'approved','revision':digest(['approved',values['bundle']])}
+        choices=(await client.request('_amplifier/managed',{'operation':'options'}))['result'];choice=choices['bundles'][0];assert choice=={'id':'approved','name':'approved','label':'approved','description':'Registered root bundle.','revision':digest(['approved',values['bundle']])}
         wrong=await client.request('_amplifier/managed',{'operation':'defaults','bundle':'approved','bundleRevision':'0'*64});assert 'error' in wrong
         result=await client.request('_amplifier/managed',{'operation':'defaults','bundle':'approved','bundleRevision':choice['revision']});assert 'result' in result,result
         body=result['result'];assert body['globalOnly'] and body['runtimeStarted'] is False and body['bundleSelection']['id']=='approved';assert body['providers'][0]['id']=='fixture';assert 'bundle' not in body
