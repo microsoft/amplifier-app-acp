@@ -84,10 +84,8 @@ class Restores:
         coverage=authority.get('coverage')
         if not isinstance(coverage,dict) or any(type(coverage.get(key))is not bool for key in ('completeNativeBackup','completeProductBackup','credentialsIncluded')) or coverage['completeProductBackup'] is not False:raise ValueError('Native coverage declaration is missing or unsupported')
         source=authority.get('sourceConfiguration',{})
-        if not isinstance(source,dict) or set(source)-{'bundle','registryHome','runtimeManifest','generationProfiles'}:raise ValueError('Unsupported native source configuration')
-        if any(not isinstance(value,str) or len(value)>8192 for key,value in source.items() if key!='generationProfiles'):raise ValueError('Unsupported native source selector')
-        profiles=source.get('generationProfiles',[])
-        if not isinstance(profiles,list) or len(profiles)>128 or any(not isinstance(value,str) or len(value)>8192 for value in profiles):raise ValueError('Unsupported generation profile selection')
+        from .archive_sources import validate as validate_sources
+        validate_sources(source)
         return header,roots
     def scan(self,path,manifest,*,expected=None,destination=None):
         """Stream TAR once; only the bounded header and one row are in memory."""
@@ -218,8 +216,18 @@ class Restores:
                 write(native/PENDING,marker)
                 with Gate({'home':str(native)},exclusive=True),Gate({'home':str(native)},exclusive=True,filename='.amplifier-acp-admin-writers.lock'):
                     self.scan(path,target/'restore-manifest.sqlite3',expected=body['header'],destination=target)
+                    from .restored_credentials import rebind
+                    with sqlite3.connect((target/'restore-manifest.sqlite3').as_uri()+'?mode=ro&immutable=1',uri=True) as inventory:
+                        included=[name for name,raw in inventory.execute('SELECT path,body FROM entries') if strict_json(raw).get('status')=='included']
+                    rebind(target,body['header']['nativeAuthority']['roots'],included)
                     config,environment=self.launcher(body,target)
                     write(target/'native-launcher.json',config);write(target/'native-environment.json',environment)
+                    write(target/'native-configuration-review.json',{
+                        'sourceConfiguration':body['header']['nativeAuthority'].get('sourceConfiguration',{}),
+                        'automaticActivation':False,
+                        'requirements':['Review copied settings and credential path references before launch.',
+                            'Independently restore host-owned managed files before resuming managed chats.',
+                            'Qualify and explicitly configure archived module source overrides before execution.']})
                     result={'restored':True,'destination':body['destination'],'directory':str(target),'artifactId':body['artifactId'],'sha256':body['sha256'],'previewHash':args['previewHash'],'launcherPath':str(target/'native-launcher.json'),'environmentPath':str(target/'native-environment.json'),'requiresRuntimeQualification':True,'requiresConfigurationReview':True,'startsWorker':False,'replaysInputs':False,'overwritesExisting':False,'inventory':body['inventory']}
                     write(native/PENDING,{**marker,'phase':'files-written','result':result})
                     self.sync(target)

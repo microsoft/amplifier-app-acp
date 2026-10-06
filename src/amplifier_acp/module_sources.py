@@ -8,7 +8,7 @@ ENV = 'AMPLIFIER_ACP_MODULE_SOURCES'
 MAX_BYTES = 65536
 MAX_MODULES = 64
 
-def validate(value):
+def validate(value, *, require_local_exists=True):
     error = 'moduleSources must contain at most64 module IDs and existing absolute directories or credential-free exact-commit git+https sources (64KiB maximum).'
     if not isinstance(value, dict) or len(value) > MAX_MODULES:
         raise ValueError(error)
@@ -37,8 +37,12 @@ def validate(value):
         else:
             try:
                 path = Path(source)
-                if not path.is_absolute() or not path.is_dir():raise ValueError(error)
-                result[module] = str(path.resolve(strict=True))
+                if not path.is_absolute():raise ValueError(error)
+                if require_local_exists:
+                    if not path.is_dir():raise ValueError(error)
+                    result[module] = str(path.resolve(strict=True))
+                else:
+                    result[module] = str(path)
             except (OSError, ValueError):
                 raise ValueError(error) from None
     return result

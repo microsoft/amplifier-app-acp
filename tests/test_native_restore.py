@@ -73,6 +73,66 @@ async def test_destination_existing_and_review_changes_are_known_no_effect(tmp_p
     finally:await client.close()
 
 @pytest.mark.asyncio
+async def test_restore_retains_managed_and_module_source_evidence_without_activating_it(tmp_path):
+    client,cwd,config,path,sid=await full_setup(tmp_path)
+    await client.close()
+    external=tmp_path/'external-provider';external.mkdir()
+    config['moduleSources']={'provider-test':str(external)}
+    config['managedSessionRoots']=[str(tmp_path/'host-managed')]
+    path.write_text(json.dumps(config));client,_=await initialized(path)
+    try:
+        auth=await hold(client,cwd);preview=await prepare(client,cwd,auth,parts=['full-native-authority'])
+        artifact,raw=await capture(client,cwd,auth,preview,'source-evidence')
+        with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
+            header=json.load(archive.extractfile('native-archive.json'))
+        import jsonschema
+        jsonschema.validate(header,json.loads((Path(__file__).resolve().parents[1]/'schemas/native-full-archive.v1.json').read_text()))
+        # A different machine need not have original code or host allocations.
+        external.rmdir()
+        plan=await call(client,cwd,'maintenance.restore.preview',{'artifactId':artifact['artifactId'],'sha256':artifact['sha256'],'destination':{'rootId':'owned','name':'source-evidence'},'privateContentReviewed':True},auth)
+        applied=await call(client,cwd,'maintenance.restore.apply',{'commandId':'restore-source-evidence','previewHash':plan['previewHash']},auth)
+        target=Path(applied['directory']);launcher=json.loads((target/'native-launcher.json').read_text())
+        review=json.loads((target/'native-configuration-review.json').read_text())
+        assert review['sourceConfiguration']==header['nativeAuthority']['sourceConfiguration']
+        assert review['automaticActivation'] is False and len(review['requirements'])==3
+        assert 'moduleSources' not in launcher and 'managedSessionRoots' not in launcher
+        assert not client.events
+    finally:await client.close()
+
+@pytest.mark.parametrize('invalid',[
+    {'moduleSourceOverrides':{'sources':{},'authority':'trusted-launcher','sourceBodies':'only-within-declared-native-roots','automaticRestore':True}},
+    {'moduleSourceOverrides':{'sources':{'provider-test':'relative/code'},'authority':'trusted-launcher','sourceBodies':'only-within-declared-native-roots','automaticRestore':False}},
+    {'managedAllocations':{'roots':['relative/files'],'authority':'external-host-owner','included':False,'requiredForManagedActivation':True}},
+    {'managedAllocations':{'roots':['/old/files'],'authority':'external-host-owner','included':True,'requiredForManagedActivation':True}},
+])
+def test_archive_source_evidence_cannot_grant_automatic_restore(invalid):
+    from amplifier_acp.archive_sources import validate
+    with pytest.raises(ValueError):validate(invalid)
+
+@pytest.mark.asyncio
+async def test_installed_restore_rebinds_account_paths_and_retains_original_configuration(tmp_path):
+    import yaml
+    client,cwd,config,_,_=await full_setup(tmp_path)
+    home=Path(config['home']);token=home/'openai-chatgpt-oauth.json'
+    raw=b'{"refresh_token":"private-restore-fixture"}';token.write_bytes(raw)
+    original=yaml.safe_dump({'config':{'providers':[{'module':'provider-openai-chatgpt','config':{'token_file_path':str(token)}}]}}).encode()
+    (home/'settings.yaml').write_bytes(original)
+    try:
+        auth=await hold(client,cwd)
+        created=await call(client,cwd,'maintenance.archive.create',{'commandId':'account-create','parts':['full-native-authority'],'privateContentReviewed':True,'includeCredentials':True,'credentialsReviewed':True},auth)
+        preview=await call(client,cwd,'maintenance.archive.prepare',{'commandId':'account-prepare','planId':created['planId'],'expectedRevision':0},auth)
+        artifact,_=await capture(client,cwd,auth,preview,'account-source')
+        plan=await call(client,cwd,'maintenance.restore.preview',{'artifactId':artifact['artifactId'],'sha256':artifact['sha256'],'destination':{'rootId':'owned','name':'account-copy'},'privateContentReviewed':True,'credentialsReviewed':True},auth)
+        applied=await call(client,cwd,'maintenance.restore.apply',{'commandId':'account-restore','previewHash':plan['previewHash']},auth)
+        target=Path(applied['directory']);settings=yaml.safe_load((target/'native-home/settings.yaml').read_text())
+        assert settings['config']['providers'][0]['config']['token_file_path']==str(target/'native-home/openai-chatgpt-oauth.json')
+        assert (target/'native-home/openai-chatgpt-oauth.json').read_bytes()==raw==token.read_bytes()
+        assert (target/'configuration-originals/native-home/settings.yaml').read_bytes()==original==(home/'settings.yaml').read_bytes()
+        assert json.loads((target/'credential-relocation.json').read_text())['unresolved']==[]
+        assert not client.events
+    finally:await client.close()
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('kind',['traversal','duplicate','missing','link','version','digest','schema'])
 async def test_restore_rejects_untrusted_archive_even_with_matching_outer_hash(tmp_path,kind):
     client,cwd,config,path,sid,auth,artifact,args=await snapshot(tmp_path)

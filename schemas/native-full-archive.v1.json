@@ -155,6 +155,68 @@
               "items": {
                 "type": "string"
               }
+            },
+            "managedAllocations": {
+              "type": "object",
+              "required": [
+                "roots",
+                "authority",
+                "included",
+                "requiredForManagedActivation"
+              ],
+              "properties": {
+                "roots": {
+                  "type": "array",
+                  "maxItems": 16,
+                  "items": {
+                    "type": "string",
+                    "maxLength": 8192,
+                    "pattern": "^/"
+                  }
+                },
+                "authority": {
+                  "const": "external-host-owner"
+                },
+                "included": {
+                  "const": false
+                },
+                "requiredForManagedActivation": {
+                  "const": true
+                }
+              },
+              "additionalProperties": false
+            },
+            "moduleSourceOverrides": {
+              "type": "object",
+              "required": [
+                "sources",
+                "authority",
+                "sourceBodies",
+                "automaticRestore"
+              ],
+              "properties": {
+                "sources": {
+                  "type": "object",
+                  "maxProperties": 64,
+                  "propertyNames": {
+                    "pattern": "^[a-z][a-z0-9_-]{0,127}$"
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "maxLength": 4096
+                  }
+                },
+                "authority": {
+                  "const": "trusted-launcher"
+                },
+                "sourceBodies": {
+                  "const": "only-within-declared-native-roots"
+                },
+                "automaticRestore": {
+                  "const": false
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false
