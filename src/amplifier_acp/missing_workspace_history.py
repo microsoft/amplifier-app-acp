@@ -9,6 +9,11 @@ from pathlib import Path
 from .managed_session import read
 from .maintenance_gate import checked
 
+# Native metadata embeds bundle configuration, including for child sessions.
+# Match the catalog's metadata admission; ownership receipts retain their own
+# smaller bound in managed_session.read.
+MAX_METADATA = 8 * 1024 * 1024
+
 
 def validate(server, cwd, identity):
     path = Path(cwd)
@@ -24,7 +29,9 @@ def validate(server, cwd, identity):
     if any(path.is_relative_to(Path(root).resolve()) for root in server.config.get('managedSessionRoots', [])):
         raise ValueError('Managed history requires its existing allocation authority')
     directory = server.directory(cwd, identity)
-    metadata = read(directory / 'metadata.json', 262144)
+    metadata = read(directory / 'metadata.json', MAX_METADATA)
+    if not isinstance(metadata, dict):
+        raise ValueError('Native metadata must be an object')
     if metadata.get('session_id') != identity or metadata.get('working_dir') != cwd or metadata.get('location', {}).get('kind') == 'managed':
         raise ValueError('Native metadata does not prove this exact history identity')
     # Only native history storage is opened, never the disappeared workspace.

@@ -77,13 +77,14 @@ async def test_passive_inspection_over_stdio_never_launches_configured_worker(tm
 
 
 @pytest.mark.asyncio
-async def test_missing_workspace_is_explicit_exact_passive_history_not_runtime_access(tmp_path):
+@pytest.mark.parametrize('configuration_bytes', [0, 1024 * 1024])
+async def test_missing_workspace_is_explicit_exact_passive_history_not_runtime_access(tmp_path, configuration_bytes):
     from client import Client
     from amplifier_acp.native.session_files import project_slug
     home=tmp_path/'home';cwd=tmp_path/'gone';sid='22222222-2222-4222-8222-222222222222'
     directory=home/'projects'/project_slug(str(cwd))/'sessions'/sid;directory.parent.mkdir(parents=True)
     file=history(directory,2);metadata=directory/'metadata.json'
-    metadata.write_text(json.dumps({'session_id':sid,'working_dir':str(cwd)}))
+    metadata.write_text(json.dumps({'session_id':sid,'working_dir':str(cwd),'config':{'context':'x' * configuration_bytes}}))
     originals=(file.read_bytes(),metadata.read_bytes())
     config=tmp_path/'config.json';config.write_text(json.dumps({'home':str(home),'appHome':str(tmp_path/'app'),'workerCommand':['/must-not-start-for-passive-history']}))
     client=await Client.launch(config)
@@ -100,6 +101,10 @@ async def test_missing_workspace_is_explicit_exact_passive_history_not_runtime_a
         assert not cwd.exists() and not client.events
         assert originals==(file.read_bytes(),metadata.read_bytes())
         metadata.write_text(json.dumps({'session_id':sid,'working_dir':str(tmp_path/'different')}))
+        assert 'error' in await client.request('_amplifier/history',{**request,'readOnlyMissingWorkspace':True})
+        metadata.write_text(json.dumps({'session_id':sid,'working_dir':str(cwd),'config':'x' * (8 * 1024 * 1024)}))
+        assert 'error' in await client.request('_amplifier/history',{**request,'readOnlyMissingWorkspace':True})
+        metadata.write_text('[]')
         assert 'error' in await client.request('_amplifier/history',{**request,'readOnlyMissingWorkspace':True})
         metadata.write_bytes(originals[1]);cwd.symlink_to(tmp_path/'elsewhere')
         assert 'error' in await client.request('_amplifier/history',{**request,'readOnlyMissingWorkspace':True})
