@@ -89,7 +89,8 @@ async def query(request):
         if not supported and request['action']=='providers.test':raise ValueError('Provider does not expose model discovery')
         result['models']=public(await invoke('list_models')) if supported else []
         if request['action']=='providers.test':
-            result['test']={'reachable':True,'modelCount':len(result['models']),'method':'provider.list_models'}
+            from amplifier_acp.native.provider_status import catalog_check
+            result['test']=catalog_check(result['models'])
         return result
     finally:
         await close_provider(provider)

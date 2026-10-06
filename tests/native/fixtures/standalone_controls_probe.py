@@ -112,7 +112,9 @@ async def run():
         assert json.loads(controls.state_path().read_text())['selection'] is None
         summary = await controls.perform('configuration.providers')
         assert summary['effective']['model'] == 'fixture-model' and summary['pinned'] is False
-        assert (await controls.perform('configuration.providerTest',{'provider':'fixture-provider'}))['reachable']
+        catalog=await controls.perform('configuration.providerTest',{'provider':'fixture-provider'})
+        assert catalog['catalogAvailable'] and catalog['reachable'] is None
+        assert catalog['inferenceVerified'] is False
         assert (await controls.perform('configuration.providerModels',{'provider':'fixture-provider'}))['models']==[{'id':'fixture-model'}]
         await controls.perform('goals.set',{'condition':'finish fixture','maxTurns':3})
         assert coordinator.session_state['goal']['cap']==3

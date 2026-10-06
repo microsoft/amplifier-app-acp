@@ -86,3 +86,36 @@ async def test_endpoint_provider_uses_explicit_unmodified_endpoint_and_metadata_
     assert calls == ([('construct', False)] if action == 'providers.schema' else
                      [('construct', False), ('construct', True), ('models', True)])
     assert len(closed) == (1 if action == 'providers.schema' else 2)
+
+
+@pytest.mark.parametrize('models', [[], [{'id':'static-or-cached-model'}]])
+async def test_catalog_check_does_not_claim_connectivity_or_invoke_inference(monkeypatch, models):
+    calls = []
+    class Provider:
+        def __init__(self, *, api_key=None, config=None): pass
+        def get_info(self): return {'config_fields': []}
+        def list_models(self):
+            calls.append('catalog')
+            return models
+        async def complete(self, *args, **kwargs): pytest.fail('Catalog checks cannot send a message')
+        async def login(self, *args, **kwargs): pytest.fail('Catalog checks cannot sign in')
+        async def close(self): calls.append('close')
+    monkeypatch.setattr(provider_probe, 'provider_class', lambda module: Provider)
+    result = await provider_probe.query({'module':'fixture', 'action':'providers.test'})
+    assert result['models'] == models
+    assert result['test'] == {'catalogAvailable':True, 'reachable':None,
+        'modelCount':len(models), 'method':'provider.list_models', 'inferenceVerified':False}
+    assert calls == ['close', 'catalog', 'close']
+
+
+async def test_failed_catalog_check_preserves_failure_and_closes(monkeypatch):
+    closed = []
+    class Provider:
+        def __init__(self, *, api_key=None, config=None): pass
+        def get_info(self): return {}
+        async def list_models(self): raise ValueError('catalog unavailable')
+        async def close(self): closed.append(True)
+    monkeypatch.setattr(provider_probe, 'provider_class', lambda module: Provider)
+    with pytest.raises(ValueError, match='catalog unavailable'):
+        await provider_probe.query({'module':'fixture', 'action':'providers.test'})
+    assert closed == [True, True]

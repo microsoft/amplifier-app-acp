@@ -593,7 +593,7 @@ class RuntimeControls:
             method = getattr(provider,"list_models",None)
             if not callable(method):
                 if operation=='configuration.providerModels':return {'provider':name,'models':[],'supported':False}
-                raise ValueError("This provider does not expose a model-list API for connection testing")
+                raise ValueError("This provider does not expose a model catalog API")
             async def load():
                 result=method()
                 if inspect.isawaitable(result):result=await asyncio.wait_for(result,120)
@@ -602,7 +602,8 @@ class RuntimeControls:
             key=(name,id(provider),fingerprint(getattr(provider,'config',{})))
             result=await load() if operation=='configuration.providerTest' else await self.model_catalog.get(key,load,refresh=args.get('refresh',False))
             if operation == "configuration.providerTest":
-                return {"provider":name,"reachable":True,"modelCount":len(result),"method":"provider.list_models"}
+                from .provider_status import catalog_check
+                return {"provider":name,**catalog_check(result)}
             return {"provider":name,"models":result,'supported':True}
         if operation in {"configuration.providerLoginStatus", "configuration.providerLoginCancel"}:
             row = self.logins.get(name)
