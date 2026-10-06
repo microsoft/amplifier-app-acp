@@ -19,13 +19,31 @@ def test_prompt_and_edit_share_text_reference_and_binary_decoding(tmp_path):
         {'type':'image','mimeType':'image/png','data':base64.b64encode(b'image').decode()},
         {'type':'resource','resource':{'uri':'resource://saved-pdf','mimeType':'application/pdf','blob':base64.b64encode(b'pdf').decode()}},
     ])
-    assert value.startswith('New request\nEmbedded reference material:')
-    assert 'Saved note' in value and 'https://invalid.example/no-network-read' in value
+    assert value.startswith('New request\nEmbedded resource: resource://saved-note')
+    assert 'Saved note' not in value and 'https://invalid.example/no-network-read' in value
     assert 'Embedded resource: resource://saved-pdf' in value
-    assert [file_path(tmp_path,item['id'])[0].read_bytes() for item in attachments]==[b'image',b'pdf']
-    assert [item['mime'] for item in attachments]==['image/png','application/pdf']
+    assert [file_path(tmp_path,item['id'])[0].read_bytes() for item in attachments]==[b'Saved note',b'image',b'pdf']
+    assert [item['mime'] for item in attachments]==['text/plain','image/png','application/pdf']
 
 @pytest.mark.parametrize('blocks',[[],[None],[{'type':'audio','data':'invalid'}],[{'type':'resource','resource':{}}]])
 def test_unsupported_or_empty_replacement_content_is_refused(tmp_path,blocks):
     from amplifier_acp.server import RpcError
     with pytest.raises(RpcError):prompt_content({'appHome':str(tmp_path)},blocks)
+
+
+def test_large_unicode_text_resource_uses_file_path_not_short_message_budget(tmp_path, monkeypatch):
+    from amplifier_acp.native.attachments import encode
+    from types import SimpleNamespace
+    content='Corrected file contents Ω\n'*20000
+    text,files=prompt_content({'appHome':str(tmp_path)},[
+        {'type':'text','text':'Use this correction'},
+        {'type':'resource','resource':{'uri':'resource://file','text':content,'mimeType':'text/plain'}}])
+    assert len(text)<16000
+    assert file_path(tmp_path,files[0]['id'])[0].read_bytes()==content.encode('utf-8')
+    monkeypatch.setenv('AMPLIFIER_WEB_HOME',str(tmp_path))
+    encoded=encode(SimpleNamespace(text=text,attachments=files))
+    assert any('Local file:' in row.get('text','') for row in encoded)
+    assert not any(content in row.get('text','') for row in encoded)
+    from amplifier_acp.server import RpcError
+    with pytest.raises(RpcError,match='8 resources'):
+        prompt_content({'appHome':str(tmp_path)},[{'type':'resource','resource':{'uri':'resource://file','text':'x'}}]*9)
