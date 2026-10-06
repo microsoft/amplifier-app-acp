@@ -19,7 +19,8 @@ async def test_scheduled_stream_settlement_duplicate_and_monitor_goal(tmp_path):
         task=made['result']['task']
         args={'inputId':'schedule:fixture:run:1','text':'Finite monitor sample','kind':'monitor','taskId':task['id'],'taskRevision':task['revision']}
         result=await control('schedule.submit',args)
-        assert result['result']=={'accepted':True,'inputId':args['inputId'],'stopReason':'end_turn'},result
+        assert result['result']=={'accepted':True,'inputId':args['inputId'],'stopReason':'end_turn',
+                                 'usage':{'inputTokens':8,'outputTokens':5,'totalTokens':13}},result
         assert any(r.get('params',{}).get('update',{}).get('sessionUpdate')=='agent_message_chunk' for r in client.events)
         assert any(r.get('params',{}).get('event',{}).get('type')=='generation.finished' for r in client.events)
         again=await control('schedule.submit',args)
