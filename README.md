@@ -211,6 +211,15 @@ missing input origin stays unknown. Imported/native transcript roles never prove
 current human authorization; the host's exact admitted-message reader is the
 consent authority. No input is replayed to enrich missing metadata.
 
+`_amplifier/history/message` verifies an original message ID against the current
+revision and the completed context-clear archive chain. It streams records,
+checks preserved segment hashes and workspace scope, and refuses duplicates,
+unresolved clears or changed sources. A preserved source carries
+`historicalOnly:true`, `mutationAuthority:'none'` and a `preservedSource` receipt;
+it never restores cleared execution context. This lets a separately verified,
+previously imported memory retain its original quotation. Archive UI IDs remain
+viewing-only and do not become original source IDs or new human admission.
+
 `questionTurns:{version:1,completion:'settled',active:false}` advertises the
 host-admitted `question.submit` native operation. It uses the same ACP streaming
 collector and terminal settlement as scheduled turns. Active sessions return

@@ -835,7 +835,7 @@ class Server:
             from .relocation import home
             if method.endswith('/message'):
                 from .history import exact_message
-                return await asyncio.to_thread(exact_message,directory,params.get('messageId'),params.get('expectedRevision'),app_home=home(self))
+                return await asyncio.to_thread(exact_message,directory,params.get('messageId'),params.get('expectedRevision'),app_home=home(self),history_cwd=str(cwd.resolve()))
             public_rows=params.get('includePublicRows',False)
             if type(public_rows) is not bool:raise RpcError(-32602,'includePublicRows must be boolean')
             if 'rowLocator' in params:
