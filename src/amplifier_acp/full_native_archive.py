@@ -111,7 +111,7 @@ def prepare(owner,plan,parts,check,command_id,include_credentials):
             omit(label,'committed records captured by the standalone database image','transient');return
         if stat.S_ISDIR(info.st_mode):
             target=checked(payload/label);target.mkdir(mode=0o700,parents=True,exist_ok=True)
-            record({'path':label,'status':'directory'})
+            record({'path':label,'status':'directory','ownerMode':stat.S_IMODE(info.st_mode)&0o700})
             with os.scandir(path) as scan:
                 for entry in scan:
                     if depth==0:
@@ -150,7 +150,7 @@ def prepare(owner,plan,parts,check,command_id,include_credentials):
         digest=hashlib.sha256()
         with target.open('rb') as stream:
             while block:=stream.read(CHUNK):bounded();digest.update(block)
-        record({'path':label,'status':'included','bytes':size,'sha256':digest.hexdigest(),'format':'sqlite-backup-image' if is_db else 'file'})
+        record({'path':label,'status':'included','bytes':size,'sha256':digest.hexdigest(),'format':'sqlite-backup-image' if is_db else 'file','ownerMode':stat.S_IMODE(info.st_mode)&0o700})
     try:
         for row in selected:copy(row['id'] if row['kind']=='directory' else row['id']+'/source',Path(row['path']),root_id=row['id'])
         # Metadata selects only identities; trusted configured workspace roots

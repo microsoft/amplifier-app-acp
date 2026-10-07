@@ -167,8 +167,17 @@ class ArchivePlans:
                         db.execute('INSERT INTO entries VALUES(?,?)',(row['path'],json.dumps(row)))
             if 'fullNative' in value:
                 with sqlite3.connect(self.root/value['planId']/'full-native/inventory.sqlite3') as inventory:
-                    for name,row in inventory.execute("SELECT path,body FROM entries WHERE json_extract(body,'$.status') IN ('excluded','missing')"):
-                        db.execute('INSERT OR IGNORE INTO entries VALUES(?,?)',(name,row))
+                    for name,raw in inventory.execute('SELECT path,body FROM entries'):
+                        row=json.loads(raw)
+                        if row['status'] in {'excluded','missing'}:
+                            db.execute('INSERT OR IGNORE INTO entries VALUES(?,?)',(name,raw))
+                        elif 'ownerMode' in row:
+                            staged=db.execute('SELECT body FROM entries WHERE path=?',(name,)).fetchone()
+                            if staged is None:raise ValueError('Full native staged permission source is absent')
+                            staged=json.loads(staged[0])
+                            if staged['status']!=row['status'] or row['status']=='included' and (staged['bytes'],staged['sha256'])!=(row['bytes'],row['sha256']):raise ValueError('Full native staged permission source changed')
+                            staged['ownerMode']=row['ownerMode']
+                            db.execute('UPDATE entries SET body=? WHERE path=?',(json.dumps(staged),name))
             summary=self.summary(db,value)
             body={'version':2,'workspace':workspace,'archivePlanId':value['planId'],'spec':{'sessions':[],'parts':value['parts'],'includeCredentials':value['includeCredentials'],'externalWriterPolicy':value['externalWriterPolicy']},'inventory':summary,'ownerCoverage':stores.coverage(value['parts'],value.get('nativeStores',[])),'omissions':OMISSIONS,'exclusions':EXCLUSIONS,'coverage':'explicit-selected-native-only','containsPrivateContent':True,'authorityHash':fingerprint({'roots':sorted(str(root) for root in self.owner.admin.roots),'home':str(self.owner.home),'app':str(self.owner.app)}),'credentialCoverage':'credential files included by explicit review' if value['includeCredentials'] else 'credential files excluded; inline secrets in selected files may remain'}
             if 'fullNative' in value:
@@ -210,7 +219,11 @@ class ArchivePlans:
             for label,path in self.roots(db,value):
                 for row in self.walk(label,path,check,transients='fullNative' not in value):
                     old=db.execute('SELECT body FROM entries WHERE path=?',(row['path'],)).fetchone();count+=1
-                    if old is None or json.loads(old[0])!=row:raise ValueError('Native archive selection changed after review')
+                    retained=json.loads(old[0]) if old else None
+                    # Original permissions are sealed manifest evidence; staging
+                    # files remain private and writable for capture bookkeeping.
+                    if retained is not None and 'fullNative' in value:retained.pop('ownerMode',None)
+                    if retained!=row:raise ValueError('Native archive selection changed after review')
             if count!=db.execute("SELECT count(*) FROM entries WHERE json_extract(body,'$.source') IS NOT NULL").fetchone()[0]:raise ValueError('Native archive selection changed after review')
     def acquire(self,workspace,args,body,ttl):
         self.reviewed(workspace,body);held=[];full='fullNative' in body

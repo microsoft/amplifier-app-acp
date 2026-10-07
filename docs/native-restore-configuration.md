@@ -35,6 +35,21 @@ and module-source requirements. Restore still requires configuration review and
 runtime qualification before activation; these receipts do not verify an account
 with its issuer. No workers or turns start during restore.
 
+Full-native manifests retain each captured file and directory's owner permission
+bits. Inactive restoration applies those digest-verified permissions after
+configuration rebinding and child creation, preserving executable scripts and
+read-only shared source objects. Group/other and privileged bits are not restored;
+the new destination remains private. TAR member permissions cannot override the
+verified manifest. Older manifests without these bits retain the previous private
+defaults (files 0600, directories 0700), so their executable source trees need
+separate qualification before activation.
+
+This repair covers full-native capture and its matching restore. Reviewed
+selected-history archives contain data rather than executable source roots and
+keep their private defaults. Product installation archives already preserve file
+modes separately. Foundation's shared-source verifier continues to reject modified
+tracked files and executable-bit changes; its integrity rules are unchanged.
+
 The affected implementations reviewed are the full-native capture and restore
 owners, the launcher module-source validator, native provider account setup,
 the OpenAI ChatGPT provider's Codex and plan layouts, and Foundation's scoped

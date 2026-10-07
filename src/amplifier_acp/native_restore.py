@@ -126,6 +126,9 @@ class Restores:
                         if len(relative.parts)>65:raise ValueError('Native archive nesting exceeds64')
                         if roots[relative.parts[0]]['kind']=='file' and relative.parts[1:]!=('source',):raise ValueError('Invalid native file-root member')
                         if row.get('path')!=name or row.get('status') not in {'included','directory','missing','excluded'}:raise ValueError('Invalid native manifest entry')
+                        if 'ownerMode' in row:
+                            mode=row['ownerMode'];required=0o500 if row['status']=='directory' else 0o400
+                            if row['status'] not in {'included','directory'} or type(mode)is not int or mode&~0o700 or mode&required!=required:raise ValueError('Invalid native owner permissions')
                         if row['status'] in {'included','directory'}:
                             for parent in relative.parents:
                                 if str(parent)=='.':continue
@@ -230,10 +233,22 @@ class Restores:
                             'Qualify and explicitly configure archived module source overrides before execution.']})
                     result={'restored':True,'destination':body['destination'],'directory':str(target),'artifactId':body['artifactId'],'sha256':body['sha256'],'previewHash':args['previewHash'],'launcherPath':str(target/'native-launcher.json'),'environmentPath':str(target/'native-environment.json'),'requiresRuntimeQualification':True,'requiresConfigurationReview':True,'startsWorker':False,'replaysInputs':False,'overwritesExisting':False,'inventory':body['inventory']}
                     write(native/PENDING,{**marker,'phase':'files-written','result':result})
+                    self.permissions(target)
                     self.sync(target)
                     return result
             except Exception:
                 raise ValueError('Native restore may have written destination files; inspect the original receipt. No replay.') from None
+    def permissions(self,target):
+        # The digest-verified manifest owns mode restoration, never TAR metadata.
+        # Apply after credential/configuration rebinding and children are written.
+        # Parent-first lexical paths sort after their children in descending order.
+        with sqlite3.connect((target/'restore-manifest.sqlite3').as_uri()+'?mode=ro&immutable=1',uri=True) as db:
+            for name,raw in db.execute('SELECT path,body FROM entries ORDER BY path DESC'):
+                self.check();row=strict_json(raw)
+                if row['status'] in {'included','directory'} and 'ownerMode' in row:
+                    fd=os.open(checked(target/name),os.O_RDONLY|getattr(os,'O_NOFOLLOW',0))
+                    try:os.fchmod(fd,row['ownerMode']);os.fsync(fd)
+                    finally:os.close(fd)
     def launcher(self,body,target):
         authority=body['header']['nativeAuthority'];roots={row['id']:row for row in authority['roots']}
         config={'home':str(target/'native-home'),'appHome':str(target/'app-home')}
