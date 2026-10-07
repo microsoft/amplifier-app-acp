@@ -67,7 +67,7 @@ class FixtureProvider:
         if self.config.get('inputOutcomeFailure') and 'fail-outcome' in str(prompt):
             from amplifier_core import InvalidRequestError
             if self.config.get('inputOutcomeAfterTool') and request.messages[-1].role != 'tool':
-                return ChatResponse(content=[TextBlock(text='Before fixture tool effect.')],tool_calls=[ToolCall(id='permit-call',name='fixture_permit',arguments={})],finish_reason='tool_calls')
+                return ChatResponse(content=[TextBlock(text='Before fixture tool effect.')],tool_calls=[ToolCall(id='effect-call',name='fixture_effect',arguments={})],finish_reason='tool_calls')
             if self.config.get('inputOutcomeCheckpoint'):
                 original = self.coordinator.get_capability('live.checkpoint')
                 async def checkpoint(*args, **kwargs):
@@ -140,6 +140,15 @@ async def mount(coordinator,config=None):
             decision=await coordinator.approval_system.request_approval('Fixture permission',options=['allow','deny'])
             return ToolResult(success=True,output={'decision':decision})
     await coordinator.mount('tools',Permit(),name='fixture_permit')
+
+    if config and config.get('inputOutcomeToolAudit'):
+        class Effect:
+            name='fixture_effect';description='Write the owned failure-test receipt';input_schema={'type':'object','properties':{}}
+            async def execute(self,args):
+                from pathlib import Path
+                Path(config['inputOutcomeToolAudit']).write_text('one owned tool effect')
+                return ToolResult(success=True,output='Saved the owned tool effect')
+        await coordinator.mount('tools',Effect(),name='fixture_effect')
 
     class Wait:
         name='fixture_wait';description='Wait for an isolated fixture test gate';input_schema={'type':'object','properties':{}}
