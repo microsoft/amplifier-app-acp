@@ -257,7 +257,7 @@ class Generations:
          qualified=fresh or (receipt/'runtime-installed.json').exists()
          overrides=await self.diagnostics.run('ecosystem-runtime-policy',prepare_overrides,project,receipt/'runtime-install-overrides.txt') if qualified else Path(__file__).parent/'native/runtime_deps/compatibility.txt'
          command=[shutil.which('uv'),'run','--locked','--no-sync','--project',str(project),'--python','3.13','python',str(Path(__file__).parent/'native/update_probe.py')]
-         flags=['--install-overrides',str(overrides)] if qualified else []
+         flags=['--install-overrides',str(overrides)]
          flags.append('--global-only')
          if refresh:
              from .preparation_policy import staging_environment
@@ -265,7 +265,7 @@ class Generations:
              # One collection pass and one resolver transaction for the shared
              # graph, followed by fresh read-only compatibility processes.
              await self.diagnostics.run('ecosystem-prepare', process, *command, str(workspace), profiles[0],
-                 *flags, '--profiles', str(profiles_file), env={**staging_env, 'UV_OVERRIDE': str(overrides)}, timeout=900)
+                 *flags, '--profiles', str(profiles_file), env=staging_env, timeout=900)
              return
          completed=0
          progress={'attemptId':getattr(self.diagnostics,'state',{}).get('attemptId'),
@@ -278,7 +278,7 @@ class Generations:
              nonlocal completed
              async with semaphore:
                  await self.diagnostics.run('ecosystem-prepare' if refresh else 'ecosystem-compatibility',process,*command,workspace,bundle,*flags,
-                     env={**readonly_env,'UV_OVERRIDE':str(overrides)},timeout=900)
+                     env=readonly_env,timeout=900)
                  completed+=1
                  await self.publish(probeProgress={**progress,'completed':completed,'lastCompletedAt':time.time()})
          # Installers remain serial. After freezing, mount isolated workers

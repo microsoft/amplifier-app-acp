@@ -346,9 +346,6 @@ class Worker:
         try:
             publish({"type": "runtime.progress", "phase": "bundle-preparation",
                 "detail": "Loading your bundle and app behaviors; downloading or installing modules as needed."})
-            # Module activators run uv pip separately from the host project.
-            # Preserve an explicitly supplied user override if there is one.
-            os.environ.setdefault("UV_OVERRIDE", str(Path(__file__).with_name("runtime_deps") / "compatibility.txt"))
             # Load only app code, never the outer host's site-packages metadata.
             if __package__:
                 from .runtime_bootstrap import bootstrap_app_package
@@ -367,9 +364,12 @@ class Worker:
             from amplifier_module_loop_live.runtime import Runtime
             self.home = app_home()
             from amplifier_acp.native.runtime_qualification import active_install_overrides
-            install_overrides = active_install_overrides(self.home, os.environ.get("UV_OVERRIDE"))
-            if install_overrides is not None:
-                os.environ["UV_OVERRIDE"] = str(install_overrides)
+            # App dependency constraints belong only to module installers. A
+            # tool invoking uv must retain the caller's environment unchanged.
+            qualified_overrides = install_overrides = None
+            if not os.environ.get("UV_OVERRIDE"):
+                qualified_overrides = active_install_overrides(self.home)
+                install_overrides = qualified_overrides if qualified_overrides is not None else Path(__file__).with_name("runtime_deps") / "compatibility.txt"
             self.runtime = Runtime(session_id=config["id"], observer=self.observe, max_input_chars=200_000)
             self.telemetry = ExecutionEvents(config["id"], publish, self.home/'sessions'/config["id"]/'model-calls')
             workspace = Path(config.get("workspace") or config.get("workingDirectory") or os.getcwd()).expanduser().resolve(strict=True)
@@ -416,8 +416,8 @@ class Worker:
                 shared_handle_getter=lambda: self.shared_handle,
                 write_guard=self.activation_gate.check_current, resolved_root=resolved_root,
                 execution_workspace=config.get("workingDirectory"), install_overrides=install_overrides,global_only=bool(managed_scope))
-            if install_overrides is not None:
-                active_install_overrides(self.home, str(install_overrides))
+            if qualified_overrides is not None:
+                active_install_overrides(self.home, str(qualified_overrides))
             self.module_source_overrides = report.get("moduleSourceOverrides", {})
             self.config_inputs = tuple(report.get("config_inputs", ()))
             if config.get("mcpServers"):

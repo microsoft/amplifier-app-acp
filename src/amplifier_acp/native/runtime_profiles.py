@@ -247,7 +247,6 @@ async def ensure(home, generation, session, *, shared_home=None):
             "AMPLIFIER_HOME": str(shared),
             "AMPLIFIER_UNIFIED_RELEASE": "",
             "AMPLIFIER_INSTALL_PREPARATION": uuid.uuid4().hex,
-            "UV_OVERRIDE": str(overrides),
         }
         env = staging_environment(env, project, Path(home)/'runtime')
         command = [
@@ -296,7 +295,7 @@ async def ensure(home, generation, session, *, shared_home=None):
             "--install-overrides",
             str(overrides),
             *plan_flags,
-            env={**env, "UV_OVERRIDE": str(overrides)},
+            env=env,
             timeout=900,
         )
         await asyncio.to_thread(verify_recorded, final, stage)
