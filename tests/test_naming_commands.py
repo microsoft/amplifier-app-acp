@@ -71,6 +71,20 @@ async def test_policy_does_not_invoke_generation_and_read_creates_no_receipt(own
     result=await call(owner,'policy',{'commandId':'off','automatic':False,'expectedNameRevision':2,'expectedPolicyRevision':3})
     assert not result['naming']['automatic'] and result['title']=='Before'
 
+async def test_first_use_preparation_precedes_guard_without_overwriting_choices(owner):
+    _,directory,_=owner
+    (directory/'metadata.json').write_text(json.dumps({'session_id':'named'}))
+    (directory/'unified').mkdir()
+    (directory/'unified/view.json').write_text(json.dumps({'title':'Conversation 12345678','autoName':False}))
+    before=(directory/'transcript.jsonl').read_bytes()
+    prepared=await call(owner,'prepare',{})
+    assert prepared['title']=='Conversation 12345678' and not prepared['naming']['automatic']
+    assert await call(owner,'prepare',{})==prepared
+    candidate={'name':'Requested name','name_revision':prepared['naming']['nameRevision'],'name_policy_revision':prepared['naming']['policyRevision']}
+    assert (await call(owner,'commit',{'commandId':'prepared-name','candidate':candidate}))['applied']
+    assert (directory/'transcript.jsonl').read_bytes()==before
+    assert (await call(owner,'preview',{}))=={'title':'Requested name','source':'saved'}
+
 async def test_actual_cold_peer_metadata_operations_do_not_start_worker(tmp_path):
     from client import Client
     from native_setup import configuration

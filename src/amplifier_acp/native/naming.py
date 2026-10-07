@@ -92,3 +92,15 @@ def adopt(directory, session=None):
                               description=old.get('description') or session.get('description'),
                               only_if_missing=True)
     return store.read()
+
+
+
+def prepare_regeneration(directory):
+    """Adopt first-use legacy naming before the explicit generation guard."""
+    from .host.storage import SessionStore
+    _, _, _, view = initial_name(directory)
+    current = SessionMetadataStore(directory).read()
+    enabled = automatic_metadata(current) if current.get('name') else view.get('autoName', True)
+    adopt(directory)
+    SessionStore._initial_naming_policy(directory, enabled)
+    return SessionMetadataStore(directory).read()
