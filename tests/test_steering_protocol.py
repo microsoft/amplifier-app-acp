@@ -55,7 +55,7 @@ async def test_actual_anchored_applied_same_collector_exact_duplicate_and_canoni
     finally:await client.close()
 
 @pytest.mark.asyncio
-async def test_late_held_never_fresh_turn_and_passive_receipt_survives_restart(tmp_path):
+async def test_checkpoint_steering_continues_same_turn_and_passive_receipt_survives_restart(tmp_path):
     client,sid,cwd=await opened(tmp_path)
     args={'inputId':'late1','activeInputId':'turn1','text':'This missed the request boundary'}
     try:
@@ -63,18 +63,18 @@ async def test_late_held_never_fresh_turn_and_passive_receipt_survives_restart(t
         await entered(tmp_path,'checkpoint')
         assert (await steer(client,sid,args))['result']['accepted']
         release(tmp_path,'checkpoint');assert (await prompt)['result']['stopReason']=='end_turn'
-        async with asyncio.timeout(5):
-            while not events(client,'steering.held'):await asyncio.sleep(.01)
-        saved=await receipt(client,sid,cwd,args['inputId']);assert saved['disposition']=='held',saved
+        saved=await receipt(client,sid,cwd,args['inputId']);assert saved['disposition']=='applied',saved
+        assert len(events(client,'steering.applied'))==1
+        assert not events(client,'steering.held')
         assert len(events(client,'generation.started'))==1
         history=await client.request('_amplifier/history',{'sessionId':sid,'cwd':str(cwd),'limit':50})
-        assert not any(u.get('content',{}).get('text')==args['text'] for u in history['result']['updates'])
+        assert sum(u.get('content',{}).get('text')==args['text'] for u in history['result']['updates'])==1
     finally:await client.close()
     config=tmp_path/'config.json';value=json.loads(config.read_text());value['workerCommand']=['/does-not-exist'];config.write_text(json.dumps(value))
     passive=await Client.launch(config)
     try:
         await passive.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
-        assert (await receipt(passive,sid,cwd,args['inputId']))['disposition']=='held'
+        assert (await receipt(passive,sid,cwd,args['inputId']))==saved
     finally:await passive.close()
 
 

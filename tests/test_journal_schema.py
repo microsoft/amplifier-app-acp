@@ -181,6 +181,45 @@ def test_concurrent_first_writer_has_one_complete_schema(tmp_path):
         assert db.execute('SELECT 1 FROM sqlite_schema WHERE name=\'outcomes\'').fetchone()
 
 
+@pytest.mark.parametrize('profile,optional',[('inputs','outcomes'),('messages','quotes')])
+def test_passive_read_joins_first_schema_commit_without_false_missing_receipt(tmp_path,monkeypatch,profile,optional):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from amplifier_acp import journal_schema as journal
+    path=tmp_path/'journal.sqlite3';opened=Event();release=Event();observed=[]
+    original_connect=sqlite3.connect;original_validate=journal._validate
+    def paused(database,*args,**kwargs):
+        db=original_connect(database,*args,**kwargs)
+        if database==path:
+            opened.set()
+            assert release.wait(3)
+        return db
+    def inspect(db,family):
+        try:return original_validate(db,family)
+        except journal._InitializingJournal:
+            observed.append(True);release.set();raise
+    monkeypatch.setattr(sqlite3,'connect',paused)
+    monkeypatch.setattr(journal,'_validate',inspect)
+    def initialize():
+        with closing(connect(path,profile,write=True,enroll=True)):pass
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending=pool.submit(initialize)
+        try:
+            assert opened.wait(3)
+            with closing(connect(path,profile,timeout=.25)) as db:
+                assert db.execute('SELECT name FROM sqlite_schema WHERE name=?',(optional,)).fetchone()==(optional,)
+            pending.result(timeout=3)
+        finally:release.set()
+    assert observed
+
+
+def test_abandoned_empty_journal_stays_unknown_and_is_never_initialized_by_read(tmp_path):
+    path=tmp_path/'journal.sqlite3';path.touch();before=path.read_bytes()
+    with pytest.raises(JournalUnavailable):connect(path,'inputs',timeout=.02)
+    assert path.read_bytes()==before
+    assert not Path(str(path)+'.schema.lock').exists()
+
+
 @pytest.mark.asyncio
 async def test_original_unknown_bundle_never_reenters_after_journal_loss(tmp_path):
     from amplifier_acp.bundle_commands import BundleCommands,BundleCommandError

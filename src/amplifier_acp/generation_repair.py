@@ -75,7 +75,10 @@ async def rebuild(owner,args,generation):
     write_private(stage/'runtime-project.json',json.dumps({'project':project.name}))
     write_private(project/'pyproject.toml',values['runtime.toml'].decode());write_private(project/'uv.lock',values['runtime.lock'].decode())
     write_private(stage/'repair-source.json',json.dumps({**report,'commandId':args['commandId'],'createdAt':time.time()}))
-    await owner.diagnostics.run('native-repair-install',process,uv,'sync','--frozen','--project',str(project),'--python','3.13',timeout=900)
+    # A damaged environment may share hard links with uv's extracted cache.
+    # Rebuild from the locked inputs in a disposable cache, with independent
+    # installed files; reusing that cache can reproduce the original damage.
+    await owner.diagnostics.run('native-repair-install',process,uv,'sync','--frozen','--no-cache','--link-mode','copy','--project',str(project),'--python','3.13',timeout=900)
     if (project/'uv.lock').read_bytes()!=values['runtime.lock']:raise ValueError('Repair changed its recorded lock')
     await asyncio.to_thread(verify_recorded,project,stage)
     # Reuse the actual no-model profile probes and installation-policy checks.

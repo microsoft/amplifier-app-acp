@@ -116,5 +116,5 @@ async def test_native_retirement_gate_covers_jobs_permissions_processes_and_auxi
             setattr(worker,attribute,before)
         jobs.append('child');await worker.command({'op':'retire','id':'child'});assert records[-1]['result']=={'retired':False};jobs.clear()
         await worker.command({'op':'retire','id':'settled'});assert records[-1]['result']=={'retired':True} and worker.shutdown.is_set()
-        await worker.command({'op':'send','id':'late'});assert 'retirement' in records[-1]['error']
+        await worker.command({'op':'send','id':'late'});assert 'shutting down' in records[-1]['error']
     finally:pending.cancel();await asyncio.gather(pending,return_exceptions=True)

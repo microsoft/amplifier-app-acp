@@ -12,12 +12,17 @@ import os
 from pathlib import Path
 import sqlite3
 import stat
+import time
 
 from filelock import FileLock
 
 
 class JournalUnavailable(RuntimeError):
     """Retain the original journal and inspect it; never infer a fresh command."""
+
+
+class _InitializingJournal(JournalUnavailable):
+    """An empty snapshot can precede the first writer's atomic schema commit."""
 
 
 # Fixed native-owned schemas, not a registry of user tables. SQL is never supplied
@@ -113,7 +118,12 @@ def _paths(path):
             _fail()
         found.append(True)
     if not found[0] and any(found[1:]):
-        _fail()
+        # A cooperating first writer may create the main file after our first
+        # stat and then open its sidecars. Recheck, without creating anything.
+        try: info = path.lstat()
+        except FileNotFoundError: _fail()
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1: _fail()
+        found[0] = True
     return path, found[0]
 
 
@@ -165,6 +175,8 @@ def _validate(db, profile):
     number, _, extras = _SCHEMAS[profile]
     marker = db.execute('PRAGMA user_version').fetchone()[0]
     shape = _shape(db)
+    if marker == 0 and not shape:
+        raise _InitializingJournal('Native journal initialization is incomplete; preserve the original files without replay.')
     optional_name = 'quotes' if profile == 'messages' else 'outcomes' if profile == 'inputs' else None
     optional = _maintenance_mask(shape) if profile == 'maintenance' else int(bool(optional_name and optional_name in shape))
     expected = _expected(profile, optional)
@@ -218,7 +230,18 @@ def connect(path, profile, *, write=False, enroll=False, namespace=None, create=
     if not write:
         if not exists:
             return None
-        db = _read(path, profile, timeout)
+        # A concurrent first writer exposes the SQLite file before committing
+        # its complete schema. Retry only that empty snapshot for a short bound.
+        # Never treat it as absence, enroll it, or relax the normal validation.
+        deadline = time.monotonic() + min(max(timeout, 0), .25)
+        while True:
+            try:
+                db = _read(path, profile, timeout)
+                break
+            except _InitializingJournal:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0: raise
+                time.sleep(min(.01, remaining))
         db.isolation_level = isolation_level
         return db
     if not exists and not create:

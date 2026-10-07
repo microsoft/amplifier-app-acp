@@ -128,7 +128,8 @@ async def test_real_boundary_import_and_core_loader_remount(tmp_path, monkeypatc
     from amplifier_core.loader import ModuleLoader
     from amplifier_core.validation.base import import_module_from_path
 
-    assert boundary.SimpleContextManager is simple.SimpleContextManager
+    from amplifier_module_context_simple.request_view import request_view
+    assert boundary.request_view is request_view
     installed = Path(simple.__file__).parent
     root = tmp_path / 'checkout'
     shutil.copytree(installed, root / PACKAGE, ignore=shutil.ignore_patterns('__pycache__'))
@@ -277,7 +278,7 @@ async def test_actual_shared_resolver_preserves_dirty_legacy_precedence(copies, 
 
 @pytest.mark.parametrize('swapped', [False, True])
 def test_source_metadata_fifo_does_not_block_equivalence(tmp_path, swapped):
-    """Exercise the real public proof path with actual installed provenance."""
+    """Exercise the public proof path regardless of wheel or Git installation."""
     import os
     import sys
     if not hasattr(os, 'mkfifo'):
@@ -291,8 +292,9 @@ def test_source_metadata_fifo_does_not_block_equivalence(tmp_path, swapped):
 from pathlib import Path
 from types import SimpleNamespace
 from amplifier_acp.native.host.context_source import equivalent_context_source
-installed = json.loads(importlib.metadata.distribution('amplifier-module-context-simple').read_text('direct_url.json'))
-assert installed['vcs_info']['vcs'] == 'git'
+distribution = importlib.metadata.distribution('amplifier-module-context-simple')
+direct = {{'url': {repo!r}, 'vcs_info': {{'vcs': 'git', 'commit_id': 'a'*40}}}}
+importlib.metadata.distribution = lambda _: SimpleNamespace(locate_file=distribution.locate_file, read_text=lambda _: json.dumps(direct))
 if {swapped!r}:
     original_open = os.open
     def swapped_open(path, flags, *args, **kwargs):
@@ -308,7 +310,7 @@ def resolve():
 source = SimpleNamespace(resolve=resolve)
 assert equivalent_context_source('context-simple', {hint!r}, source) is source
 assert seen == [True]
-'''.format(swapped=swapped, metadata=str(metadata), root=str(root), hint=HINT)
+'''.format(swapped=swapped, metadata=str(metadata), root=str(root), hint=HINT, repo=REPO)
     result = subprocess.run([sys.executable, '-I', '-B', '-c', script], capture_output=True, text=True, timeout=3)
     assert result.returncode == 0, result.stderr
 

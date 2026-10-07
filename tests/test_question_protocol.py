@@ -20,7 +20,7 @@ async def test_question_requires_exact_host_proof_streams_and_preserves_provenan
         assert not any(r.get('params',{}).get('event',{}).get('type')=='generation.started' for r in client.events)
         approved=True
         settled=await client.request('_amplifier/native',request)
-        assert settled['result']=={'accepted':True,'inputId':args['inputId'],'stopReason':'end_turn'},settled
+        assert settled['result']=={'accepted':True,'inputId':args['inputId'],'stopReason':'end_turn','usage':{'inputTokens':8,'outputTokens':5,'totalTokens':13}},settled
         assert any(r.get('params',{}).get('update',{}).get('sessionUpdate')=='agent_message_chunk' for r in client.events)
         duplicate=await client.request('_amplifier/native',request);assert duplicate['error']['data']['outcome']=='already-admitted'
         history=await client.request('_amplifier/history',{'sessionId':sid,'cwd':str(cwd)})

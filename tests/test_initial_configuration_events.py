@@ -1,7 +1,7 @@
 """Fresh ACP consumers learn opaque configuration choices from standard events."""
 import json
 from pathlib import Path
-import sys
+import yaml
 
 import pytest
 
@@ -59,30 +59,30 @@ async def test_fresh_public_events_enable_selection_without_a_warmup_control(tmp
 
 
 @pytest.mark.asyncio
-async def test_initialization_without_configured_choices_does_not_emit_empty_update(tmp_path):
+async def test_empty_provider_remains_visible_without_inventing_model_choices(tmp_path):
     config, cwd = configuration(tmp_path)
     values = json.loads(config.read_text())
     bundle = Path(values['bundle'])
     bundle.write_text('\n'.join(line for line in bundle.read_text().splitlines()
         if not line.strip().startswith('source:')) + '\n')
-    script = '''import asyncio
-from amplifier_core.models import ProviderInfo
-from amplifier_module_provider_fixture import FixtureProvider
-def info(self):
-    return ProviderInfo(id='fixture', display_name='No configured default', defaults={})
-FixtureProvider.get_info = info
-from amplifier_acp.native.runtime_worker import Worker, configure_protocol
-configure_protocol()
-asyncio.run(Worker().run())
-'''
-    values['workerCommand'] = [sys.executable, '-I', '-B', '-c', script]
-    config.write_text(json.dumps(values))
+    # Both mounted and isolated catalog discovery see the same empty provider.
+    # A monkeypatch in just the worker misses the independent catalog process.
+    plan = yaml.safe_load(bundle.read_text())
+    plan['providers'][0]['config'] = {'fixtureDefaultModel': None, 'fixtureModels': []}
+    bundle.write_text(yaml.safe_dump(plan))
     client = await Client.launch(config)
     try:
         await client.request('initialize', {'protocolVersion': 1, 'clientCapabilities': {}})
         created = await client.request('session/new', {'cwd': str(cwd), 'mcpServers': []})
-        assert created['result']['configOptions'] == [], created
-        assert not any(event.get('method') == 'session/update'
-            and event['params']['update']['sessionUpdate'] == 'config_option_update' for event in client.events)
+        options = created['result']['configOptions']
+        model = next(option for option in options if option['id'] == 'model')
+        providers = [group for group in model['options'] if group['group']]
+        assert len(providers) == 1 and providers[0]['options'] == []
+        assert model['currentValue'] == '__default__'
+        assert [choice['value'] for group in model['options'] for choice in group['options']] == ['__default__']
+        updates = [event['params']['update']['configOptions'] for event in client.events
+            if event.get('method') == 'session/update'
+            and event['params']['update']['sessionUpdate'] == 'config_option_update']
+        assert updates == [options]
     finally:
         await client.close()
