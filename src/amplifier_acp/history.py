@@ -37,14 +37,45 @@ def inspect(directory):
 def exact_message(directory, identity, expected_revision, *, app_home=None):
     """Select one complete current source without loading an execution runtime.
 
-    Use the existing canonical identity and size contract, including duplicate
-    refusal. A historical user role is reference data, never new admission.
+    Scan current canonical records without materializing the entire history.
+    Duplicate refusal and the complete-source response bound still apply.
+    A historical user role is reference data, never new admission.
     """
     if not isinstance(identity, str) or not identity or len(identity) > 512:
         raise HistoryError('Exact historical message identity required')
-    from .session_lifecycle import canonical, bound
-    rows, _, revision = canonical(Path(directory), expected_revision, app_home=app_home)
-    position, row = rows[bound(rows, identity, user=True)]
+    if identity.startswith('archive:'):
+        raise HistoryError('Archived context is viewing-only; select a current source')
+    from .native.history_revision import context_head
+    from .session_lifecycle import MAX_HISTORY, record
+    directory=Path(directory);path,diagnostics=source(directory);revision,_=stamp(path)
+    if diagnostics:raise HistoryError('Recovered backup is not a complete current source; repair the source first')
+    if revision!=expected_revision:raise HistoryError('Native history changed; inspect a fresh revision')
+    epoch=context_head(app_home,directory.name) if app_home is not None else None
+    for part in (path,*path.parents):
+        if part.is_symlink():raise HistoryError('Native source files cannot traverse symbolic links')
+    info=path.lstat();fd=os.open(path,os.O_RDONLY|getattr(os,'O_NOFOLLOW',0)|getattr(os,'O_NONBLOCK',0))
+    selected=None;matches=0;position=0
+    try:
+        opened=os.fstat(fd)
+        if (opened.st_dev,opened.st_ino)!=(info.st_dev,info.st_ino) or not stat.S_ISREG(opened.st_mode):
+            raise HistoryError('Native history changed during open')
+        with os.fdopen(fd,'rb',closefd=False) as stream:
+            while line:=stream.readline(MAX_HISTORY+1):
+                if len(line)>MAX_HISTORY:raise HistoryError('Native history contains an oversized record; files preserved')
+                row=json.loads(line)
+                if not isinstance(row,dict) or not isinstance(row.get('role'),str):
+                    raise HistoryError('Malformed native history; files preserved')
+                marker=(row.get('metadata') or {}).get('amplifier_input',{})
+                if marker.get('id')==identity or identity.startswith('native:') and message_id(row,position,epoch)==identity:
+                    matches+=1;selected=(position,row)
+                position+=len(line)
+    finally:os.close(fd)
+    if stamp(path)[0]!=revision or (app_home is not None and context_head(app_home,directory.name)!=epoch):
+        raise HistoryError('Native history changed during source capture')
+    record(directory/'metadata.json')
+    if matches!=1:raise HistoryError('The selected native message boundary is unavailable or ambiguous')
+    position,row=selected
+    if not visible(row) or row.get('role')!='user':raise HistoryError('Choose a visible native user message boundary')
     updates, diagnostics = content_updates(row, position)
     if diagnostics or any(update.get('sessionUpdate') != 'user_message_chunk' for update in updates):
         raise HistoryError('Complete historical user message projection is unavailable')
@@ -57,7 +88,7 @@ def exact_message(directory, identity, expected_revision, *, app_home=None):
               'complete': True, 'execution': False}
     if len(json.dumps(result, ensure_ascii=False).encode()) > 65536:
         raise HistoryError('Historical message exceeds the complete-source byte bound')
-    if stamp(source(Path(directory))[0])[0] != revision:
+    if stamp(source(directory)[0])[0] != revision:
         raise HistoryError('Native history changed during selected source projection')
     return result
 

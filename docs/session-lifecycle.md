@@ -68,6 +68,14 @@ explicitly. Managed-chat hard deletion, full portability archives, shared artifa
 copying, and reference-only recovery copies are not claimed by these methods.
 Live model/account acceptance is separate from fixture validation.
 
+The passive `_amplifier/history/message` source lookup does not materialize a
+lifecycle snapshot. It scans current canonical records, retains only its exact
+match, and checks the remaining records for duplicate identities. Total history
+size does not share the 64 MiB fork/edit limit; each record is still bounded to
+64 MiB and the complete response to 64 KiB. A changed file or context epoch,
+ambiguous identity, unsafe file, recovered backup, or non-user source is refused.
+The read cannot start a worker, admit input, or grant execution authority.
+
 ## Edit one native history boundary and continue
 
 `native.historyEdits` advertises

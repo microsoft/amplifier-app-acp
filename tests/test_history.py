@@ -36,19 +36,39 @@ def test_exact_old_source_refuses_duplicate_changed_and_oversized_originals(tmp_
     file.write_text(json.dumps({'role':'user','content':'x'*65536,'metadata':{'amplifier_input':{'id':'large'}}})+'\n')
     with pytest.raises(ValueError,match='complete-source byte bound'):exact_message(p,'large',inspect(p)['revision'])
 
+def test_exact_source_in_large_history_streams_and_still_checks_late_duplicates(tmp_path):
+    from amplifier_acp.history import exact_message, inspect
+    p=tmp_path/'session';file=history(p,1);(p/'metadata.json').write_text('{}')
+    filler=json.dumps({'role':'tool','tool_call_id':'large-result','content':'x'*(256*1024)})+'\n'
+    with file.open('a') as out:
+        for _ in range(260):out.write(filler)
+    assert file.stat().st_size>64*1024*1024
+    selected=exact_message(p,'turn-0',inspect(p)['revision'])
+    assert selected['complete'] and selected['message']['text']=='0' and not selected['execution']
+    from amplifier_acp.history import message_id
+    with file.open() as stream:first=json.loads(stream.readline())
+    assert exact_message(p,message_id(first,0),inspect(p)['revision'])['message']['text']=='0'
+    with file.open('a') as out:out.write(json.dumps({'role':'user','content':'duplicate','metadata':{'amplifier_input':{'id':'turn-0'}}})+'\n')
+    with pytest.raises(ValueError,match='ambiguous'):exact_message(p,'turn-0',inspect(p)['revision'])
+
 @pytest.mark.asyncio
-async def test_exact_source_over_stdio_is_not_limited_to_recent_turns_or_a_worker(tmp_path):
+@pytest.mark.parametrize('large_history',[False,True])
+async def test_exact_source_over_stdio_is_not_limited_to_recent_turns_or_a_worker(tmp_path,large_history):
     from client import Client
     from amplifier_acp.native.session_files import project_slug
     home=tmp_path/'home';cwd=tmp_path/'cwd';cwd.mkdir();sid='33333333-3333-4333-8333-333333333333'
     directory=home/'projects'/project_slug(str(cwd))/'sessions'/sid;directory.parent.mkdir(parents=True)
     file=history(directory,75);(directory/'metadata.json').write_text(json.dumps({'session_id':sid,'working_dir':str(cwd)}))
+    if large_history:
+        filler=json.dumps({'role':'tool','tool_call_id':'retained-large-output','content':'x'*(256*1024)})+'\n'
+        with file.open('a') as out:
+            for _ in range(260):out.write(filler)
     original=file.read_bytes();config=tmp_path/'config.json'
     config.write_text(json.dumps({'home':str(home),'appHome':str(tmp_path/'app'),'workerCommand':['/must-not-start-for-exact-history']}))
     client=await Client.launch(config)
     try:
         initialized=await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
-        assert initialized['result']['agentCapabilities']['_meta']['amplifier.dev/native']['history']['exactMessageRead']['version']==1
+        assert initialized['result']['agentCapabilities']['_meta']['amplifier.dev/native']['history']['exactMessageRead']=={'version':1,'scan':'stream','maxRecordBytes':67108864,'maxMessageBytes':65536}
         scope={'sessionId':sid,'cwd':str(cwd)}
         revision=(await client.request('_amplifier/history/inspect',scope))['result']['revision']
         result=await client.request('_amplifier/history/message',{**scope,'messageId':'turn-0','expectedRevision':revision})
