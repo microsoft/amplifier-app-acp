@@ -95,11 +95,19 @@ def configuration_key(workspace, module, config, source=None, *, home=None):
     # Ambient fallback credentials can affect providers even with an explicit
     # constructor field. Preserve those dependencies in both caller processes.
     environment = {name:os.environ.get(name) for name in PROVIDER_ENV.get(module, ())}
+    def fields(value, prefix=''):
+        if isinstance(value, dict):
+            for name, item in value.items():yield from fields(item, prefix+'.'+name)
+        elif isinstance(value, list):
+            for index, item in enumerate(value):yield from fields(item, prefix+'.'+str(index))
+        else:yield prefix, value
+    leaves = list(fields(raw))
     files = {}
-    for name,value in raw.items():
+    for name,value in leaves:
         if ('token' in name or 'credential' in name) and ('file' in name or 'path' in name) and isinstance(value,str):
             try:
                 path = Path(value).expanduser()
+                if not path.is_absolute():path = Path(workspace)/path
                 if path.is_file():
                     info = path.stat()
                     files[name] = fingerprint(path.read_bytes()) if info.st_size < 1_000_000 else (info.st_size,info.st_mtime_ns,info.st_ctime_ns)
@@ -109,7 +117,12 @@ def configuration_key(workspace, module, config, source=None, *, home=None):
     # Manifest defaults do not prove which implementation an implicit probe
     # imports. Unknown/local overrides deliberately keep a separate identity.
     source=source or (_qualified_provider_sources(str(home),generation).get(module) if home is not None else None)
-    return fingerprint(['provider-catalog-v3',str(Path(workspace).resolve()),module,source,generation,raw,environment,files])
+    # Absolute/effective connection settings can share a catalog across projects.
+    # Keep relative filesystem settings isolated by their resolution directory.
+    relative=any(isinstance(value,str) and value and not Path(value).expanduser().is_absolute()
+                 for name,value in leaves if any(part in name for part in ('path','file','directory')))
+    scope=str(Path(workspace).resolve()) if relative or source and not str(source).startswith(('git+','https://','http://','/')) else None
+    return fingerprint(['provider-catalog-v4',scope,module,source,generation,raw,environment,files])
 
 
 def mounted_catalog_keys(home,workspace,rows,sources):
@@ -124,7 +137,7 @@ def model_key(identity):
 
 
 class ProviderCatalog:
-    def __init__(self, path=None, *, ttl=86400, retry_after=60, clock=time.time):
+    def __init__(self, path=None, *, ttl=None, retry_after=60, clock=time.time):
         self.entries = {}
         self.loaded_at = {}
         self.failed_at = {}
@@ -139,7 +152,7 @@ class ProviderCatalog:
                     if data.get('version') == 1:
                         self.saved = {key: row for key, row in data.get('entries', {}).items()
                                       if isinstance(row, dict) and isinstance(row.get('at'), (int, float)) and isinstance(row.get('result'), dict)
-                                      and 0 <= clock() - row['at'] < 30 * 86400}
+                                      and 0 <= clock() - row['at']}
             except (OSError, ValueError, TypeError, AttributeError):
                 pass
 
@@ -154,7 +167,7 @@ class ProviderCatalog:
 
     def fresh(self, key):
         self.peek(key)
-        return key in self.loaded_at and 0 <= self.clock() - self.loaded_at[key] < self.ttl
+        return key not in self.failed_at and key in self.loaded_at and (self.ttl is None or 0 <= self.clock() - self.loaded_at[key] < self.ttl)
 
     def discard(self, key):
         self.entries.pop(key, None)
@@ -170,6 +183,11 @@ class ProviderCatalog:
         self.failed_at.pop(key, None)
         self.saved[fingerprint(key)] = {'at': self.loaded_at[key], 'result': copy.deepcopy(result)}
         self._persist()
+
+    def fail(self, key, error):
+        """Keep the last selection available, but never advertise failed discovery as fresh."""
+        self.entries[key] = (self.peek(key), str(error))
+        self.failed_at[key] = self.clock()
 
     def _persist(self):
         if not self.path:
@@ -211,8 +229,7 @@ class ProviderCatalog:
                             self.failed_at.pop(old, None)
                     return result
                 except Exception as exc:
-                    self.entries[key] = (self.peek(key), str(exc))
-                    self.failed_at[key] = self.clock()
+                    self.fail(key, exc)
                     raise
                 finally:
                     self.pending.pop(key, None)
@@ -224,3 +241,76 @@ class ProviderCatalog:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+class SharedProviderCatalog(ProviderCatalog):
+    """Disposable Native-owned model cache, one atomic file per effective identity.
+
+    Independent workers cannot overwrite each other's catalog entries. Only
+    public model metadata is stored; credential/source/generation digests select
+    entries. Failed explicit refreshes invalidate the shared copy.
+    """
+    def __init__(self, home):
+        super().__init__()
+        self.directory = Path(home) / 'cache' / 'provider-models-v1'
+
+    def _file(self, key):
+        return self.directory / (fingerprint(key) + '.json')
+
+    def peek(self, key):
+        path = self._file(key)
+        try:
+            if path.stat().st_size > 1_000_000:
+                raise ValueError('Oversized cached model metadata')
+            row = json.loads(path.read_text())
+            if (isinstance(row, dict) and row.get('failed') is True
+                    and isinstance(row.get('at'), (int, float)) and 0 <= self.clock() - row['at']
+                    and row['at'] >= self.loaded_at.get(key, -1)):
+                if row['at'] > self.failed_at.get(key, -1):
+                    self.entries[key] = (None, 'Model discovery failed; refresh models to retry.')
+                    self.failed_at[key] = row['at']
+                    self.loaded_at.pop(key, None)
+                    self.saved.pop(fingerprint(key), None)
+            elif (isinstance(row, dict) and isinstance(row.get('at'), (int, float))
+                    and 0 <= self.clock() - row['at'] and isinstance(row.get('result'), dict)
+                    and row['at'] > self.loaded_at.get(key, -1)
+                    and row['at'] > self.failed_at.get(key, -1)):
+                self.entries[key] = (row['result'], None)
+                self.loaded_at[key] = row['at']
+                self.failed_at.pop(key, None)
+        except (OSError, ValueError, TypeError):
+            pass
+        return super().peek(key)
+
+    def put(self, key, result):
+        super().put(key, result)
+        if not isinstance(result, dict):
+            return
+        try:
+            from .host.config import write_private
+            self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            # Distinct temporary names inside write_private make same-key writes
+            # atomic; the last successful discovery wins, never a partial body.
+            write_private(self._file(key), json.dumps({'at': self.loaded_at[key], 'result': result}))
+            rows = sorted(self.directory.glob('*.json'), key=lambda p:p.stat().st_mtime, reverse=True)
+            for old in rows[128:]:
+                old.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    def discard(self, key):
+        super().discard(key)
+        try:self._file(key).unlink(missing_ok=True)
+        except OSError:pass
+
+    async def get(self, key, loader, refresh=False):
+        try:return await super().get(key, loader, refresh)
+        except Exception:
+            # A timestamped failure also invalidates other workers' copies.
+            # Never persist provider error text, which may contain credentials.
+            try:
+                from .host.config import write_private
+                if key in self.failed_at:
+                    write_private(self._file(key), json.dumps({'at': self.failed_at[key], 'failed': True}))
+            except OSError:pass
+            raise

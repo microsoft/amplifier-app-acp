@@ -177,8 +177,10 @@ class RuntimeControls:
         self.logins = {}
         self.kernels = None
         self.kernel_install = None
-        from .provider_catalog import ProviderCatalog
+        from .provider_catalog import ProviderCatalog, SharedProviderCatalog
         self.model_catalog=ProviderCatalog()
+        captured=self.coordinator.get_capability('web.provider_catalog')
+        self.shared_model_catalog=SharedProviderCatalog(captured['home']) if isinstance(captured,dict) and captured.get('home') else None
         self.catalog_revision=str(uuid.uuid4())
         self.coordinator.register_capability("web.controls.persist", self.persist)
         from .task_continuity import TaskController
@@ -190,6 +192,8 @@ class RuntimeControls:
         if self.kernels:
             await self.kernels.shutdown()
         await self.model_catalog.close()
+        if self.shared_model_catalog:
+            await self.shared_model_catalog.close()
         tasks = [row["task"] for row in self.logins.values() if not row["task"].done()]
         for task in tasks:
             task.cancel()
@@ -561,6 +565,14 @@ class RuntimeControls:
                 # Cached discovery is passive: no list_models/login/model call on
                 # session initialization, option refresh, or an unrelated provider.
                 model_key=(name,id(provider),fingerprint(getattr(provider,'config',{})))
+                if self.shared_model_catalog and shared.get('sharedCatalogKey'):
+                    from .provider_catalog import model_key as shared_key
+                    shared_id=shared_key(shared['sharedCatalogKey'])
+                    shared_value=self.shared_model_catalog.peek(shared_id)
+                    if shared_id in self.shared_model_catalog.failed_at:
+                        self.model_catalog.fail(model_key, 'Model discovery failed; refresh to try again.')
+                    elif shared_value is not None:
+                        self.model_catalog.put(model_key, shared_value['models'])
                 cached=self.model_catalog.peek(model_key)
                 from amplifier_acp.configuration_options import model_rows
                 catalog={'state':'not-loaded','models':[],'fresh':False}
@@ -600,7 +612,27 @@ class RuntimeControls:
                 return public_config(result)
             from .provider_catalog import fingerprint
             key=(name,id(provider),fingerprint(getattr(provider,'config',{})))
-            result=await load() if operation=='configuration.providerTest' else await self.model_catalog.get(key,load,refresh=args.get('refresh',False))
+            async def shared_load():
+                captured=self.coordinator.get_capability('web.provider_catalog')
+                mounted=next((row for row in getattr(self.session,'config',{}).get('providers',[]) if (row.get('id') or row.get('instance_id') or row.get('module','').removeprefix('provider-'))==name),{})
+                identity=None
+                if self.shared_model_catalog and mounted and isinstance(captured,dict) and name in captured.get('keys',{}):
+                    from .provider_catalog import configuration_key,model_key
+                    current=configuration_key(captured['workspace'],mounted['module'],mounted.get('config',{}),captured['sources'][name],home=captured['home'])
+                    if current==captured['keys'][name]:identity=current
+                if not identity:return await self.model_catalog.get(key,load,refresh=args.get('refresh',False))
+                async def fetch():return {'models':await load(),'supported':True}
+                try:
+                    result=await self.shared_model_catalog.get(model_key(identity),fetch,refresh=args.get('refresh',False))
+                except Exception as exc:
+                    self.model_catalog.fail(key, exc)
+                    raise
+                if identity!=configuration_key(captured['workspace'],mounted['module'],mounted.get('config',{}),captured['sources'][name],home=captured['home']):
+                    self.shared_model_catalog.discard(model_key(identity))
+                    raise ValueError('Provider configuration changed during discovery; reload models.')
+                self.model_catalog.put(key,result['models'])
+                return result['models']
+            result=await load() if operation=='configuration.providerTest' else await shared_load()
             if operation == "configuration.providerTest":
                 from .provider_status import catalog_check
                 return {"provider":name,**catalog_check(result)}

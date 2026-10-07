@@ -1,15 +1,17 @@
 import asyncio,json,uuid
+import pytest
 from amplifier_acp.native.execution_events import ExecutionEvents,CURRENT_CALL
 from amplifier_acp.model_detail import read
 
-def test_recorded_wire_details_redacted_bounded_and_scoped(tmp_path):
+@pytest.mark.parametrize('keys', [('raw','raw'), ('raw_request','raw_response')])
+def test_recorded_wire_details_redacted_bounded_and_scoped(tmp_path,keys):
     sid='session-one';events=[];observer=ExecutionEvents(sid,events.append,tmp_path/'sessions'/sid/'model-calls')
     call='llm:'+str(uuid.uuid4())
     observer.publish({'id':call,'kind':'llm','sessionId':sid,'turnId':'turn','phase':'running'})
     token=CURRENT_CALL.set(call)
     try:
-        observer.hook(sid,'llm:request',{'raw':{'authorization':'Bearer private','messages':[{'role':'user','content':'hello'}]}})
-        observer.hook(sid,'llm:response',{'raw':{'output':'world','api_key':'secret'}})
+        observer.hook(sid,'llm:request',{keys[0]:{'authorization':'Bearer private','messages':[{'role':'user','content':'hello'}]}})
+        observer.hook(sid,'llm:response',{keys[1]:{'output':'world','api_key':'secret'}})
     finally:CURRENT_CALL.reset(token)
     observer.publish({'id':call,'kind':'llm','phase':'completed','usage':{'totalTokens':3}})
     node=events[-1]['event']

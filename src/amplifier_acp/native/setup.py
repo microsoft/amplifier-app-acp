@@ -214,8 +214,8 @@ def validate_matrix(value):
 
 class SetupManager:
     def __init__(self,home,*,store=None,runtime_operation=None,progress=None,auth_command=None,probe_command=None,catalog=None,allow_missing_workspace=False,global_only=False):
-        from .provider_catalog import ProviderCatalog
-        self.catalog=catalog or ProviderCatalog()
+        from .provider_catalog import SharedProviderCatalog
+        self.catalog=catalog or SharedProviderCatalog(home)
         self.global_only=global_only
         self.allow_missing_workspace=allow_missing_workspace
         self.home=Path(home); self.store=store or SettingsStore(home)
