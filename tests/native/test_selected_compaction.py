@@ -104,12 +104,14 @@ async def test_actual_openai_compactor_serializes_and_validates_selected_model(m
     compact = AsyncMock(return_value=SimpleNamespace(
         output=[{'type':'compaction','encrypted_content':'offline-opaque-checkpoint'}],
         usage={'input_tokens':12,'output_tokens':4}))
-    provider._client = SimpleNamespace(responses=SimpleNamespace(compact=compact))
+    provider._client = SimpleNamespace(base_url='https://api.openai.com/v1',
+                                       responses=SimpleNamespace(compact=compact))
     provider._guard_assembled_params_with_provider_count = AsyncMock(return_value=12)
     wrapped = SelectedProvider(provider, {'model':'gpt-6-astra','effort':'high','max_output_tokens':999})
     request = ChatRequest(messages=[], max_output_tokens=123, metadata={'purpose':'context-compaction'})
     result = await wrapped.compact_context(request)
     assert compact.await_count == 1 and compact.call_args.kwargs['model'] == 'gpt-6-astra'
     assert wrapped.validate_compacted_context(result['message'])
-    assert not provider.validate_compacted_context(result['message'])
+    with pytest.raises(ValueError, match='different model'):
+        provider.validate_compacted_context(result['message'])
     assert provider.default_model == 'gpt-6-sol' and request.max_output_tokens == 123
