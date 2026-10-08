@@ -28,6 +28,8 @@ class _InitializingJournal(JournalUnavailable):
 # Fixed native-owned schemas, not a registry of user tables. SQL is never supplied
 # by callers. The integer marker binds family + enrolled optional namespaces.
 _SCHEMAS = {
+    'provider-recording': (13, (
+        'CREATE TABLE commands(id TEXT PRIMARY KEY,signature TEXT NOT NULL,body TEXT NOT NULL)',), ()),
     'bundle': (1, (
         'CREATE TABLE commands(id TEXT PRIMARY KEY,binding TEXT NOT NULL,scope TEXT NOT NULL,body TEXT NOT NULL)',), ()),
     'maintenance': (2, (

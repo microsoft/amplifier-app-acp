@@ -4,11 +4,28 @@ import pytest
 from client import Client
 from test_admin_lifecycle import CONTEXT
 
-PARTS=['native-import-records','native-preference-receipts']
+PARTS=['native-import-records','native-preference-receipts','native-recording-receipts']
+
+def test_store_revision_ignores_ctime_only_but_binds_bytes_identity_and_bounds(tmp_path):
+    import os
+    from amplifier_acp.private_store_snapshot import revision
+    path=tmp_path/'records.sqlite3'
+    path.write_bytes(b'original')
+    wal=Path(str(path)+'-wal');wal.write_bytes(b'committed')
+    before=revision(path);stamp=wal.stat()
+    wal.chmod(0o400);wal.chmod(0o600)
+    assert revision(path)==before
+    wal.write_bytes(b'different')
+    os.utime(wal,ns=(stamp.st_atime_ns,stamp.st_mtime_ns))
+    assert revision(path)!=before
+    with pytest.raises(ValueError,match='byte budget'):revision(path,maximum=8)
+    replacement=tmp_path/'replacement';replacement.write_bytes(path.read_bytes())
+    prior=revision(path);replacement.replace(path)
+    assert revision(path)!=prior
 
 async def launch(tmp_path):
     cwd=tmp_path/'workspace';cwd.mkdir(exist_ok=True);home=tmp_path/'home';home.mkdir(exist_ok=True)
-    config={'home':str(home),'appHome':str(tmp_path/'app'),'adminWorkspaceRoots':[str(cwd)],'adminMaintenance':True,'adminHistoryImport':True,'adminVoicePreferences':True,'workerCommand':['/impossible/private-store-worker'],'bundle':'fixture'}
+    config={'home':str(home),'appHome':str(tmp_path/'app'),'adminWorkspaceRoots':[str(cwd)],'adminMaintenance':True,'adminHistoryImport':True,'adminVoicePreferences':True,'adminProviderRecording':True,'workerCommand':['/impossible/private-store-worker'],'bundle':'fixture'}
     path=tmp_path/'agent.json';path.write_text(json.dumps(config));client=await Client.launch(path)
     init=await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
     assert init['result']['agentCapabilities']['_meta']['amplifier.dev/native']['admin']['maintenance']['archivePlans']['nativeStores']['parts']==PARTS+['native-maintenance-records','native-retained-archives']
@@ -40,6 +57,8 @@ async def seed(client,cwd):
     view=await call(client,cwd,'voice.configuration')
     saved=await call(client,cwd,'voice.preferences.update',{'commandId':'voice-save','expectedRevision':view['preferencesRevision'],'patch':{'voice':'cedar'}})
     assert saved['status']=='succeeded'
+    recording=await call(client,cwd,'provider.recording.get')
+    assert (await call(client,cwd,'provider.recording.configure',{'commandId':'recording-save','expectedRevision':recording['revision'],'enabled':True}))['status']=='succeeded'
     return uid,raw,saved
 
 @pytest.mark.asyncio
@@ -49,7 +68,7 @@ async def test_protocol_owner_images_preserve_original_uploads_receipts_and_wal(
         uid,raw,saved=await seed(client,cwd)
         # Retain real WAL state without an active write. Backup must incorporate
         # its committed contents, never ship or checkpoint the original WAL.
-        paths=[Path(config['appHome'])/'history-imports/imports.sqlite3',Path(config['appHome'])/'voice-preferences/receipts.sqlite3']
+        paths=[Path(config['appHome'])/'history-imports/imports.sqlite3',Path(config['appHome'])/'voice-preferences/receipts.sqlite3',Path(config['appHome'])/'diagnostics/recording-receipts.sqlite3']
         for source in paths:
             con=sqlite3.connect(source,isolation_level=None);con.execute('PRAGMA wal_autocheckpoint=0');con.execute('PRAGMA user_version=7');peers.append(con)
         originals={p:p.read_bytes() for source in paths for p in [source,Path(str(source)+'-wal')]}
@@ -91,7 +110,8 @@ async def test_protocol_owner_images_preserve_original_uploads_receipts_and_wal(
                     assert db.execute('PRAGMA quick_check').fetchone()==('ok',)
                     assert db.execute('PRAGMA journal_mode').fetchone()==('delete',)
                     if part=='native-import-records':assert db.execute('SELECT body FROM uploads WHERE id=?',(uid,)).fetchone()[0]==raw
-                    else:assert json.loads(db.execute('SELECT body FROM commands WHERE id=?',('voice-save',)).fetchone()[0])==saved
+                    elif part=='native-preference-receipts':assert json.loads(db.execute('SELECT body FROM commands WHERE id=?',('voice-save',)).fetchone()[0])==saved
+                    else:assert json.loads(db.execute('SELECT body FROM commands WHERE id=?',('recording-save',)).fetchone()[0])['result']['enabled'] is True
         assert all(p.read_bytes()==content for p,content in originals.items())
         await call(client,cwd,'maintenance.release',{'leaseId':lease['leaseId']},auth);await release(client,cwd,auth)
         assert not client.events and not (Path(config['home'])/'projects').exists()
@@ -112,7 +132,7 @@ async def test_explicit_absent_stores_are_not_created_and_no_unselected_stores_r
     try:
         auth=await hold(client,cwd);preview=await prepare(client,cwd,auth,parts=[PARTS[0]])
         assert preview['ownerCoverage']['included'][0]['status']=='missing'
-        assert {row['owner'] for row in preview['ownerCoverage']['omitted']}=={'native-voice-preferences','native-maintenance'}
+        assert {row['owner'] for row in preview['ownerCoverage']['omitted']}=={'native-voice-preferences','native-provider-recording','native-maintenance'}
         assert not (Path(config['appHome'])/'history-imports').exists() and not (Path(config['appHome'])/'voice-preferences').exists()
         assert not (Path(config['home'])/'projects').exists()
     finally:await client.close()

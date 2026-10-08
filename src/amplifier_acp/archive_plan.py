@@ -10,7 +10,7 @@ from .relocation import write
 from .session_lifecycle import regular
 
 OPERATIONS={'maintenance.archive.create','maintenance.archive.add','maintenance.archive.prepare','maintenance.archive.manifest'}
-PARTS={'session-history','session-state','shared-configuration','workspace-configuration','native-import-records','native-preference-receipts','native-maintenance-records','native-retained-archives','full-native-authority'}
+PARTS={'session-history','session-state','shared-configuration','workspace-configuration','native-import-records','native-preference-receipts','native-recording-receipts','native-maintenance-records','native-retained-archives','full-native-authority'}
 OMISSIONS=['unselected native and delegated histories','independent product and client stores','workspace files outside selected .amplifier configuration','module source, caches and runtime generations','external credential stores, environment variables and authentication sessions','Foundation live writer leases and transfer authority','unknown shared-home entries outside the documented native configuration roots']
 EXCLUSIONS=['transient .lock files and SQLite -shm files']
 

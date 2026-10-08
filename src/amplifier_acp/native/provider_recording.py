@@ -36,7 +36,8 @@ def recording_enabled(home=None):
         from .host.config import app_home
         home = app_home()
     try:
-        value = json.loads((Path(home) / 'diagnostics' / 'config.json').read_text())
+        from ..provider_recording_policy import read_configuration
+        value = read_configuration(home)
         return isinstance(value, dict) and value.get('providerRequests') is True
     except (OSError, ValueError):
         return False

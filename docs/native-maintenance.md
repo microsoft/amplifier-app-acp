@@ -202,7 +202,7 @@ credential reset, managed deletion and retention boundaries.
 ### Explicit native private stores
 
 `archivePlans.nativeStores` advertises `{version:1,parts:["native-import-records",
-"native-preference-receipts","native-maintenance-records",
+"native-preference-receipts","native-recording-receipts","native-maintenance-records",
 "native-retained-archives"],requiresRecoveryAdminLease:true}`. These additive
 parts use the existing create/prepare/capture wire. They are never silently added
 to a selected-session or configuration archive.
@@ -210,8 +210,10 @@ to a selected-session or configuration archive.
 * `native-import-records` preserves the adapter's original imported upload bytes,
   prepared evidence, target reservations and exact command receipts.
 * `native-preference-receipts` preserves shared voice-default command receipts.
-  The settings and last-write proof are in `shared-configuration`, which must be
-  selected separately for their preservation.
+* `native-recording-receipts` preserves original provider-recording policy
+  receipts. The policy itself remains in the existing diagnostics configuration,
+  covered by full native authority capture. Selected receipts alone are not a
+  complete settings backup.
 
 These import/preference selections cover **all records in the configured native app home**, not only
 the current workspace. This scope is explicit in the returned `ownerCoverage`.

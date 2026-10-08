@@ -529,7 +529,8 @@
                   "native-preference-receipts",
                   "native-maintenance-records",
                   "native-retained-archives",
-                  "full-native-authority"
+                  "full-native-authority",
+                  "native-recording-receipts"
                 ]
               }
             },

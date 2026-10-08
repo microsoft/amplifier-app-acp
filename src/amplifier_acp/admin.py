@@ -5,13 +5,14 @@ import json
 import os
 from pathlib import Path
 
+from .provider_recording_policy import OPERATIONS as RECORDING_OPERATIONS
 from .generations import OPERATIONS as GENERATION_OPERATIONS
 from .maintenance import OPERATIONS as MAINTENANCE_OPERATIONS
 from .history_import import OPERATIONS as HISTORY_IMPORT_OPERATIONS
 from .voice_preferences import OPERATIONS as VOICE_PREFERENCE_OPERATIONS
 from .permissions import OPERATIONS as PERMISSION_OPERATIONS
 
-OPERATIONS=GENERATION_OPERATIONS | MAINTENANCE_OPERATIONS | HISTORY_IMPORT_OPERATIONS | VOICE_PREFERENCE_OPERATIONS | PERMISSION_OPERATIONS | {
+OPERATIONS=RECORDING_OPERATIONS | GENERATION_OPERATIONS | MAINTENANCE_OPERATIONS | HISTORY_IMPORT_OPERATIONS | VOICE_PREFERENCE_OPERATIONS | PERMISSION_OPERATIONS | {
  'voice.configuration','voice.credential','voice.configure',
  'providers.list','providers.schema','providers.models','providers.test','providers.testMessage','providers.credentials',
  'providers.save','providers.remove','providers.move','providers.reorder','providers.finishSetup','providers.login','providers.loginStatus','providers.loginCancel',
@@ -74,6 +75,7 @@ class Administration:
   # Validate all request authority before imports, files, probes or network effects.
   workspace=self.workspace(cwd)
   if operation not in OPERATIONS:raise ValueError('Unknown native administration operation.')
+  if operation in RECORDING_OPERATIONS and self.config.get('adminProviderRecording') is not True:raise AdminLauncherRefusal('Provider recording requires trusted launcher enablement.',operation,'adminProviderRecording')
   if operation in PERMISSION_OPERATIONS and self.config.get('adminPermissions') is not True:raise AdminLauncherRefusal('File-access changes require explicit trusted launcher enablement.',operation,'adminPermissions')
   if operation in VOICE_PREFERENCE_OPERATIONS and self.config.get('adminVoicePreferences') is not True:raise AdminLauncherRefusal('Voice preference changes require explicit trusted launcher enablement.',operation,'adminVoicePreferences')
   if operation in HISTORY_IMPORT_OPERATIONS and self.config.get('adminHistoryImport') is not True:raise AdminLauncherRefusal('History import requires explicit trusted launcher enablement.',operation,'adminHistoryImport')
@@ -107,6 +109,12 @@ class Administration:
    raise
   finally:self.effects.discard(task);self.requests.discard(request);self.lifecycle.leave(ticket)
  async def execute(self,workspace,operation,args):
+  if operation in RECORDING_OPERATIONS:
+   from .provider_recording_policy import ProviderRecording
+   from .maintenance_gate import Gate
+   owner=ProviderRecording(self.config)
+   if operation!='provider.recording.configure':return owner.perform(operation,args)
+   with Gate(self.config):return owner.perform(operation,args)
   if operation=='bundle.receipt':
    from .bundle_commands import BundleCommands
    if set(args)!={'commandId'}:raise ValueError('Exact bundle receipt commandId required')

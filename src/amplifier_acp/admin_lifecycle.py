@@ -4,7 +4,7 @@ import asyncio,copy,os,uuid
 from .maintenance_gate import Gate,MaintenanceBusy
 from .admin_admission import AdmissionJournal
 
-READS={'maintenance.bundleReferences.page','bundle.receipt','maintenance.appReset.inspect','maintenance.capture.inspect','maintenance.cache.page','maintenance.artifact.inspect','maintenance.restore.inspect','permissions.get','permissions.receipt','maintenance.restore.manifest','voice.preferences.receipt','history.import.receipt','maintenance.archive.manifest','voice.configuration','maintenance.receipt','maintenance.artifact.read','maintenance.lease','generations.receipt','generations.inspect','generations.current'}
+READS={'provider.recording.get','provider.recording.receipt','maintenance.bundleReferences.page','bundle.receipt','maintenance.appReset.inspect','maintenance.capture.inspect','maintenance.cache.page','maintenance.artifact.inspect','maintenance.restore.inspect','permissions.get','permissions.receipt','maintenance.restore.manifest','voice.preferences.receipt','history.import.receipt','maintenance.archive.manifest','voice.configuration','maintenance.receipt','maintenance.artifact.read','maintenance.lease','generations.receipt','generations.inspect','generations.current'}
 CONTEXT={'fenceId','commandId','purpose','instanceId','dataScope'}
 SERVICE_IDENTITY={'installationId','dataScope','ownerId','instanceId','releaseDigest'}
 
