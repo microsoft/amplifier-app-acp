@@ -75,3 +75,22 @@ async def test_actual_execution_hook_delivers_and_reports_only_in_tool_details()
     assert all(row['sessionUpdate'].startswith('tool_call') for row in updates)
     assert updates[-1]['rawOutput']==event()['output']
     assert 'saved' in updates[-1]['content'][-1]['content']['text']
+
+@pytest.mark.asyncio
+async def test_gallery_metadata_is_negotiated_and_uses_the_scoped_actual_tool_identity():
+    s = session()
+    s.server.host_info['features']['imageResultMetadata'] = 1
+    row = event()
+    await deliver(s, row)
+    assert s.bridge.call_args.args[1]['args']['imageResult'] == {
+        'version': 1, 'toolCallId': 'session-one:call-one',
+        'requestId': 'image-one', 'operation': 'generate'}
+    assert 'imageResult' not in completed_artifact(row)['args']
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('version', [True, False, '1', 2, None])
+async def test_unknown_metadata_versions_use_legacy_publication(version):
+    s = session()
+    s.server.host_info['features']['imageResultMetadata'] = version
+    await deliver(s, event())
+    assert 'imageResult' not in s.bridge.call_args.args[1]['args']

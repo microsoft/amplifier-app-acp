@@ -7,7 +7,7 @@ import hashlib
 import re
 
 
-def completed_artifact(event):
+def completed_artifact(event, *, metadata=False):
     if event.get('kind') != 'tool' or event.get('label') != 'image_generate' or event.get('phase') != 'completed':
         return None
     result = event.get('output')
@@ -30,7 +30,9 @@ def completed_artifact(event):
     identity = hashlib.sha256((event['sessionId'] + '\0' + event['toolCallId'] + '\0' + receipt['requestHash']).encode()).hexdigest()
     return {'action': 'canvas.openFile', 'id': 'image-result:' + identity, 'args': {
         'kind': 'image', 'title': 'Edited image' if receipt['operation'] == 'edit' else 'Generated image',
-        'path': artifact['path'], 'expectedSha256': artifact['sha256']}}
+        'path': artifact['path'], 'expectedSha256': artifact['sha256'],
+        **({'imageResult': {'version': 1, 'toolCallId': event['sessionId'] + ':' + event['toolCallId'],
+            'requestId': receipt['requestId'], 'operation': receipt['operation']}} if metadata else {})}}
 
 
 async def deliver(session, event):
@@ -40,7 +42,8 @@ async def deliver(session, event):
         return
     if session.server.host_info.get('features', {}).get('imageResultArtifacts') is not True:
         return
-    request = completed_artifact(event)
+    metadata_version = session.server.host_info.get('features', {}).get('imageResultMetadata')
+    request = completed_artifact(event, metadata=type(metadata_version) is int and metadata_version == 1)
     if request is None:
         return
     try:

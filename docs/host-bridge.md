@@ -71,3 +71,12 @@ never contact omitted host features. `app_control` tool schema only lists the
 advertised operation subset. Generic discovery guidance promises no unavailable
 voice, canvas, publishing, drafts or global catalogs. The host may add short
 capability-specific guidance for its actual shipped owners.
+
+
+`imageResultMetadata: 1` is an additional exact-version negotiation for
+`imageResultArtifacts`. It supplies display-only `imageResult` fields on the
+same digest-checked `canvas.openFile` publication: version 1, scoped tool-call
+identity, original request ID, and generate/edit operation. Resources retains
+these fields with the immutable saved version so galleries can match jobs in
+request order. This grants no image generation or replay authority. Hosts that
+do not advertise the version continue to receive the existing publication.
