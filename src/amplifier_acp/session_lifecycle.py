@@ -173,9 +173,12 @@ class Lifecycle:
         if operation.startswith('legacyCopy.'):
             from .retired_copy import perform
             return perform(self,operation,args)
-        fields={'inspect':set(),'receipt':{'commandId'},'export.read':{'snapshotId','offset','limit'},'delete.preview':set(),'fork':{'commandId','targetSessionId','expectedHistoryRevision','throughMessageId','mode','bundle','bundleRevision','resetModel','descendants','managedTarget'},'export':{'commandId','expectedHistoryRevision','format','scope','fromMessageId','throughMessageId','minimal'},'delete':{'commandId','expectedHistoryRevision','confirmationToken'},'delete.standard':{'commandId','expectedHistoryRevision'},'restore':{'commandId','expectedHistoryRevision'},'retention.hide':{'commandId','expectedHistoryRevision','modifiedBefore','descendants'}}
+        fields={'inspect':set(),'receipt':{'commandId'},'export.read':{'snapshotId','offset','limit'},'delete.preview':set(),'fork':{'commandId','targetSessionId','expectedHistoryRevision','throughMessageId','mode','bundle','bundleRevision','resetModel','descendants','managedTarget'},'export':{'commandId','expectedHistoryRevision','format','scope','fromMessageId','throughMessageId','minimal','includeExecution','includeConversationId','includeTimestamps','includeReferenceIds','exportContext'},'delete':{'commandId','expectedHistoryRevision','confirmationToken'},'delete.standard':{'commandId','expectedHistoryRevision'},'restore':{'commandId','expectedHistoryRevision'},'retention.hide':{'commandId','expectedHistoryRevision','modifiedBefore','descendants'}}
         if operation not in fields or not isinstance(args,dict) or set(args)-fields[operation]:raise ValueError('Unsupported lifecycle operation or arguments')
-        if len(json.dumps(args).encode())>32768:raise ValueError('Lifecycle arguments exceed their bound')
+        if len(json.dumps({key:value for key,value in args.items() if key!='exportContext'}).encode())>32768:raise ValueError('Lifecycle arguments exceed their bound')
+        if 'exportContext' in args:
+            from .conversation_export import contribution
+            contribution(args['exportContext'])
         if operation=='inspect':return self.inspect()
         if operation=='receipt':return {'receipt':self.saved(args.get('commandId'))}
         if operation=='export.read':return self.read_export(args)
@@ -373,9 +376,10 @@ class Lifecycle:
             return result
         finally:target_handle.release()
     def prepare_export(self,args):
-        if type(args.get('minimal',False)) is not bool:raise ValueError('Export minimal flag must be a boolean')
+        from .conversation_export import options,render
+        options(args)
         rows,metadata,revision=canonical(self.directory,args['expectedHistoryRevision'],app_home=home(self.server));rows=scope_rows(rows,args)
-        public=[];omissions=[];attachments=0
+        public=[];omissions=[];attachments=0;aliases={}
         for position,row in rows:
             updates,issues=history.content_updates(row,position);omissions.extend(issues)
             if not history.visible(row):continue
@@ -394,14 +398,14 @@ class Lifecycle:
                     index=(update.get('_meta',{}).get('amplifier.dev/history') or {}).get('originalBlockIndex')
                     refs.append({**original['blocks'][index],'omittedPayload':True} if original is not None else
                                 {'type':block['type'],**({'uri':block['uri']} if 'uri' in block else {}),'omittedPayload':True})
-            public.append({'id':message_id(row,position,getattr(rows,'epoch',None)),'role':row['role'],'text':('' if original is not None else '\n').join(texts),**({'publicMessage':original} if original is not None else {}),**({'attachments':refs} if refs else {}),**({} if args.get('minimal') else {'provenance':history.provenance(row)})})
+            marker=(row.get('metadata') or {}).get('amplifier_input') or {}
+            if isinstance(marker.get('id'),str):aliases[marker['id']]=message_id(row,position,getattr(rows,'epoch',None))
+            public.append({'id':message_id(row,position,getattr(rows,'epoch',None)),'role':row['role'],'text':('' if original is not None else '\n').join(texts),**({'publicMessage':original} if original is not None else {}),**({'attachments':refs} if refs else {}),'provenance':history.provenance(row)})
         fmt=args.get('format','json')
-        if fmt=='json':body=json.dumps({'sessionId':self.identity,'historyRevision':revision,'messages':public},ensure_ascii=False,indent=2).encode();mime='application/json';extension='json'
-        elif fmt=='markdown':
-            body=('\n\n'.join('## '+row['role'].title()+'\n\n'+row['text']+(''.join('\n\n[Attachment reference: '+r.get('uri',r['type'])+'; payload omitted]' for r in row.get('attachments',[]))) for row in public)+'\n').encode();mime='text/markdown';extension='md'
-        else:raise ValueError('Unsupported export format')
+        body,details=render(public,args,self.identity,revision,aliases)
+        mime='application/json' if fmt=='json' else 'text/markdown';extension='json' if fmt=='json' else 'md'
         if len(body)>MAX_HISTORY:raise ValueError('Export exceeds selected 64 MiB bound')
-        return body,{'filename':f'conversation-{self.identity[:20]}.{extension}','mimeType':mime,'summary':{'format':fmt,'scope':args.get('scope','all'),'minimal':args.get('minimal',False),'requestedBoundaries':{key:args[key] for key in ('fromMessageId','throughMessageId') if key in args},'resolvedBoundaries':{'fromMessageId':public[0]['id'] if public else None,'throughMessageId':public[-1]['id'] if public else None},'messageCount':len(public),'bytes':len(body),'attachmentCount':attachments,'artifactCount':0,'omissions':[{'code':'tool_receipts_and_private_reasoning_excluded'},{'code':'artifact_and_attachment_payloads_excluded'},*omissions[:100]]},'historyRevision':revision}
+        return body,{'filename':f'conversation.{extension}' if not details['options']['includeConversationId'] else f'conversation-{self.identity[:20]}.{extension}','mimeType':mime,'summary':{'format':fmt,'scope':args.get('scope','all'),'minimal':args.get('minimal',False),'requestedBoundaries':{key:args[key] for key in ('fromMessageId','throughMessageId') if key in args},'resolvedBoundaries':{'fromMessageId':public[0]['id'] if public else None,'throughMessageId':public[-1]['id'] if public else None},'messageCount':len(public),'bytes':len(body),'attachmentCount':attachments,'artifactCount':details['artifactCount'],'executionSummaryCount':details['executionSummaryCount'],'options':details['options'],'omissions':[{'code':'tool_receipts_and_private_reasoning_excluded'},{'code':'artifact_and_attachment_payloads_excluded'},*details['omissions'],*omissions[:100]]},'historyRevision':revision}
     def export(self,args,prepared):
         body,description=prepared;digest=hashlib.sha256(body).hexdigest();snapshot=fingerprint({'commandId':args['commandId'],'digest':digest,'sessionId':self.identity})
         directory=self.app/'exports';directory.mkdir(exist_ok=True,mode=0o700)

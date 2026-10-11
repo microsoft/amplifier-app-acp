@@ -128,3 +128,35 @@ def test_selected_snapshot_rejects_symlink_and_corruption_without_event_reads(tm
     with pytest.raises(ValueError):canonical(directory,stamp(transcript)[0])
     transcript.unlink();transcript.symlink_to(directory/'metadata.json')
     with pytest.raises(ValueError):canonical(directory,'unused')
+
+
+@pytest.mark.asyncio
+async def test_detailed_export_freezes_owner_observations_and_recovers_exact_bytes(tmp_path):
+    client,sid,cwd,config=await prepared(tmp_path)
+    try:
+        await prompt(client,sid,'Visible original **text**','detail-turn')
+        async with asyncio.timeout(10):
+            while not (await client.request('_amplifier/retire',{'sessionId':sid}))['result']['retired']:
+                await asyncio.sleep(.01)
+        native=next((tmp_path/'home/projects').glob('*/sessions/'+sid));file=native/'transcript.jsonl'
+        rows=[json.loads(line) for line in file.read_text().splitlines()]
+        for row in rows:
+            if row.get('role')=='user':row.setdefault('metadata',{})['createdAt']='2026-10-11T10:00:00Z'
+        file.write_text(''.join(json.dumps(row)+'\n' for row in rows));before=file.read_bytes()
+        revision=(await action(client,sid,cwd,'inspect'))['result']['historyRevision']
+        context={'version':1,'source':'host-retained-observations','work':[{'anchor':'detail-turn','status':'completed','toolCalls':2,'modelCalls':3,'durationSeconds':1.25}],
+                 'artifacts':[{'id':'private-artifact','title':'Report','kind':'markdown','messageId':'detail-turn'}],'omissions':[]}
+        args={'commandId':'detailed-export','expectedHistoryRevision':revision,'format':'json','includeExecution':True,'includeTimestamps':True,'includeConversationId':False,'includeReferenceIds':False,'exportContext':context}
+        reply=await action(client,sid,cwd,'export',args);assert 'result' in reply,reply
+        snapshot=reply['result'];page=(await action(client,sid,cwd,'export.read',{'snapshotId':snapshot['snapshotId']}))['result'];body=base64.b64decode(page['data']);content=json.loads(body)
+        assert snapshot['summary']['executionSummaryCount']==1 and snapshot['summary']['artifactCount']==1
+        assert snapshot['filename']=='conversation.json'
+        assert any(row.get('timestamp')=='2026-10-11T10:00:00+00:00' for row in content['messages'])
+        assert any(row.get('workSummaries',[{}])[0].get('modelCalls')==3 for row in content['messages'])
+        assert sid.encode() not in body and b'private-artifact' not in body and b'Visible original **text**' in body
+        assert file.read_bytes()==before
+        file.write_bytes(before+b'{"role":"user","content":"Later change"}\n')
+        repeated=(await action(client,sid,cwd,'export',args))['result'];assert repeated['snapshotId']==snapshot['snapshotId'] and repeated['replayed'] is False
+        again=(await action(client,sid,cwd,'export.read',{'snapshotId':snapshot['snapshotId']}))['result'];assert base64.b64decode(again['data'])==body
+        assert 'error' in await action(client,sid,cwd,'export',{**args,'includeExecution':False})
+    finally:await client.close()

@@ -28,7 +28,8 @@ page reads need no model/worker. No operation scans projects or `events.jsonl`.
   event logs are not copied. Incomplete historical tool exchanges are retained
   as interrupted evidence, never rerun. A partial fork is fenced against startup.
 - `export {commandId,expectedHistoryRevision,format,scope?,fromMessageId?,
-  throughMessageId?,minimal?}` freezes public native conversation text and
+  throughMessageId?,minimal?,includeExecution?,includeConversationId?,
+  includeTimestamps?,includeReferenceIds?,exportContext?}` freezes public native conversation text and
   references as Markdown or JSON. Scope is `all`, `from`, or inclusive `range`.
   It returns `snapshotId`, `filename`, `mimeType`, `summary`, `capturedAt`,
   `historyRevision`, `contentHash`, and receipt. Snapshot bodies remain in native
@@ -200,3 +201,33 @@ family coverage, and `canonicalFilesDeleted:0`. Exact receipt recovery never
 repeats an uncertain effect. This is neither legacy presentation-file purge nor
 permanent managed-chat deletion. Host selection/dependent-owner guards are
 separate required authority; the native method never claims those by itself.
+
+## Optional detailed export
+
+`sessionLifecycle.exportDetails` version 1 advertises the four boolean flags and
+`contextVersion: 1`. Clients must negotiate it before supplying these options.
+`includeExecution` and `includeTimestamps` default to false;
+`includeReferenceIds` defaults to true. `includeConversationId` defaults to
+`!minimal` and can be overridden explicitly. Minimal export also removes public
+provenance metadata. Disabling reference IDs removes generated message, input,
+attachment and artifact identifiers and addresses; literal user-authored text is
+not rewritten. Disabling conversation IDs removes the conversation/history
+identifiers from the content and uses a generic download filename.
+
+The Host may contribute `exportContext` version 1 containing bounded structural
+work summaries and artifact references from their existing owners. The public
+Host API refuses caller-supplied context. Native validates an exact allowlist,
+a 1 MiB serialized bound, up to 1,000 work and 1,000 artifact rows and 20 omission
+codes. Work rows contain only an anchor, recorded status, tool/model counts and
+an optional recorded duration. Artifact rows contain bounded ID, title, kind and
+optional message reference. No tool input/output, hidden reasoning, file body,
+path or client transcript can be contributed through this envelope.
+
+Native resolves anchors against canonical message/input identities, filters range
+exports to selected messages, and freezes the resulting bytes inside its existing
+snapshot and receipt. Unanchored observations appear only in whole-conversation
+exports. Missing timestamps and unavailable or bounded owner observations are
+reported explicitly. Work coverage is retained Host observations, not a complete
+execution audit. Observations grant no authority and never modify native history.
+The existing writer lock, history revision check, 64 MiB export limit, immutable
+byte pages and exact-command recovery remain in force.
