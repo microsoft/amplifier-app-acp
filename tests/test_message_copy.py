@@ -50,6 +50,10 @@ async def test_public_fork_preserves_only_same_account_retained_canonical_reacti
     target_refs={u['content']['text']:u['_meta']['amplifier.dev/history']['messageReference'] for u in page(target_dir)['updates'] if u.get('content',{}).get('type')=='text'}
     copied=MessageMetadata(server.config['appHome'],target,actor_id='account')
     ids=[target_refs[text]['messageId'] for text in ('First','Answer')]
+    assert result['forkBoundary']=={'sourceMessageId':refs['First']['messageId'],
+        'targetMessageId':ids[0],'historyRevision':page(target_dir)['revision']}
+    from amplifier_acp.history import exact_message
+    assert exact_message(target_dir,ids[0],result['historyRevision'])['message']['text']=='First'
     assert all(item['mine']==['👍'] and item['counts']=={'👍':1} for item in copied.read(ids)['items'])
     assert 'Later' not in target_refs
     assert all(not item['mine'] for item in MessageMetadata(server.config['appHome'],target,actor_id='unrelated-account').read(ids)['items'])
@@ -60,6 +64,7 @@ async def test_public_fork_preserves_only_same_account_retained_canonical_reacti
     if mode=='recovery':assert ids[0]!=refs['First']['messageId'] or ids[1]!=refs['Answer']['messageId']
     retry=await server.dispatch('_amplifier/session',{'sessionId':'source','cwd':str(cwd),'operation':'fork','args':args})
     assert retry['sessionId']==target and retry['replayed'] is False
+    assert retry['forkBoundary']==result['forkBoundary']
     assert copied.read(ids)['items'][0]['revision']==1
 
 @pytest.mark.asyncio
@@ -94,9 +99,12 @@ async def test_interrupted_annotation_publish_preserves_unknown_without_retry(se
 async def test_copy_without_annotations_creates_no_adjunct(selected):
     server,cwd,directory,refs,source=selected
     with source._db(create=True) as db:db.execute('DELETE FROM annotations')
-    target,args,result=await fork(selected)
+    target,args,result=await fork(selected,throughMessageId=refs['First']['messageId'])
     assert result['messageAnnotations']['messages']==0
     assert not MessageMetadata(server.config['appHome'],target,actor_id='account').path.exists()
+    target_updates=page(server.directory(str(cwd),target))['updates']
+    copied_user=next(row for row in target_updates if row.get('content',{}).get('text')=='First')
+    assert result['forkBoundary']['targetMessageId']==copied_user['_meta']['amplifier.dev/history']['messageId']
 
 @pytest.mark.asyncio
 async def test_more_than_fifty_annotated_rows_copy_in_bounded_batches(selected):
@@ -146,10 +154,12 @@ async def test_bundle_change_remaps_retained_indices_after_system_removal(select
     from amplifier_acp.configuration_clone import fingerprint
     server,cwd,directory,refs,source=selected
     server.config['forkBundles']={'reviewed':'fixture-bundle'}
-    target,args,result=await fork(selected,bundle='reviewed',bundleRevision=fingerprint(['reviewed','fixture-bundle']))
+    target,args,result=await fork(selected,throughMessageId=refs['Later']['messageId'],bundle='reviewed',bundleRevision=fingerprint(['reviewed','fixture-bundle']))
     rows=[json.loads(line) for line in (server.directory(str(cwd),target)/'transcript.jsonl').read_text().splitlines()]
     assert rows[0]['role']=='user' and not any(row['role']=='system' for row in rows)
     target_updates=page(server.directory(str(cwd),target))['updates']
+    target_boundary=next(row for row in target_updates if row.get('content',{}).get('text')=='Later')
+    assert result['forkBoundary']['targetMessageId']==target_boundary['_meta']['amplifier.dev/history']['messageId']
     ids=[row['_meta']['amplifier.dev/history']['messageReference']['messageId'] for row in target_updates if row.get('content',{}).get('text') in {'First','Answer','Later'}]
     assert all(row['mine']==['👍'] for row in MessageMetadata(server.config['appHome'],target,actor_id='account').read(ids)['items'])
     assert result['messageAnnotations']['messages']==3
