@@ -79,7 +79,7 @@ async def test_actual_execution_hook_delivers_and_reports_only_in_tool_details()
 @pytest.mark.asyncio
 async def test_gallery_metadata_is_negotiated_and_uses_the_scoped_actual_tool_identity():
     s = session()
-    s.server.host_info['features']['imageResultMetadata'] = 1
+    s.server.host_info['features']['imageResultMetadataV1'] = True
     row = event()
     await deliver(s, row)
     assert s.bridge.call_args.args[1]['args']['imageResult'] == {
@@ -88,9 +88,24 @@ async def test_gallery_metadata_is_negotiated_and_uses_the_scoped_actual_tool_id
     assert 'imageResult' not in completed_artifact(row)['args']
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('version', [True, False, '1', 2, None])
+@pytest.mark.parametrize('version', [1, False, '1', 2, None])
 async def test_unknown_metadata_versions_use_legacy_publication(version):
     s = session()
-    s.server.host_info['features']['imageResultMetadata'] = version
+    s.server.host_info['features']['imageResultMetadataV1'] = version
     await deliver(s, event())
     assert 'imageResult' not in s.bridge.call_args.args[1]['args']
+
+
+@pytest.mark.asyncio
+async def test_image_metadata_negotiates_through_the_actual_initialize_boundary(tmp_path):
+    import io
+    from amplifier_acp.server import Server
+    server = Server({'home': str(tmp_path/'native'), 'appHome': str(tmp_path/'app')}, io.StringIO())
+    result = await server.dispatch('initialize', {'protocolVersion': 1, 'clientCapabilities': {
+        '_meta': {'amplifier.dev/host': {'version': 1, 'features': {
+            'imageGeneration': True, 'imageResultArtifacts': True, 'imageResultMetadataV1': True}}}}})
+    assert result['protocolVersion'] == 1
+    s = session()
+    s.server = server
+    await deliver(s, event())
+    assert s.bridge.call_args.args[1]['args']['imageResult']['version'] == 1

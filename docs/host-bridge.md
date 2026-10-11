@@ -73,7 +73,7 @@ voice, canvas, publishing, drafts or global catalogs. The host may add short
 capability-specific guidance for its actual shipped owners.
 
 
-`imageResultMetadata: 1` is an additional exact-version negotiation for
+`imageResultMetadataV1: true` is an additional boolean feature negotiation for
 `imageResultArtifacts`. It supplies display-only `imageResult` fields on the
 same digest-checked `canvas.openFile` publication: version 1, scoped tool-call
 identity, original request ID, and generate/edit operation. Resources retains

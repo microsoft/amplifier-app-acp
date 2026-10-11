@@ -42,8 +42,8 @@ async def deliver(session, event):
         return
     if session.server.host_info.get('features', {}).get('imageResultArtifacts') is not True:
         return
-    metadata_version = session.server.host_info.get('features', {}).get('imageResultMetadata')
-    request = completed_artifact(event, metadata=type(metadata_version) is int and metadata_version == 1)
+    metadata_enabled = session.server.host_info.get('features', {}).get('imageResultMetadataV1') is True
+    request = completed_artifact(event, metadata=metadata_enabled)
     if request is None:
         return
     try:
