@@ -528,7 +528,11 @@ class SetupManager:
         if action=='providers.credentials':
             cli=bool(await asyncio.to_thread(github_cli_token)) if args['module']=='provider-github-copilot' else False
             return {'credentialCheck':{**self.credential_check(workspace,args['module'],env_var=args.get('envVar')), 'githubCliAvailable':cli,'requestedEnvVar':args.get('envVar',''), 'checkedAt':time.time()}}
-        if action=='providers.list':return {'providers':self.provider_rows(workspace),'providersWorkspace':str(workspace),'providersLoadedAt':time.time()}
+        if action=='providers.list':
+            from .image_defaults import preference
+            effective = self.config(workspace)
+            return {'providers': self.provider_rows(workspace), 'providersWorkspace': str(workspace),
+                    'providersLoadedAt': time.time(), 'imagePreference': preference(effective.settings, effective.providers)}
         if action in {'providers.schema','providers.models','providers.imageModels','providers.test','providers.testMessage'}:
             return await (self.probe(action,args,workspace) if action in {'providers.test','providers.testMessage'} else self.cached_probe(action,args,workspace))
         if action=='providers.configureImages':

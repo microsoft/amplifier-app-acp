@@ -29,6 +29,10 @@ def select_images(manager, workspace, scope, rows, identity, image, enabled, *, 
         result.setdefault('config', {})['providers'] = providers
         return result
     def mutate(settings):
+        settings['image_generation'] = {'mode': 'selected' if enabled or not exclusive and any(
+            row_id(row) != identity and isinstance(row.get('config', {}).get('image_generation'), dict)
+            and row['config']['image_generation'].get('enabled') is True
+            for row in rows) else 'off'}
         # Only image fields are edited. Never promote a workspace's credentials,
         # chat model, source overrides or other settings into a broader scope.
         inherited = preview(settings, stop=scope)
@@ -52,6 +56,8 @@ def select_images(manager, workspace, scope, rows, identity, image, enabled, *, 
         # A more-specific override must not turn a successful save into two
         # active backends. Reject before writing, with a useful scope choice.
         effective = preview(settings)
+        if effective.get('image_generation', {}).get('mode') != settings['image_generation']['mode']:
+            raise ValueError('This workspace overrides image preferences. Choose its scope under Advanced preferences.')
         disabled = effective.get('configurator', {}).get('disabled', {}).get('providers', [])
         active = [row_id(row) for row in effective.get('config', {}).get('providers', [])
                   if row_id(row) not in disabled and row.get('enabled') is not False
@@ -70,6 +76,20 @@ def select_images(manager, workspace, scope, rows, identity, image, enabled, *, 
 
 
 async def configure_images(manager, args, workspace, scope):
+    if args.get('mode') in {'automatic', 'off'}:
+        mode = args['mode']
+        from .shared_settings import settings_paths, read_yaml
+        paths = settings_paths(workspace, shared_home=manager.store.shared_home, global_only=manager.global_only)
+        def save(settings):
+            levels = list(paths)
+            for level in levels[levels.index(scope)+1:]:
+                override = read_yaml(paths[level]).get('image_generation', {}).get('mode')
+                if override is not None and override != mode:
+                    raise ValueError('This workspace overrides image preferences. Choose its scope under Advanced preferences.')
+            settings['image_generation'] = {'mode': mode}
+        manager.store.update(workspace, scope, save)
+        return {'providers': manager.provider_rows(workspace), 'imagePreference': mode,
+                'configurationChanged': True, 'imageSetupCompletion': {'mode': mode, 'takesEffect': 'new_sessions'}}
     identity = args['id']
     enabled = args['enabled']
     if not isinstance(enabled, bool):
@@ -115,5 +135,8 @@ async def configure_images(manager, args, workspace, scope):
     patch = {key: image[key] for key in ('enabled', 'id', 'model')} if enabled else {'enabled': False}
     result = select_images(manager, workspace, scope, rows, identity, patch, enabled,
                            exclusive=bool(args.get('exclusive')))
+    from .image_defaults import preference
+    effective = manager.config(workspace)
+    result['imagePreference'] = preference(effective.settings, effective.providers)
     result['imageSetupCompletion'] = {'id': identity, 'enabled': enabled, 'takesEffect': 'new_sessions'}
     return result

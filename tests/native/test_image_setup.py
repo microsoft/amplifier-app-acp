@@ -300,3 +300,44 @@ async def test_image_edits_never_promote_workspace_config(manager, tmp_path, exc
     effective = manager.config(tmp_path).providers[0]['config']
     assert effective['api_key'] == 'workspace-private-fixture'
     assert effective['default_model'] == 'workspace-chat'
+
+
+@pytest.mark.asyncio
+async def test_image_preference_does_not_copy_or_probe_provider_config(manager, tmp_path, monkeypatch):
+    previous = await save(manager, tmp_path)
+    before = manager.store.read(tmp_path, 'global')
+    async def forbidden(*args): pytest.fail('Changing automatic/off preferences must not query accounts')
+    monkeypatch.setattr(manager, 'cached_probe', forbidden)
+    for mode in ('off', 'automatic'):
+        result = await manager.perform('providers.configureImages', {'workspace': str(tmp_path), 'mode': mode})
+        assert result['imagePreference'] == mode
+        assert result['imageSetupCompletion'] == {'mode': mode, 'takesEffect': 'new_sessions'}
+        after = manager.store.read(tmp_path, 'global')
+        assert after == {**before, 'image_generation': {'mode': mode}}
+        assert (await manager.perform('providers.list', {'workspace': str(tmp_path)}))['imagePreference'] == mode
+    await manager.perform('providers.configureImages', {'workspace': str(tmp_path), 'mode': 'off', 'scope': 'local'})
+    global_before = manager.store.read(tmp_path, 'global')
+    with pytest.raises(ValueError, match='workspace overrides'):
+        await manager.perform('providers.configureImages', {'workspace': str(tmp_path), 'mode': 'automatic'})
+    assert manager.store.read(tmp_path, 'global') == global_before
+    async def valid_catalog(*args):
+        return {'imageModelsSupported': True, 'imageModels': [{'id': 'image-fixture'}],
+                'providerMetadata': {'imageGeneration': {'schemaVersion': 1, 'configKey': 'image_generation'}}}
+    monkeypatch.setattr(manager, 'cached_probe', valid_catalog)
+    with pytest.raises(ValueError, match='workspace overrides'):
+        await manager.perform('providers.configureImages', {'workspace': str(tmp_path),
+            'id': 'one', 'enabled': True, 'model': 'image-fixture'})
+    assert manager.store.read(tmp_path, 'global') == global_before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('args', [{'mode': 'selected'}, {'mode': True}, {'mode': []},
+    {'mode': 'off', 'id': 'one'}, {'mode': 'automatic', 'enabled': True},
+    {'mode': 'automatic', 'refresh': True}, {'mode': 'off', 'scope': 'elsewhere'}])
+async def test_mixed_or_invalid_image_preferences_refuse_without_side_effects(manager, tmp_path, monkeypatch, args):
+    before = manager.store.read(tmp_path, 'global')
+    async def forbidden(*args): pytest.fail('Invalid preferences must not query accounts')
+    monkeypatch.setattr(manager, 'cached_probe', forbidden)
+    with pytest.raises(ValueError):
+        await manager.perform('providers.configureImages', {'workspace': str(tmp_path), **args})
+    assert manager.store.read(tmp_path, 'global') == before
