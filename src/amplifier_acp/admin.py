@@ -14,7 +14,7 @@ from .permissions import OPERATIONS as PERMISSION_OPERATIONS
 
 OPERATIONS=RECORDING_OPERATIONS | GENERATION_OPERATIONS | MAINTENANCE_OPERATIONS | HISTORY_IMPORT_OPERATIONS | VOICE_PREFERENCE_OPERATIONS | PERMISSION_OPERATIONS | {
  'voice.configuration','voice.credential','voice.configure',
- 'providers.list','providers.schema','providers.models','providers.test','providers.testMessage','providers.credentials',
+ 'providers.imageModels','providers.configureImages','providers.list','providers.schema','providers.models','providers.test','providers.testMessage','providers.credentials',
  'providers.save','providers.remove','providers.move','providers.reorder','providers.finishSetup','providers.login','providers.loginStatus','providers.loginCancel',
  'routing.list','routing.show','routing.save','routing.use','modules.list','modules.save','modules.remove','modules.validate',
  'sources.list','sources.save','sources.remove','sources.validate','bundles.list','bundles.add','bundles.remove','bundles.toggle',
@@ -84,6 +84,9 @@ class Administration:
   if operation in {'voice.credential','voice.configure'} and self.config.get('adminVoiceCredentials') is not True:raise AdminLauncherRefusal('Voice credentials require explicit trusted launcher enablement.',operation,'adminVoiceCredentials')
   if not isinstance(args,dict):raise ValueError('Administration args must be an object.')
   if any(key in args for key in ('home','appHome','sessionId','session_id')) or 'cwd' in args and operation!='maintenance.reset.preview':raise ValueError('Native homes and session identity are launcher-owned.')
+  if operation in {'providers.imageModels','providers.configureImages'}:
+   from .image_setup_contract import validate
+   validate(operation,args)
   if args.get('workspace') and self.workspace(args['workspace'])!=workspace:raise ValueError('Workspace selector disagrees with authorized cwd.')
   settings_dir=Path(workspace)/'.amplifier'
   if settings_dir.exists() and not settings_dir.resolve().is_relative_to(Path(workspace)):

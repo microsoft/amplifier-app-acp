@@ -306,6 +306,8 @@ class SetupManager:
             raise ValueError('Provider configuration changed during discovery. The new configuration is being refreshed.')
         if action=='providers.models':
             result={**result,'modelsProviderId':args['id'],'modelsSupported':result.get('modelsSupported',result.get('supported',True))}
+        if action=='providers.imageModels':
+            result={**result,'imageModelsProviderId':args['id'],'imageModelsSupported':result.get('imageModelsSupported',False)}
         return result
 
     async def probe(self,action,args,workspace):
@@ -346,8 +348,9 @@ class SetupManager:
                 ) from None
             if result.get('error'):raise ValueError(result['error'])
             if process.returncode:raise ValueError(f'The provider check could not finish (exit code {process.returncode}). '+failure_detail(stderr))
-            metadata={'module':module,'info':result['info'],'configSchema':result['configSchema']}
+            metadata={'module':module,'info':result['info'],'configSchema':result['configSchema'],'imageGeneration':result.get('imageGeneration')}
             response={'providerMetadata':metadata}
+            if action=='providers.imageModels':response.update(imageModels=result.get('imageModels',[]),imageModelsProviderId=args['id'],imageModelsSupported=result.get('imageModelsSupported',False))
             if action=='providers.models':response.update(models=result.get('models',[]),modelsProviderId=args['id'],modelsSupported=result.get('modelsSupported',True))
             if action=='providers.testMessage':response['messageTest']={**result['messageTest'],'providerId':args['id'],'checkedAt':time.time()}
             if action=='providers.test':response['test']={**result['test'],'providerId':args['id']}
@@ -519,12 +522,18 @@ class SetupManager:
     async def perform(self,action,args):
         workspace=args.get('workspace') or str(Path.cwd());scope=args.get('scope','global')
         self.store.path(workspace,scope) # Validate scope even on reads.
+        if action in {'providers.imageModels','providers.configureImages'}:
+            from amplifier_acp.image_setup_contract import validate
+            validate(action,args)
         if action=='providers.credentials':
             cli=bool(await asyncio.to_thread(github_cli_token)) if args['module']=='provider-github-copilot' else False
             return {'credentialCheck':{**self.credential_check(workspace,args['module'],env_var=args.get('envVar')), 'githubCliAvailable':cli,'requestedEnvVar':args.get('envVar',''), 'checkedAt':time.time()}}
         if action=='providers.list':return {'providers':self.provider_rows(workspace),'providersWorkspace':str(workspace),'providersLoadedAt':time.time()}
-        if action in {'providers.schema','providers.models','providers.test','providers.testMessage'}:
+        if action in {'providers.schema','providers.models','providers.imageModels','providers.test','providers.testMessage'}:
             return await (self.probe(action,args,workspace) if action in {'providers.test','providers.testMessage'} else self.cached_probe(action,args,workspace))
+        if action=='providers.configureImages':
+            from .image_setup import configure_images
+            return await configure_images(self,args,workspace,scope)
         if action in {'providers.move','providers.reorder'}:
             current=self.config(workspace)
             enabled={row['id'] for row in self.provider_rows(workspace) if row['enabled']}

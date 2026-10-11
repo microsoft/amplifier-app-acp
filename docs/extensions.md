@@ -277,3 +277,27 @@ passive exact command receipts. Committed archived groups remain visible but
 have archive-qualified, viewing-only message references. Canonical mutation and
 export still apply only to active history. Clients must negotiate this marker;
 older unreviewed clearing is not history-preserving authority.
+
+### Image setup
+
+When administration is enabled, initialize also advertises the closed
+`native.admin.imageSetup` marker
+`{version:1,catalog:"provider-image-models",preservesChat:true,exclusive:true}`.
+`providers.imageModels` takes a saved connection `id`, optional `refresh`, and
+normal authorized workspace/scope selectors. It reads the installed provider's
+optional `get_image_generation_info` and `list_image_models` methods. Missing
+support returns no choices; it never substitutes chat models or calls inference.
+
+`providers.configureImages` takes `id`, boolean `enabled`, an advertised image
+`model` when enabling, optional boolean `exclusive`, and the same scope selectors.
+It preserves credentials, chat configuration, opaque settings and tool policy.
+Only image fields are written at the requested scope; workspace settings cannot
+be promoted into global configuration. Exclusive selection atomically disables
+other configured image backends and rejects conflicting more-specific overrides.
+Choices are bound to the current credential/configuration catalog identity.
+Disabling requires no discovery. The result reports `takesEffect:new_sessions`.
+This does not change a running conversation or prove image-generation entitlement.
+
+The image settings implementation adapts Amplifier Unified main 0.20.98, with
+both exclusive and advanced writes restricted to image fields. The bridge and
+Web owners negotiate this grant rather than assuming every Native peer has it.
