@@ -24,3 +24,17 @@ def test_generic_behavior_defaults_are_explicit(monkeypatch):
  monkeypatch.setenv('AMPLIFIER_ACP_HOST_FEATURES',json.dumps({'unifiedShell':True}))
  assert app_behaviors({})==[SHELL_BEHAVIOR_URI]
  assert IMAGEGEN_BEHAVIOR_URI not in app_behaviors({})
+
+
+def test_negotiated_image_default_preserves_generic_hosts_and_explicit_disables(monkeypatch):
+ from amplifier_acp.native.builtin_behaviors import app_behaviors,IMAGEGEN_BEHAVIOR_URI
+ settings={'bundle':{'app':['owned:behavior']}}
+ monkeypatch.delenv('AMPLIFIER_ACP_HOST_FEATURES',raising=False)
+ assert app_behaviors(settings)==['owned:behavior']
+ monkeypatch.setenv('AMPLIFIER_ACP_HOST_FEATURES','{"imageGeneration":true}')
+ assert app_behaviors(settings)==['owned:behavior',IMAGEGEN_BEHAVIOR_URI]
+ assert app_behaviors({'bundle':{'app':[]}})==[IMAGEGEN_BEHAVIOR_URI]
+ assert settings=={'bundle':{'app':['owned:behavior']}}
+ for metadata in ({'excluded':[IMAGEGEN_BEHAVIOR_URI]}, {'entries':[{'uri':IMAGEGEN_BEHAVIOR_URI,'enabled':False}]}):
+  assert app_behaviors({**settings,'web_bundles':metadata})==['owned:behavior']
+ assert app_behaviors({'bundle':{'app':[IMAGEGEN_BEHAVIOR_URI]},'web_bundles':{'excluded':[IMAGEGEN_BEHAVIOR_URI]}})==[IMAGEGEN_BEHAVIOR_URI]
