@@ -14,6 +14,13 @@ def require_own_input(row):
             or isinstance(via,str) and via in {'peer','schedule','observation'}
             or metadata.get('scheduledRunId',row.get('scheduledRunId'))):
         raise ValueError('Choose one of your own messages to edit.')
+    marker=metadata.get('amplifier_input')
+    if marker is not None and (not isinstance(marker,dict)
+            or marker.get('kind','user') not in ('user','steer')
+            or marker.get('source','user')!='user'
+            or 'version' in marker and (type(marker['version']) is not int or marker['version']!=1)
+            or marker.get('kind')=='steer' and marker.get('version')!=1):
+        raise ValueError('The saved input identity is unavailable or unsupported; refresh history before editing.')
 
 def path(home,session,operation):
     from .configuration_clone import location
@@ -55,7 +62,6 @@ async def revise(worker,args,publish):
         target=bound(rows,args['targetMessageId'],user=True);position,original=rows[target]
         require_own_input(original)
         marker=(original.get('metadata') or {}).get('amplifier_input',{})
-        if marker.get('kind','user')!='user':raise ValueError('Choose an original user input, not an injected steering correction')
     except ValueError as error:return {'accepted':False,'executed':False,'reason':str(error)}
     # Resolve only the selected canonical row, under the same revision that is
     # rechecked by rewind. The caller may replace text, not its saved context.
@@ -110,12 +116,16 @@ async def revise(worker,args,publish):
         if row.get('role') not in {'user','assistant'} or not visible(row):continue
         item={'id':message_id(row,offset,getattr(rows,'epoch',None)),'role':row['role'],'text':text_content(row),'nativeIndex':index}
         row_input=(row.get('metadata') or {}).get('amplifier_input',{})
-        if row_input.get('kind')=='user' and row_input.get('id'):item['inputId']=row_input['id']
+        if row_input.get('kind') in ('user','steer') and row_input.get('id'):item['inputId']=row_input['id']
         displayed.append(item)
     target_id=message_id(original,position,getattr(rows,'epoch',None));before_turn=marker.get('id') or target_id
     retained_turn=None
+    from .history import content_updates,starts_turn
     for offset,row in rows[:target]:
-        if row.get('role')=='user' and visible(row):retained_turn=(row.get('metadata') or {}).get('amplifier_input',{}).get('id') or message_id(row,offset,getattr(rows,'epoch',None))
+        # A steering correction belongs to the original turn. Use the same
+        # grouping rule as passive history, so the Host can prove the prefix.
+        if content_updates(row,offset)[0] and starts_turn(row,retained_turn):
+            retained_turn=(row.get('metadata') or {}).get('amplifier_input',{}).get('id') or message_id(row,offset,getattr(rows,'epoch',None))
     record={'operationId':args['operationId'],'inputId':args['inputId'],'targetMessageId':args['targetMessageId'],'beforeMessageId':target_id,'beforeTurnId':before_turn,'retainedThroughTurnId':retained_turn,'previousRevision':revision,'historyCwd':cwd,'status':'preparing','requestHash':hashlib.sha256(json.dumps(args,sort_keys=True,separators=(',',':')).encode()).hexdigest(),'eventsPreserved':True,'replayed':False}
     write(file,record);write(fence,{'operationId':args['operationId'],'inputId':args['inputId']})
     from .native.history_revision import rewind,receipt_path
