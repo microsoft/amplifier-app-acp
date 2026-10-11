@@ -57,6 +57,30 @@ async def test_generation_inventory_is_paged_and_read_does_not_scan(tmp_path,mon
     assert len(one['items'])==10 and two['items'][0]['id']=='00010'
 
 @pytest.mark.asyncio
+async def test_unused_broken_workspace_never_blocks_global_check_but_explicit_setup_refuses(tmp_path,monkeypatch):
+    from yaml import YAMLError
+    from amplifier_acp.native.runtime_profiles import ensure
+    from amplifier_acp.native import update_sources
+    home=tmp_path/'app';home.mkdir()
+    workspace=tmp_path/'old-project';(workspace/'.amplifier').mkdir(parents=True)
+    bad=workspace/'.amplifier/settings.yaml';bad.write_text('providers: [broken yaml')
+    generation='c'*32
+    owner=Generations(home,{})
+    folder=environments.receipt_directory(home,generation);folder.mkdir(parents=True)
+    (folder/'profiles-qualified.json').write_text('{}')
+    (home/'updates/active.json').write_text(json.dumps({'current':generation}))
+    async def inventory(*_):return []
+    async def bindings(*_):return []
+    monkeypatch.setattr(environments,'update_inventory',inventory)
+    monkeypatch.setattr(update_sources,'bindings',bindings)
+    result=await owner.check()
+    assert result['checkId'] and owner.state()['phase'] in {'available','checked'}
+    assert not any(row.get('status')=='check_failed' for row in owner.inspect({})['items'])
+    with pytest.raises(YAMLError):
+        await ensure(home,generation,{'id':'11111111-1111-4111-8111-111111111111','workspace':str(workspace)},shared_home=tmp_path/'shared')
+    assert bad.read_text()=='providers: [broken yaml'
+
+@pytest.mark.asyncio
 async def test_independent_generation_sources_overlap_but_one_target_serializes(tmp_path,monkeypatch):
     import asyncio
     import amplifier_acp.generations as module
