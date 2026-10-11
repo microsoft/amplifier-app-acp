@@ -22,6 +22,10 @@ def test_saved_names_are_never_replaced_and_empty_primary_wins(tmp_path):
     (tmp_path/'transcript.jsonl').unlink()
     assert read(tmp_path,{'title':'Conversation 12345678'})['title']=='old'
 
+def test_injected_wrappers_do_not_become_a_chat_label(tmp_path):
+    write(tmp_path,[{'role':'user','content':'<system-reminder>Private machinery</system-reminder>\n<context_file name="reference">Quoted material</context_file>\n# Plan my garden'}])
+    assert read(tmp_path,{'title':'Conversation 12345678'})['title']=='Plan my garden'
+
 @pytest.mark.parametrize('kind',['symlink','fifo','oversized','too-many-lines'])
 def test_never_follows_special_files_or_exceeds_read_bounds(tmp_path,kind):
     path=tmp_path/'transcript.jsonl'

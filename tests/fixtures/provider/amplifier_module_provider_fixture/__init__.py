@@ -31,6 +31,12 @@ class FixtureProvider:
         await asyncio.sleep(60)
         return True
     async def complete(self,request,**kwargs):
+        if self.config.get('namingResponse'):
+            if self.config.get('namingAudit'):
+                import json
+                with Path(self.config['namingAudit']).open('a') as output:
+                    output.write(json.dumps({'tools':request.tools,'max_output_tokens':request.max_output_tokens,'extended_thinking':kwargs.get('extended_thinking'),'messages':[row.model_dump(mode='json') for row in request.messages]})+'\n')
+            return ChatResponse(content=[TextBlock(text=self.config['namingResponse'])],finish_reason='stop')
         if self.config.get('promptAuditFile'):
             import json
             with Path(self.config['promptAuditFile']).open('a') as output:

@@ -89,6 +89,10 @@ async def query(request):
             result['imageModelsSupported'] = supported
             result['imageModels'] = public(await invoke('list_image_models')) if supported else []
             return result
+        if request['action'] == 'naming.complete':
+            from .provider_test import naming_completion
+            result['naming'] = await naming_completion(provider, config, request.get('model'), request['prompt'])
+            return result
         if request['action'] == 'providers.testMessage':
             from amplifier_acp.native.provider_test import test_message
             result['messageTest'] = await test_message(provider, config, request.get('model'), info)

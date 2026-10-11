@@ -7,7 +7,7 @@ from amplifier_foundation.session.metadata import SessionMetadataStore,metadata_
 from .configuration_clone import location
 from .native.naming import automatic_metadata,accept_generated
 
-CAPABILITY={'version':1,'method':'_amplifier/naming','passiveMetadata':True,'commandIds':True,'replayUnknown':False,'titlePreview':True,'prepareGeneration':True}
+CAPABILITY={'version':1,'method':'_amplifier/naming','passiveMetadata':True,'commandIds':True,'replayUnknown':False,'titlePreview':True,'prepareGeneration':True,'backfill':{'version':1,'cold':True,'boundedExcerpt':True,'durableAttempts':True}}
 MAX_BYTES=16384
 
 def encoded(value):
@@ -132,6 +132,11 @@ async def handle(server,params):
         from .maintenance_gate import Gate
         from .native.naming import prepare_regeneration
         with Gate(server.config):return projection(prepare_regeneration(directory))
+    if operation=='backfill':
+        if args:raise ValueError('Automatic naming takes no client-provided prompt or command')
+        from .maintenance_gate import Gate
+        from .naming_backfill import perform
+        with Gate(server.config):return await perform(owner,commands)
     validate(operation,args)
     if operation=='generate':raise ValueError('Generation requires the selected naming lifecycle')
     from .maintenance_gate import Gate

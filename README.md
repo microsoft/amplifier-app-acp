@@ -393,6 +393,17 @@ Manual saves persist canonical Native metadata first; generation captures the
 Host title revision before its model call and commits only after both Host and
 Native revisions agree. These methods alone do not restore the composed UI.
 
+The optional naming `backfill` marker permits a trusted idle scheduler to name
+an unnamed discovered chat without starting its conversation worker. Its empty
+arguments cannot supply a prompt, provider, or arbitrary command identity. Native
+checks the canonical history, saved names and legacy opt-outs, takes a bounded
+first-user excerpt, and uses the default configured provider with no tools and
+a 256-token output limit. A durable attempt is claimed before the provider call;
+an interrupted attempt is never replayed for the same history and naming policy.
+Late results lose to renamed, disabled, changed or deleted conversations. The
+existing admin maintenance participant tracks the entire request. Background
+cadence, media idleness and canonical Host title projection belong to composition.
+
 Passive history readers may negotiate `history.missingWorkspaceRead.version: 1`.
 An explicit `readOnlyMissingWorkspace: true` reads an ordinary missing-folder
 history only when its canonical workspace and native identity exactly match

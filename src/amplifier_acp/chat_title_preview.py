@@ -17,7 +17,14 @@ def unnamed(session):
     return bool(re.fullmatch(r'Conversation [a-zA-Z0-9-]{8}', session.get('title', '')))
 
 
-def read(directory, session):
+def request_text(text):
+    """Hide injected reference wrappers from labels and naming context."""
+    text = re.sub(r'<system-reminder\b[^>]*>.*?</system-reminder>', '', text, flags=re.S | re.I)
+    text = re.sub(r'^(?:\s*<context_file\b[^>]*>.*?</context_file>)+', '', text, flags=re.S | re.I)
+    return re.sub(r'^[\s#>*-]+', '', text).strip()
+
+
+def read(directory, session, *, max_title=MAX_TITLE):
     """Return only an excerpt, without opening a worker or changing metadata."""
     if not unnamed(session):
         return {'title': session.get('title', ''), 'source': 'saved'}
@@ -51,9 +58,9 @@ def read(directory, session):
                     continue
                 if isinstance(provenance, dict) and provenance.get('kind') not in {None, 'user'}:
                     continue
-                text = ' '.join(text_content(row).split())
+                text = ' '.join(request_text(text_content(row)).split())
                 if text:
-                    title = text[:MAX_TITLE].rstrip() + ('…' if len(text) > MAX_TITLE else '')
+                    title = text[:max_title].rstrip() + ('…' if len(text) > max_title else '')
                     return {'title': title, 'source': 'first-message'}
         # An existing primary transcript, even empty, wins over its backup.
         break
