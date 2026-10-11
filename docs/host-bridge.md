@@ -60,7 +60,7 @@ inherits its assigned input IDs rather than a newly focused unrelated client.
 | `outputs.image.read` | `{id,sha256}`; exact immutable attachment payload; feature `outputs` |
 | `outputs.images.read` | `{images:[{id,sha256}]}`; ordered exact comparison; feature `outputs` |
 | `voice.visual.read` / `computer.visual.read` | `{captureId}`; previously authorized capture, no new capture side effect; feature `visual` |
-| `capacity.admit` | `{call:<native call evidence>}` -> `{allowed,budgetRevision,admittedAt?,reasons?}`; only installed with feature `capacity`; never silently bypass enabled saved budget |
+| `capacity.admit` | `{call:<native call evidence>,budget:<native policy snapshot>}` -> `{allowed,budgetRevision,admittedAt?,reasons?}`; only installed with feature `capacity`; never silently bypass enabled saved budget |
 | `operations.observe` | `{runtimeSessionId,event:<native operation lifecycle>}`; only feature `operations`; associate trusted child/root lineage |
 | `questions.admit` | `{questionIds:[...]}`; only feature `questions`; bind questions to admitted session/input |
 | `observation.admit` | native observation envelope from explicit `observation.submit`; requires a host decision, otherwise fails |

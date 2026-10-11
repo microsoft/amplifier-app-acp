@@ -213,7 +213,10 @@ class RuntimeControls:
         self.coordinator.session_state["task"] = saved.get("task")
         self.tasks.receipts = saved.get("taskReceipts", {})
         self.tasks.history = saved.get("taskHistory", [])
-        self.capacity.policy.update(saved.get("capacity", {}))
+        from .capacity import policy_snapshot
+        checked_policy = policy_snapshot(saved.get("capacity"), saved.get("capacityLastDenial"))
+        checked_policy.pop("lastDenial", None)
+        self.capacity.policy = checked_policy
         self.capacity.receipts = saved.get("capacityReceipts", {})
         self.capacity.last_denial = saved.get("capacityLastDenial")
         task = self.tasks.record()

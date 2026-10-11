@@ -426,7 +426,7 @@ class Worker:
             from amplifier_acp.native.attachments import encode
             self.session.coordinator.register_capability('live.attachments.encode',encode)
             self.controls = RuntimeControls(self.session, self.runtime, self.telemetry)
-            self.controls.capacity.admit = (lambda row: self.bridge("capacity.admit", {"call": row})) if config.get("hostInfo",{}).get("features",{}).get("capacity") else None
+            self.controls.capacity.admit = (lambda row: self.bridge("capacity.admit", {"call": row, "budget": self.controls.capacity.snapshot()})) if config.get("hostInfo",{}).get("features",{}).get("capacity") else None
             self.telemetry.admission_guard = self.controls.capacity.guard
             # Preserve app controls on native mounts. A legacy common snapshot
             # retains its previous restoration policy during one-time recovery.

@@ -110,7 +110,7 @@ scoped schemas and return unsupported for absent capabilities. In particular,
 application snapshot to fulfill a narrow read.
 
 Without this extension the native agent does not install `app_control`. A saved
-enabled host-owned lifetime budget fails closed when its admission authority is
+enabled cumulative lifetime budget fails closed when its admission authority is
 unavailable. Ordinary native turns remain usable without host callbacks.
 
 ## Public ownership
@@ -301,3 +301,19 @@ This does not change a running conversation or prove image-generation entitlemen
 The image settings implementation adapts Amplifier Unified main 0.20.98, with
 both exclusive and advanced writes restricted to image fields. The bridge and
 Web owners negotiate this grant rather than assuming every Native peer has it.
+
+## Passive cumulative budget policy
+
+The optional `taskState.capacity` initialize marker is
+`{version:1,passivePolicy:true,admission:"native-owner-snapshot"}`.
+`_amplifier/task/inspect` returns `capacity:{version:1,budget}` from the existing
+Native control-state file without creating a worker. Missing state has a disabled
+revision-zero policy; malformed existing policy is preserved and refused.
+
+Native remains the sole budget-policy writer. `capacity.set` retains its original
+command receipt and revision check; `capacity.admit` sends both the native call
+evidence and current policy snapshot to the negotiated Host immediately before
+a supported provider call. The Host owns cumulative scalar accounting, not the
+policy. Denial is retained until an explicit policy edit; a missing Host cannot
+bypass an enabled saved budget. This is optional product metadata, not a change
+to upstream ACP or AHP.

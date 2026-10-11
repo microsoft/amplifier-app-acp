@@ -27,21 +27,49 @@ def number(value):
     return type(value) in (int, float) and math.isfinite(value) and value >= 0
 
 
+def policy_snapshot(value=None, denial=None):
+    """Bounded policy shared by active controls and passive history inspection."""
+    defaults = {'revision': 0, 'enabled': False, 'maxTotalTokens': None, 'maxCostUsd': None,
+                'warningFraction': .8, 'unknownPolicy': 'pause', 'includeEstimatedCost': False}
+    if value is not None and not isinstance(value, dict):
+        raise ValueError('Saved budget policy is invalid')
+    policy = {key: (value or {}).get(key, default) for key, default in defaults.items()}
+    if type(policy['revision']) is not int or policy['revision'] < 0:
+        raise ValueError('Saved budget revision is invalid')
+    if any(type(policy[key]) is not bool for key in ('enabled', 'includeEstimatedCost')):
+        raise ValueError('Saved budget switches must be booleans')
+    for key in ('maxTotalTokens', 'maxCostUsd'):
+        v = policy[key]
+        if v is not None and (not number(v) or v <= 0 or key == 'maxTotalTokens' and (type(v) is not int or v > 9007199254740991)):
+            raise ValueError('Saved budget limits are invalid')
+    if not number(policy['warningFraction']) or not 0 < policy['warningFraction'] <= 1 or policy['unknownPolicy'] not in ('pause', 'allow'):
+        raise ValueError('Saved budget threshold or unknown-usage policy is invalid')
+    if policy['enabled'] and policy['maxTotalTokens'] is None and policy['maxCostUsd'] is None:
+        raise ValueError('An enabled budget needs at least one limit')
+    if denial is not None:
+        if not isinstance(denial, dict) or denial.get('budgetRevision') != policy['revision'] or not isinstance(denial.get('reasons'), list) or len(denial['reasons']) > 16 or any(not isinstance(reason, str) or not reason or len(reason) > 1000 for reason in denial['reasons']):
+            raise ValueError('Saved budget denial is invalid')
+        policy['lastDenial'] = {'budgetRevision': denial['budgetRevision'], 'reasons': denial['reasons'].copy()}
+    return policy
+
+
 class CapacityController:
     """One runtime control-state writer; edits are valid between provider calls."""
     def __init__(self, controls):
         self.controls = controls
-        self.policy = {'revision': 0, 'enabled': False, 'maxTotalTokens': None, 'maxCostUsd': None,
-                       'warningFraction': .8, 'unknownPolicy': 'pause', 'includeEstimatedCost': False}
+        self.policy = policy_snapshot()
         self.receipts = {}
         self.last_denial = None
         self.admit = None
+
+    def snapshot(self):
+        return policy_snapshot(self.policy, self.last_denial)
 
     async def perform(self, operation, args):
         if operation == 'capacity.quota':
             return await self.quota()
         if operation == 'capacity.get':
-            return copy.deepcopy(self.policy)
+            return self.snapshot()
         if operation != 'capacity.set':
             raise ValueError('Unknown capacity control')
         identity = args.get('commandId')
@@ -68,6 +96,7 @@ class CapacityController:
             raise ValueError('Budget switches must be booleans')
         if policy['enabled'] and policy['maxTotalTokens'] is None and policy['maxCostUsd'] is None:
             raise ValueError('An enabled budget needs at least one limit')
+        policy_snapshot(policy)
         task = self.controls.tasks.record() or {}
         policy.update(revision=previous['revision'] + 1, updatedAt=time.time(), origin=args.get('origin'), commandId=identity,
                       taskId=task.get('id'), taskRevision=task.get('revision'), scope='conversation lifetime observed usage')
