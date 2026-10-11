@@ -13,7 +13,7 @@ from .voice_preferences import OPERATIONS as VOICE_PREFERENCE_OPERATIONS
 from .permissions import OPERATIONS as PERMISSION_OPERATIONS
 
 OPERATIONS=RECORDING_OPERATIONS | GENERATION_OPERATIONS | MAINTENANCE_OPERATIONS | HISTORY_IMPORT_OPERATIONS | VOICE_PREFERENCE_OPERATIONS | PERMISSION_OPERATIONS | {
- 'voice.configuration','voice.credential','voice.configure',
+ 'storage.roots','voice.configuration','voice.credential','voice.configure',
  'providers.imageModels','providers.configureImages','providers.list','providers.schema','providers.models','providers.test','providers.testMessage','providers.credentials',
  'providers.save','providers.remove','providers.move','providers.reorder','providers.finishSetup','providers.login','providers.loginStatus','providers.loginCancel',
  'routing.list','routing.show','routing.save','routing.use','modules.list','modules.save','modules.remove','modules.validate',
@@ -112,6 +112,13 @@ class Administration:
    raise
   finally:self.effects.discard(task);self.requests.discard(request);self.lifecycle.leave(ticket)
  async def execute(self,workspace,operation,args):
+  if operation=='storage.roots':
+   if args:raise ValueError('Storage roots are launcher-owned; no selectors are accepted')
+   self.initialize()
+   from .native.session_files import amplifier_home
+   return {'version':1,'roots':[
+    {'id':'native-app','scope':'app','label':'Native configuration and saved data','path':str(self.home.resolve())},
+    {'id':'history','scope':'history','label':'Shared CLI and Unified history (read only)','path':str(amplifier_home().resolve()/'projects')}]}
   if operation in RECORDING_OPERATIONS:
    from .provider_recording_policy import ProviderRecording
    from .maintenance_gate import Gate
