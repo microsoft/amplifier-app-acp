@@ -2,7 +2,7 @@ import json,sqlite3
 from pathlib import Path
 import pytest
 from client import Client
-from amplifier_acp.voice_preferences import VoicePreferences,projection
+from amplifier_acp.voice_preferences import VoicePreferences,projection,revision,marker_matches
 
 async def launch(tmp_path,enabled=True):
  cwd=tmp_path/'workspace';cwd.mkdir(exist_ok=True);home=tmp_path/'home';home.mkdir(exist_ok=True)
@@ -22,7 +22,7 @@ async def test_preferences_cas_shared_config_receipts_and_no_credential_access(t
  settings=Path(config['home'])/'settings.yaml';settings.write_text('other_config:\n  preserve: true\nvoice:\n  credential_source: private\n  unknown_future_setting: retained\n')
  try:
   before=await call(client,cwd,'voice.configuration');assert before['credentialAccess']=='disabled' and before['available'] is False
-  assert before['preferenceFields']==['preferredModel','fallbackModel','voice','interruptions']
+  assert before['preferenceFields']==['preferredModel','fallbackModel','voice','interruptions','fallbackVoice']
   assert before['fallbackModel']=='gpt-realtime-2.1' and before['fallbackBehavior']=='stored-only'
   assert before['models'][0]['voices'][0]['id']=='marin'
   args={'commandId':'save','expectedRevision':before['preferencesRevision'],'patch':{'preferredModel':'gpt-realtime-2.1','fallbackModel':'gpt-live-1','voice':'cedar','interruptions':False}}
@@ -105,3 +105,23 @@ async def test_competing_native_admin_processes_cannot_overwrite_stale_default(t
   winner=next(row for row in results if row['status']=='succeeded')
   assert (await call(first,cwd,'voice.configuration'))['voice']==winner['result']['voice']
  finally:await first.close();await second.close()
+
+def test_optional_fallback_voice_preserves_legacy_revision_and_validates_pair(tmp_path):
+ config={'home':str(tmp_path/'home'),'appHome':str(tmp_path/'app')};owner=VoicePreferences(config)
+ before=projection({})
+ assert before['preferencesRevision']==revision({'preferredModel':'gpt-live-1','fallbackModel':'gpt-realtime-2.1','voice':'marin','interruptions':True})
+ assert 'fallbackVoice' not in before
+ def save(identity,view,patch):return owner.perform(str(tmp_path),'voice.preferences.update',{'commandId':identity,'expectedRevision':view['preferencesRevision'],'patch':patch})
+ denied=save('bad',before,{'fallbackVoice':'quartz'})
+ assert denied['status']=='failed' and denied['executed'] is False
+ saved=save('voice',before,{'fallbackVoice':'cedar'})
+ assert saved['status']=='succeeded' and saved['result']['fallbackVoice']=='cedar'
+ off=save('off',saved['result'],{'fallbackModel':''})
+ assert off['status']=='succeeded' and off['result']['fallbackModel']=='' and off['result']['fallbackVoice']==''
+ assert owner.perform(str(tmp_path),'voice.preferences.receipt',{'commandId':'voice'})==saved
+
+def test_legacy_proof_ignores_preexisting_external_fallback_voice_but_new_proof_does_not():
+ old={'preferredModel':'gpt-live-1','fallbackModel':'gpt-realtime-2.1','voice':'marin','interruptions':True}
+ assert marker_matches({'revision':revision(old)},{**old,'fallbackVoice':'cedar'})
+ assert not marker_matches({'revision':revision(old),'preferencesVersion':2},{**old,'fallbackVoice':'cedar'})
+ assert not marker_matches({'revision':revision(old)}, {**old,'voice':'cedar','fallbackVoice':''})
