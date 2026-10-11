@@ -36,6 +36,7 @@ def lifecycle_state(server,identity,cwd):
 def guard_copy_source(server,identity):
     """Copy only a coherent settled authority image; never finish its journals."""
     app=location(home(server),identity)
+    if (app/'history-removal.json').exists():raise ValueError('Shared history removal was admitted; inspect its original receipt. This identity cannot be restarted or copied.')
     from .native.history_revision import guard_context_clear
     guard_context_clear(home(server), identity)
     for name in ('history-edit-pending.json','maintenance-reset-pending.json'):
@@ -45,6 +46,7 @@ def guard_copy_source(server,identity):
         if path.exists() and record(path).get('state')!='committed':raise ValueError('Native creation outcome is unresolved; source preserved')
 
 def guard_start(server,identity,cwd):
+    if (location(home(server),identity)/'history-removal.json').exists():raise ValueError('This saved conversation was permanently removed or its removal is unresolved; inspect the original receipt. No work replayed.')
     value=lifecycle_state(server,identity,cwd)
     if value['deleted']:raise ValueError('This native session was removed from discovery; restore it before continuing. Its history is preserved.')
     maintenance=location(home(server),identity)/'maintenance-reset-pending.json'
@@ -169,6 +171,8 @@ class Lifecycle:
         if len(json.dumps(selected).encode())>32768:raise ValueError('Native metadata inspection exceeds its bound')
         return {'sessionId':self.identity,'historyRevision':result['revision'],'metadata':selected,'diagnostics':result['diagnostics'],'location':self.inspected_location(),'state':lifecycle_state(self.server,self.identity,self.cwd),'preserved':PRESERVED,'failure':failure(self.server,self.identity),'forkBundles':[{'id':key,'name':key,'revision':fingerprint([key,value])} for key,value in self.fork_bundles().items()]}
     def perform(self,operation,args):
+        if operation not in {'inspect','receipt','export.read'} and (self.app/'history-removal.json').exists():
+            raise ValueError('Shared history removal was admitted; inspect its original receipt. This identity cannot be restored or changed.')
         if operation.startswith('managedFiles.'):
             from .managed_disposal import perform
             return perform(self,operation,args)

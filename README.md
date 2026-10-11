@@ -426,3 +426,22 @@ is read-only presentation and grants no authority or execution.
 `tests/test_plan.py` covers accepted/failed/root/child behavior, bounded large
 live plans, and passive canonical reconstruction. Native history also recognizes
 Core's `tool` call-name field alongside flat and function-shaped calls.
+
+### Reviewed shared-history removal
+
+When recovery administration and stopped external writers are configured,
+`native.admin.maintenance.historyCleanup` advertises version 1. The trusted
+coordinator holds every configured product owner, then calls
+`maintenance.history.census` for an exact project or native conversation family.
+`maintenance.history.preview` binds that census and the held product-reference
+revision to a private, ten-minute inventory. `maintenance.history.remove`
+requires the original preview, owner revision and explicit confirmation identity.
+These operations never start an agent.
+
+The Native owner removes only selected canonical history, its external capture
+files, retained history revisions and Foundation checkpoints. Working directories,
+stable writer locks and original control receipts remain. Permanent tombstones
+prevent restart, copy or restore of removed or uncertain identities. After any
+possible effect, an interruption stays unknown; the original receipt can be read
+without replay, and another removal is refused. Product artifacts and indexes are
+separate owner responsibilities, not implicitly deleted by this contract.
