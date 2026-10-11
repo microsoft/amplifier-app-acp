@@ -83,6 +83,9 @@ def canonical(directory,expected,*,app_home=None):
         rows.append((offset,row));offset+=len(line)
     if history.stamp(path)[0]!=revision:raise ValueError('Native history changed during capture')
     metadata=record(directory/'metadata.json')
+    if (history.stamp(path)[0]!=revision or
+            (app_home is not None and context_head(app_home,directory.name)!=epoch)):
+        raise ValueError('Native history changed during capture')
     return rows,metadata,revision
 
 def bound(rows,identity,*,user=False):
@@ -194,7 +197,9 @@ class Lifecycle:
                 return {**previous.get('result',{}),'receipt':previous,'replayed':False}
             from .lifecycle_family import own_descendants
             from contextlib import nullcontext
-            with self.own(), (own_descendants(self,args.get('descendants',[]),check=(lambda sid,cwd:Lifecycle(self.server,sid,cwd).validate_retention(args,None)) if operation=='retention.hide' else None) if operation in {'fork','retention.hide'} else nullcontext()) as family:
+            # Export freezes an exact saved revision and writes only its private
+            # snapshot/receipt. It does not acquire or retire the execution owner.
+            with (nullcontext() if operation=='export' else self.own()), (own_descendants(self,args.get('descendants',[]),check=(lambda sid,cwd:Lifecycle(self.server,sid,cwd).validate_retention(args,None)) if operation=='retention.hide' else None) if operation in {'fork','retention.hide'} else nullcontext()) as family:
                 inspected=self.inspect()
                 if inspected['location']['blocked']:raise ValueError('Resolve native execution relocation before lifecycle changes')
                 if args.get('expectedHistoryRevision')!=inspected['historyRevision']:raise ValueError('Native history changed; review a fresh revision')
@@ -378,7 +383,9 @@ class Lifecycle:
     def prepare_export(self,args):
         from .conversation_export import options,render
         options(args)
+        guard_copy_source(self.server,self.identity)
         rows,metadata,revision=canonical(self.directory,args['expectedHistoryRevision'],app_home=home(self.server));rows=scope_rows(rows,args)
+        guard_copy_source(self.server,self.identity)
         public=[];omissions=[];attachments=0;aliases={}
         for position,row in rows:
             updates,issues=history.content_updates(row,position);omissions.extend(issues)

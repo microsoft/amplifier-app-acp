@@ -86,6 +86,51 @@ async def test_passive_frozen_export_tombstone_restore_and_receipt_without_worke
     finally:await client.close()
 
 @pytest.mark.asyncio
+async def test_export_during_owned_work_keeps_execution_and_exact_saved_snapshot(tmp_path):
+    client,sid,cwd,config=await prepared(tmp_path)
+    try:
+        await prompt(client,sid,'Saved before active work','saved')
+        running=asyncio.create_task(prompt(client,sid,'slow active export','active'))
+        async with asyncio.timeout(10):
+            while not any(r.get('params',{}).get('event',{}).get('activeInputId')=='active' for r in client.events):await asyncio.sleep(.01)
+        revision=(await action(client,sid,cwd,'inspect'))['result']['historyRevision']
+        native=next((tmp_path/'home/projects').glob('*/sessions/'+sid));before=(native/'transcript.jsonl').read_bytes()
+        args={'commandId':'active-export','expectedHistoryRevision':revision,'format':'markdown'}
+        exported=await action(client,sid,cwd,'export',args);assert 'result' in exported,exported
+        snapshot=exported['result'];page=(await action(client,sid,cwd,'export.read',{'snapshotId':snapshot['snapshotId']}))['result']
+        frozen=base64.b64decode(page['data']);assert b'Saved before active work' in frozen
+        assert not running.done() and (native/'transcript.jsonl').read_bytes()==before
+        refused=await action(client,sid,cwd,'restore',{'commandId':'blocked-restore','expectedHistoryRevision':revision})
+        assert refused['error']['data']['executed'] is False
+        await client.request('session/cancel',{'sessionId':sid});await running
+        again=(await action(client,sid,cwd,'export',args))['result']
+        assert again['snapshotId']==snapshot['snapshotId'] and again['replayed'] is False
+        page=(await action(client,sid,cwd,'export.read',{'snapshotId':snapshot['snapshotId']}))['result']
+        assert base64.b64decode(page['data'])==frozen
+    finally:await client.close()
+
+@pytest.mark.asyncio
+async def test_export_refuses_changed_capture_and_unsettled_history_before_receipt(tmp_path,monkeypatch):
+    client,sid,cwd,config=await prepared(tmp_path)
+    await prompt(client,sid,'Stable saved history','saved');await client.close()
+    import amplifier_acp.session_lifecycle as lifecycle
+    server=Server(json.loads(config.read_text()),None);owner=Lifecycle(server,sid,str(cwd))
+    revision=owner.inspect()['historyRevision'];args={'commandId':'raced-export','expectedHistoryRevision':revision,'format':'json'}
+    original=lifecycle.regular
+    def changed(path,maximum=1024*1024):
+        body=original(path,maximum)
+        if Path(path).name=='transcript.jsonl':
+            with Path(path).open('ab') as stream:stream.write(b'{"role":"user","content":"Concurrent saved input"}\n')
+        return body
+    with monkeypatch.context() as patch:
+        patch.setattr(lifecycle,'regular',changed)
+        with pytest.raises(ValueError,match='changed during capture'):owner.perform('export',args)
+    assert owner.saved(args['commandId']) is None
+    revision=owner.inspect()['historyRevision'];pending=owner.app/'history-edit-pending.json';pending.write_text('{}')
+    with pytest.raises(ValueError,match='unresolved'):owner.perform('export',{**args,'expectedHistoryRevision':revision})
+    assert owner.saved(args['commandId']) is None and not (owner.app/'exports').exists()
+
+@pytest.mark.asyncio
 async def test_stale_and_busy_refuse_without_target_effects(tmp_path):
     client,sid,cwd,config=await prepared(tmp_path)
     try:

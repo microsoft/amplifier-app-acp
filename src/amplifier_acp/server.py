@@ -758,7 +758,7 @@ class Server:
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
             from .session_lifecycle import Lifecycle
             operation=params.get('operation');loaded=self.sessions.get(params.get('sessionId'))
-            if operation in {'fork','export','delete','restore','retention.hide','legacyCopy.purge','managedFiles.preview','managedFiles.dispose'} and loaded and (loaded.lock.locked() or loaded.config_cancel is not None or loaded.worker_retirement_pending):raise RpcError(-32000,'Native lifecycle mutation requires an idle, settled session.',{'executed':False})
+            if operation in {'fork','delete','restore','retention.hide','legacyCopy.purge','managedFiles.preview','managedFiles.dispose'} and loaded and (loaded.lock.locked() or loaded.config_cancel is not None or loaded.worker_retirement_pending):raise RpcError(-32000,'Native lifecycle mutation requires an idle, settled session.',{'executed':False})
             owner=Lifecycle(self,params.get('sessionId'),params.get('cwd',''))
             if operation.startswith('managedFiles.'):
                 from .managed_disposal import dispatch

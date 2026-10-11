@@ -10,8 +10,12 @@ provides the required precise native boundary and receipt contract.
 `_amplifier/session` accepts `{sessionId,cwd,operation,args}`. `cwd` is the immutable
 native history workspace, not a caller-selected destination. The host must bind
 it to the authorized session. No operation starts a runtime or calls a model.
-The native owner acquires Foundation's OS writer lock for fork/export/removal.
-An active owner or unresolved relocation refuses before a mutation receipt.
+The native owner acquires Foundation's OS writer lock for fork/removal/restoration.
+An active owner or unresolved relocation refuses those mutations before a receipt.
+Export advertises `exportDetails.activeSnapshot` version 1 with `canonicalOnly`
+and `executionUnchanged`: it captures an exact saved history revision without
+acquiring the execution lease or stopping the response. Hosts without this exact
+capability continue requiring idle execution for export.
 Hosts fence admission while making these requests. Read-only inspect and export
 page reads need no model/worker. No operation scans projects or `events.jsonl`.
 
@@ -229,5 +233,8 @@ snapshot and receipt. Unanchored observations appear only in whole-conversation
 exports. Missing timestamps and unavailable or bounded owner observations are
 reported explicitly. Work coverage is retained Host observations, not a complete
 execution audit. Observations grant no authority and never modify native history.
-The existing writer lock, history revision check, 64 MiB export limit, immutable
-byte pages and exact-command recovery remain in force.
+The lifecycle-file lock, exact history revision and context-head checks, 64 MiB
+export limit, immutable byte pages and exact-command recovery remain in force.
+A concurrent history change or pending edit/clear refuses before an export
+receipt. Export freezes saved history only; unfinished output need not be present.
+It never dispatches a turn, modifies canonical history, or cancels execution.

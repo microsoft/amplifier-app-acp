@@ -10,7 +10,8 @@ import re
 
 FLAGS = ('includeExecution', 'includeConversationId', 'includeTimestamps', 'includeReferenceIds')
 CAPABILITY = {'version': 1, 'flags': list(FLAGS), 'contextVersion': 1,
-              'maxContextBytes': 1048576, 'maxWorkItems': 1000, 'maxArtifacts': 1000}
+              'maxContextBytes': 1048576, 'maxWorkItems': 1000, 'maxArtifacts': 1000,
+              'activeSnapshot': {'version': 1, 'canonicalOnly': True, 'executionUnchanged': True}}
 
 
 def options(args):
