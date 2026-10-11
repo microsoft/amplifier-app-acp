@@ -141,7 +141,7 @@ def provenance(row):
     metadata=row.get('metadata') or {};marker=metadata.get('amplifier_input') or {}
     result={'authorization':'unverified-native-history','inputOrigin':'unknown'}
     # Only recorded facts. Input(kind=user) is not proof of current human consent.
-    for name in ('inputOrigin','activeInputId','questionId','observationId','scheduledRunId','voiceId','voiceItemId','createdAt'):
+    for name in ('inputOrigin','via','activeInputId','questionId','observationId','scheduledRunId','voiceId','voiceItemId','createdAt'):
         value=metadata.get(name,row.get(name))
         if value is None and name=='createdAt':value=metadata.get('timestamp')
         if isinstance(value,str) and len(value)<=8192:result[name]=value

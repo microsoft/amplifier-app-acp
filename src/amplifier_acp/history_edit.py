@@ -5,6 +5,16 @@ from .session_lifecycle import canonical,bound,message_id,regular
 from .history import visible,stamp
 from .relocation import write
 
+def require_own_input(row):
+    """External inputs remain readable, but cannot be rewritten as human speech."""
+    metadata=row.get('metadata') or {}
+    origin=metadata.get('inputOrigin',row.get('inputOrigin'))
+    via=metadata.get('via',row.get('via'))
+    if (isinstance(origin,str) and origin in {'agent','coordination','peer','schedule','scheduled','scheduler','observation'}
+            or isinstance(via,str) and via in {'peer','schedule','observation'}
+            or metadata.get('scheduledRunId',row.get('scheduledRunId'))):
+        raise ValueError('Choose one of your own messages to edit.')
+
 def path(home,session,operation):
     from .configuration_clone import location
     if not isinstance(operation,str) or not 1<=len(operation)<=200:raise ValueError('Bounded history operationId required')
@@ -43,6 +53,7 @@ async def revise(worker,args,publish):
     try:
         rows,_,revision=canonical(directory,args['expectedHistoryRevision'],app_home=app_home())
         target=bound(rows,args['targetMessageId'],user=True);position,original=rows[target]
+        require_own_input(original)
         marker=(original.get('metadata') or {}).get('amplifier_input',{})
         if marker.get('kind','user')!='user':raise ValueError('Choose an original user input, not an injected steering correction')
     except ValueError as error:return {'accepted':False,'executed':False,'reason':str(error)}
@@ -154,6 +165,7 @@ def before(server,params):
     if params.get('includeEditContext') is True:
         from .public_message import row_envelope
         original = rows[target][1]
+        require_own_input(original)
         result['editContext'] = {'version': 1, 'targetMessageId': params['beforeTurnId'],
                                  'publicMessage': row_envelope(original)}
     return result
