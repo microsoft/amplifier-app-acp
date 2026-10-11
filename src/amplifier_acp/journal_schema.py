@@ -70,6 +70,9 @@ _SCHEMAS = {
 # Maintenance historically created these complete optional groups after opening
 # the base receipt store. Every constructor now enrolls through this same lock.
 _MAINTENANCE_NAMESPACES = {
+    'workspace-cleanup': (4, (
+        'CREATE TABLE workspace_cleanup_previews(hash TEXT PRIMARY KEY,workspace TEXT NOT NULL,body TEXT NOT NULL)',
+        'CREATE TABLE workspace_cleanup_attempts(command TEXT PRIMARY KEY,workspace_id TEXT NOT NULL,preview TEXT NOT NULL,state TEXT NOT NULL,quarantine TEXT NOT NULL)')),
     'cache': (1, (
         'CREATE TABLE cache_scans(id TEXT PRIMARY KEY,workspace TEXT NOT NULL,body TEXT NOT NULL)',
         'CREATE TABLE cache_entries(scan TEXT NOT NULL,id TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(scan,id))',
@@ -137,7 +140,7 @@ def _shape(db):
         _fail()
     result = {}
     for _, name in rows:
-        if name not in {'commands','receipts','state','inventory','diagnostics','uploads','reviews','workers','reports','annotations','revisions','quotes','provenance','outcomes','cache_scans','cache_entries','cache_previews','app_reset_revision','app_reset_previews'}:
+        if name not in {'commands','receipts','state','inventory','diagnostics','uploads','reviews','workers','reports','annotations','revisions','quotes','provenance','outcomes','cache_scans','cache_entries','cache_previews','app_reset_revision','app_reset_previews','workspace_cleanup_previews','workspace_cleanup_attempts'}:
             _fail()
         columns = db.execute("""SELECT cid,
             CASE WHEN length(CAST(name AS BLOB))<=64 THEN name END,

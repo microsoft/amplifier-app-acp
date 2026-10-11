@@ -21,3 +21,18 @@ async def test_native_roots_are_launcher_owned_and_passive(tmp_path):
         assert 'error' in rejected and not (tmp_path/'foreign').exists()
         assert not client.events and not (home/'projects').exists()
     finally:await client.close()
+
+
+from amplifier_acp.storage_roots import storage_roots
+
+def test_storage_roots_are_passive_declared_content_boundaries(tmp_path):
+    app=tmp_path/'app';native=app/'cli'
+    value=storage_roots(app,native)
+    assert value['version']==1 and value['contentVersion']==1
+    roots={r['path']:r for r in value['contentRoots']}
+    assert roots[str(native)]['category'] is None
+    assert roots[str(native/'projects')]['category']=='sessions'
+    assert roots[str(app/'maintenance/artifacts')]['category']=='backups'
+    assert roots[str(app/'foundation')]['category']=='runtime'
+    assert roots[str(app/'foundation/cache')]['category']=='cache'
+    assert not app.exists()

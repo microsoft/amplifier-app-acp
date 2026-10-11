@@ -116,9 +116,8 @@ class Administration:
    if args:raise ValueError('Storage roots are launcher-owned; no selectors are accepted')
    self.initialize()
    from .native.session_files import amplifier_home
-   return {'version':1,'roots':[
-    {'id':'native-app','scope':'app','label':'Native configuration and saved data','path':str(self.home.resolve())},
-    {'id':'history','scope':'history','label':'Shared CLI and Unified history (read only)','path':str(amplifier_home().resolve()/'projects')}]}
+   from .storage_roots import storage_roots
+   return storage_roots(self.home.resolve(),amplifier_home().resolve())
   if operation in RECORDING_OPERATIONS:
    from .provider_recording_policy import ProviderRecording
    from .maintenance_gate import Gate
