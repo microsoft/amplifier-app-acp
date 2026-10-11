@@ -19,9 +19,18 @@ The AHP host can opt into implemented capabilities in initialize:
 Metadata is bounded to 32 KiB; guidance to 16,000 characters. Omit features that
 are not implemented. Supported feature keys: `context`, `memory`, `outputs`,
 `visual`, `capacity`, `operations`, `questions`, `observation`, `unifiedShell`,
-`imageGeneration`. `unifiedShell`/`imageGeneration` only select implicit default
+`imageGeneration`, `imageResultArtifacts`. `unifiedShell`/`imageGeneration` only select implicit default
 behaviors when community settings have no explicit `bundle.app` list. For a
 consistent settings catalog, prefer explicit trusted `bundle.app` configuration.
+
+`imageResultArtifacts` additionally requires the host's `canvas.openFile` action
+to admit `expectedSha256` and verify it against the bytes saved as an immutable
+artifact. Native observes actual successful `image_generate` completions during
+an active root input and dispatches that shared action with a stable command ID.
+It never scans saved history, retries uncertain attachment writes, or regenerates
+an image after a display failure. Failure is reported in tool details while the
+original generation result and source file remain intact. Child image delivery
+and ordered image galleries require separate lineage support.
 
 The native supervisor emits JSON-RPC `_amplifier/host` requests:
 

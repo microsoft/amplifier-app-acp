@@ -219,6 +219,11 @@ class Session:
                     output=event['output']
                     text=output if isinstance(output,str) else json.dumps(output,ensure_ascii=True,separators=(',',':'))
                     data['content']=[{'type':'content','content':{'type':'text','text':text}}]
+                if event.get('label') == 'image_generate' and event.get('phase') == 'completed':
+                    from .image_artifacts import deliver
+                    delivery = await deliver(self, event)
+                    if delivery:
+                        data.setdefault('content', []).append({'type':'content','content':{'type':'text','text':delivery}})
                 if identity not in self.tools:
                     self.tools.add(identity);data.update(title=event.get('label','Tool'),kind='other')
                     await self.update('tool_call',**data)
