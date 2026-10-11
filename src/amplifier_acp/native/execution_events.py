@@ -150,6 +150,7 @@ class ExecutionEvents:
         self.last_foreground_provider = {}
         self.requests = weakref.WeakKeyDictionary()
         self.nodes = {}
+        self.plan_calls = {}
         self.admission_guard = None
         self.provider_wrappers = {}
         self.streaming_calls = set()
@@ -456,6 +457,14 @@ class ExecutionEvents:
                 detail["output"] = public_tool_detail(result)
             elif event == "tool:error" and "error" in data:
                 detail["output"] = public_tool_detail(data["error"])
+            if sid == self.root_id and row.get('label') == 'todo':
+                from amplifier_acp.plan import accepted_plan, proposed_arguments
+                if event == 'tool:pre':
+                    self.plan_calls[key] = proposed_arguments(data.get('tool_input'))
+                else:
+                    arguments = self.plan_calls.pop(key, None)
+                    if event == 'tool:post' and row['phase'] == 'completed':
+                        detail['plan'] = accepted_plan(arguments if arguments is not None else data.get('tool_input'), result)
             self.publish({**row, **detail})
         elif event in {"llm:request", "llm:response", "provider:retry"}:
             current = CURRENT_CALL.get()

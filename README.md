@@ -399,3 +399,19 @@ history only when its canonical workspace and native identity exactly match
 bounded metadata. It rejects managed histories and symlink paths, creates no
 folder, starts no runtime, and grants no message mutation scope. Restoring the
 original directory returns the session to normal workspace validation.
+
+### Plan presentation
+
+Successful root-session `todo` receipts produce standard ACP `plan` snapshots.
+The same projection is reconstructed from paired canonical call/result rows on
+passive history reads. Proposed input, failed results and child-session plans
+do not replace the root plan. Lists are limited to 200 entries and 16,000 text
+characters. The adapter preserves optional active wording in entry
+`_meta["amplifier.dev/todo"].activeForm`; an unreadable latest successful receipt
+emits an empty plan with plan-level `unavailable: true` in that metadata. Generic
+ACP clients receive the empty replacement instead of a stale plan. This metadata
+is read-only presentation and grants no authority or execution.
+
+`tests/test_plan.py` covers accepted/failed/root/child behavior, bounded large
+live plans, and passive canonical reconstruction. Native history also recognizes
+Core's `tool` call-name field alongside flat and function-shaped calls.

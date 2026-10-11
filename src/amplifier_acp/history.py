@@ -246,7 +246,7 @@ def content_updates(row,position):
             updates.append({'sessionUpdate':kind,'content':{'type':'resource_link','uri':block['image_url']['url'],'name':'Image'},'_meta':meta})
         elif tag in {'tool_call','tool_use'}:
             identity=block.get('id') or block.get('tool_call_id')
-            if identity:updates.append({'sessionUpdate':'tool_call','toolCallId':identity,'title':block.get('name','Tool'),'status':'in_progress','rawInput':block.get('arguments',block.get('input',{})),'_meta':meta})
+            if identity:updates.append({'sessionUpdate':'tool_call','toolCallId':identity,'title':block.get('name') or block.get('tool') or 'Tool','status':'in_progress','rawInput':block.get('arguments',block.get('input',{})),'_meta':meta})
         elif tag in {'thinking','redacted_thinking','reasoning'}:continue
         else:diagnostics.append({'code':'unsupported_content_type','type':tag,'position':position})
     for call in row.get('tool_calls') or []:
@@ -256,7 +256,7 @@ def content_updates(row,position):
             try:arguments=json.loads(arguments)
             except ValueError:pass
         if call.get('id') and not any(u.get('toolCallId')==call['id'] for u in updates):
-            updates.append({'sessionUpdate':'tool_call','toolCallId':call['id'],'title':fn.get('name','Tool'),'status':'in_progress','rawInput':arguments,'_meta':meta})
+            updates.append({'sessionUpdate':'tool_call','toolCallId':call['id'],'title':fn.get('name') or fn.get('tool') or 'Tool','status':'in_progress','rawInput':arguments,'_meta':meta})
     return updates,diagnostics
 
 def _cursor(revision,offset):
@@ -339,7 +339,7 @@ def _page(directory,*,cursor=None,limit=50,max_bytes=2_000_000,expected_revision
                 if not buffer:break
             if offset==0 and not buffer:break
     if stamp(path)[0]!=revision:raise HistoryError('Native history changed during read; retry the read with a fresh cursor.')
-    updates=[];groups=[];group_positions=[];current=None;public_rows=[]
+    updates=[];groups=[];group_positions=[];current=None;public_rows=[];plan_calls={}
     from .public_message import public_row,locator
     for position,row in reversed(rows):
         if include_public_rows:
@@ -356,6 +356,9 @@ def _page(directory,*,cursor=None,limit=50,max_bytes=2_000_000,expected_revision
         if starts_turn(row,current['id'] if current else None):
             current={'id':marker.get('id') or identity,'updates':[],'state':'unknown',**({'recordedOnly':True} if voice or (row.get('metadata') or {}).get('amplifier_context_event') else {}),**({'archiveId':archive_id,'historicalOnly':True} if archive_id else {})}
             groups.append(current);group_positions.append(position)
+            plan_calls.clear()
+        from .plan import history_plans
+        values.extend(history_plans(values, plan_calls))
         reference=message_reference(directory,row,position,epoch,archive_id=archive_id)
         for value in values:
             if include_public_rows and (row.get('metadata') or {}).get('amplifier_public_message') is not None:

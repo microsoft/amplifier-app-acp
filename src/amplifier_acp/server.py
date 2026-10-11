@@ -224,6 +224,11 @@ class Session:
                     await self.update('tool_call',**data)
                 else:
                     await self.update('tool_call_update',**data)
+                if event.get('sessionId') == self.identity and event.get('label') == 'todo' and event.get('phase') == 'completed':
+                    from .plan import accepted_plan
+                    plan = event.get('plan') if 'plan' in event else accepted_plan(event.get('input'), event.get('output'))
+                    if plan is not None:
+                        await self.update('plan', **{key: value for key, value in plan.items() if key != 'sessionUpdate'})
         elif kind in {'generation.finished','generation.failed','generation.detached'} and is_root:
             if not self.prompt or self.prompt.done():return
             ids=row.get('input_ids',[])
