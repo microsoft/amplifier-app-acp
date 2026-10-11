@@ -2,7 +2,7 @@
 
 def storage_roots(app, native):
     roots=[{'id':'native-app','scope':'app','label':'Native configuration and saved data','path':str(app)},
-           {'id':'history','scope':'history','label':'Shared CLI and Unified history (read only)','path':str(native/'projects')}]
+           {'id':'history','scope':'history','label':'Shared CLI and Unified history','path':str(native/'projects')}]
     content=[{**roots[0],'category':'other'}, {**roots[1],'category':'sessions','optional':True}]
     groups={
         'workspaces': ['workspaces'],

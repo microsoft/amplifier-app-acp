@@ -16,7 +16,7 @@ async def test_native_roots_are_launcher_owned_and_passive(tmp_path):
         assert 'result' in result, result
         assert result['result']['roots']==[
             {'id':'native-app','scope':'app','label':'Native configuration and saved data','path':str(app)},
-            {'id':'history','scope':'history','label':'Shared CLI and Unified history (read only)','path':str(home/'projects')}]
+            {'id':'history','scope':'history','label':'Shared CLI and Unified history','path':str(home/'projects')}]
         rejected=await client.request('_amplifier/admin',{**args,'args':{'home':str(tmp_path/'foreign')}})
         assert 'error' in rejected and not (tmp_path/'foreign').exists()
         assert not client.events and not (home/'projects').exists()
