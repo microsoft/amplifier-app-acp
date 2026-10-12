@@ -52,7 +52,8 @@ class NativeWorker:
         self.ready = asyncio.get_running_loop().create_future()
         self.report = {}
         self._write_lock = asyncio.Lock()
-        self._close_lock = asyncio.Lock()
+        self._close_task = None
+        self._spawn_task = None
 
     async def start(self, host_info=None, mcp_servers=None):
         try:
@@ -128,14 +129,15 @@ class NativeWorker:
         if generation and (app_home/'updates/releases'/generation/'profiles-qualified.json').exists():env['AMPLIFIER_RUNTIME_IMMUTABLE']='1'
         command = managed_command or self.config.get('workerCommand') or _default_worker_command()
         bundle=selected_bundle(self.config)
-        self.process = await asyncio.create_subprocess_exec(*command, cwd=self.config.get('executionDirectory',self.cwd), env=env,
+        # A cancelled caller must still recover and reap the child created by
+        # the in-flight spawn. Keep ownership before its first suspension.
+        self._spawn_task = asyncio.create_task(asyncio.create_subprocess_exec(*command, cwd=self.config.get('executionDirectory',self.cwd), env=env,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=sys.stderr, limit=48_000_001)
+            stderr=sys.stderr, limit=48_000_001))
+        self.process = await asyncio.shield(self._spawn_task)
         if generation:
             from .native.generation_leases import acquire
-            try:self.generation_lease=acquire(app_home,generation,self.process.pid)
-            except BaseException:
-                self.process.terminate();await self.process.wait();raise
+            self.generation_lease=acquire(app_home,generation,self.process.pid)
         self.reader = asyncio.create_task(self.read())
         await self.write({'op':'start','session':{'id':self.session_id,'workspace':self.cwd,
             'workingDirectory':self.config.get('executionDirectory',self.cwd),'bundle':bundle, 'hostBridge':host_info is not None, 'hostInfo':host_info or {}, 'mcpServers':mcp_servers or []}})
@@ -262,12 +264,27 @@ class NativeWorker:
                 await self.process.wait()
 
     async def close(self):
-        async with self._close_lock:
-            await self._close()
+        # Closing is a shared finalizer, independent of any one caller. A second
+        # cancellation cannot mark the worker closed while abandoning its child
+        # or release its generation lease before process exit.
+        if self._close_task is None:
+            self._close_task=asyncio.create_task(self._close())
+        cancelled=False
+        while True:
+            try:
+                await asyncio.shield(self._close_task)
+                break
+            except asyncio.CancelledError:
+                if self._close_task.cancelled():raise
+                cancelled=True
+        if cancelled:raise asyncio.CancelledError
 
     async def _close(self):
         if self.closed:return
         self.closed=True
+        if self.process is None and self._spawn_task is not None:
+            try:self.process=await self._spawn_task
+            except Exception:pass  # Failed creation has no child to release.
         if self.process:
             if self.process.returncode is None:
                 try:await self.write({'op':'stop'})
