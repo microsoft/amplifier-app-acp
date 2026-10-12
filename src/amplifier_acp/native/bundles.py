@@ -78,19 +78,25 @@ def validate_uri(uri: str) -> str:
     raise ValueError("Use a registered bundle name or an HTTPS Git bundle URI.")
 
 
-async def git(*args: str, cwd: Path | None = None, timeout: int = 60) -> bytes:
+async def git(*args: str, cwd: Path | None = None, timeout: int = 60, _env=None) -> bytes:
     from ..repository_access import repository_environment
-    env = repository_environment({**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1"})
+    env = repository_environment(_env if _env is not None else {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1"})
+    started = asyncio.get_running_loop().time()
     process = await asyncio.create_subprocess_exec("git", "-c", "protocol.file.allow=never", "-c", "protocol.ext.allow=never", *args,
         cwd=cwd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     try:
-        output, _ = await asyncio.wait_for(process.communicate(), timeout)
+        output, error = await asyncio.wait_for(process.communicate(), timeout)
     except BaseException:
         if process.returncode is None:
             process.kill()
             await process.wait()
         raise
     if process.returncode:
+        from ..repository_access import anonymous_retry_environment
+        retry = anonymous_retry_environment(('git', *args), env, output, error)
+        remaining = timeout - (asyncio.get_running_loop().time() - started)
+        if retry is not None and remaining > 0:
+            return await git(*args, cwd=cwd, timeout=remaining, _env=retry)
         raise ValueError("The Git repository or revision could not be read. Check access and the URL.")
     if len(output) > 8 * 1024 * 1024:
         raise ValueError("The repository index is too large to inspect safely.")
