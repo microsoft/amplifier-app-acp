@@ -35,7 +35,7 @@ async def test_selected_before_first_prompt_and_persisted_on_resume(tmp_path):
     selected={'instance':'work','model':'work-new','effort':'low'}
     try:
         caps=await initialize(client)
-        assert caps['agentCapabilities']['_meta'][NATIVE]['initialSelection']=={'version':1,'typedSelection':True,'passive':True,'resolveMethod':'_amplifier/initial-selection'}
+        assert caps['agentCapabilities']['_meta'][NATIVE]['initialSelection']=={'version':1,'typedSelection':True,'bundleSelection':True,'passive':True,'resolveMethod':'_amplifier/initial-selection'}
         result=await client.request('session/new',args(cwd,selected))
         assert 'result' in result,result
         reply=result['result'];sid=reply['sessionId']
@@ -257,3 +257,77 @@ async def test_passive_resolver_refuses_explicit_invalid_drafts_and_never_alloca
         assert valid['result']['schema']['properties']['effort']['enum']==['low','high']
         assert not list((tmp_path/'app/sessions').glob('*')) and not audit.exists()
     finally:await client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('with_pin',[False,True])
+async def test_chosen_bundle_precedes_saved_default_and_survives_resume(tmp_path,with_pin):
+    import yaml
+    config,cwd,audit,discovery,_=setup(tmp_path)
+    values=json.loads(config.read_text());original=Path(values['bundle'])
+    selected_bundle=tmp_path/'chosen.yaml';doc=yaml.safe_load(original.read_text())
+    doc['bundle']['name']='chosen-bundle';doc['providers']=doc['providers'][1:]
+    selected_bundle.write_text(yaml.safe_dump(doc))
+    # Deliberately saved default differs from the composer choice.
+    app=tmp_path/'app';app.mkdir()
+    (app/'admin-settings.yaml').write_text(yaml.safe_dump({'bundle':{'active':str(original)}}))
+    selected={'bundle':str(selected_bundle),**({'instance':'work','model':'work-new','effort':'low'} if with_pin else {})}
+    client=await Client.launch(config)
+    try:
+        caps=await initialize(client)
+        assert caps['agentCapabilities']['_meta'][NATIVE]['initialSelection']['bundleSelection'] is True
+        resolved=await client.request('_amplifier/initial-selection',{'cwd':str(cwd),'selection':selected})
+        assert 'result' in resolved,resolved
+        resolve_response_validator().validate(resolved['result'])
+        assert resolved['result']['values']==selected
+        assert not list((app/'sessions').glob('*')) and not audit.exists()
+        if not with_pin:assert not discovery.exists(), 'Bundle choice must not force model discovery or pinning'
+        created=await client.request('session/new',args(cwd,selected))
+        assert 'result' in created,created
+        sid=created['result']['sessionId']
+        assert created['result']['_meta'][NATIVE]['initialSelection']['selection']==selected
+        saved=next((tmp_path/'home/projects').glob('*/sessions/'+sid+'/metadata.json'))
+        assert json.loads(saved.read_text())['bundle_name']==str(selected_bundle)
+        control=json.loads((app/'sessions'/sid/'control-state.json').read_text())
+        assert (control.get('selection') or {})=={k:v for k,v in selected.items() if k!='bundle'}
+        assert not audit.exists()
+        response=await client.request('session/prompt',{'sessionId':sid,'prompt':[{'type':'text','text':'one chosen bundle request'}]})
+        assert response['result']['stopReason']=='end_turn',response
+        assert json.loads(audit.read_text().splitlines()[0])['instance']=='work'
+    finally:await client.close()
+    before=audit.read_bytes();client=await Client.launch(config)
+    try:
+        await initialize(client)
+        loaded=await client.request('session/load',{'sessionId':sid,'cwd':str(cwd),'mcpServers':[]})
+        assert 'result' in loaded,loaded
+        assert json.loads(saved.read_text())['bundle_name']==str(selected_bundle)
+        assert audit.read_bytes()==before
+    finally:await client.close()
+
+
+@pytest.mark.asyncio
+async def test_bundle_mismatch_and_invalid_source_refuse_without_creation(tmp_path):
+    import yaml
+    config,cwd,audit,_,_=setup(tmp_path)
+    values=json.loads(config.read_text());original=Path(values['bundle']);doc=yaml.safe_load(original.read_text())
+    doc['providers']=doc['providers'][:1]
+    other=tmp_path/'other.yaml';other.write_text(yaml.safe_dump(doc))
+    values['workerCommand']=['/must-not-start'];config.write_text(json.dumps(values))
+    client=await Client.launch(config)
+    try:
+        await initialize(client)
+        for selected in ({'bundle':str(other),'instance':'work','model':'work-new'}, {'bundle':str(tmp_path/'missing.yaml')}, {'bundle':''},{'bundle':False}):
+            response=await client.request('session/new',args(cwd,selected))
+            assert response['error']['data']['executed'] is False,response
+            assert not list((tmp_path/'app/sessions').glob('*')) and not audit.exists()
+    finally:await client.close()
+
+
+def test_mounted_wrong_bundle_is_not_confirmed_or_reported_as_no_effect(tmp_path):
+    from types import SimpleNamespace
+    from amplifier_acp.initial_selection import confirmed
+    app=tmp_path/'sessions'/'test';app.mkdir(parents=True)
+    (app/'control-state.json').write_text('{}')
+    session=SimpleNamespace(identity='test',provider_state={},report={'root_bundle':'wrong'})
+    with pytest.raises(ValueError) as error:confirmed({'appHome':str(tmp_path)},session,{'bundle':'chosen'},'chosen')
+    assert not hasattr(error.value,'data')

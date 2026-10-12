@@ -1,10 +1,10 @@
-# Initial provider selection
+# Initial bundle and provider selection
 
 A peer advertising `agentCapabilities._meta["amplifier.dev/native"].initialSelection`
 with `{version:1, typedSelection:true, passive:true, resolveMethod:"_amplifier/initial-selection"}` supports a typed selection on
 standard ACP `session/new`. This additive capability is enabled with the existing
-launcher `managedSessionRoots` grant, which also enables passive draft defaults
-and model discovery. It does not change the ACP protocol requirements.
+launcher `managedSessionRoots` or `adminWorkspaceRoots` configuration. Managed
+allocation remains separately gated by `managedSessionRoots`. It does not change the ACP protocol requirements.
 
 The advertised resolver accepts exact `{cwd, selection?}` parameters, where the
 optional selection is a partial typed `{instance?,model?,effort?}` draft. It uses
@@ -59,5 +59,19 @@ Load/resume continues to use the saved selection. Failure after persistence or
 startup is not a no-effect refusal: retain original state and uncertainty; do not
 retry creation or apply a delayed replacement selection automatically. This
 extension adds no command receipt, replay mechanism, or new history authority.
+
+Peers advertising `bundleSelection:true` additionally accept a bounded `bundle`
+string (4,096 characters) in the same typed selection. The exact registered ID,
+local file, or source reference is resolved through Native's ordinary bundle
+loader. The Host and Web client must check this capability before forwarding a
+bundle choice; older engines must refuse it rather than start the saved default.
+
+Bundle-only selection returns only a `bundle` enum and value, with no implicit
+provider/model pin or model enumeration. When combined with a provider pin, that
+pin is validated against the chosen bundle. The worker starts with the validated
+root; success additionally requires its reported `root_bundle` to match the
+resolved root identity. The existing canonical session metadata retains the
+bundle for later loads; the provider control file stores only provider fields.
+No post-creation bundle mutation or prompt replay is used.
 
 The metadata shapes are defined in [initial-selection.v1.json](../schemas/initial-selection.v1.json).
