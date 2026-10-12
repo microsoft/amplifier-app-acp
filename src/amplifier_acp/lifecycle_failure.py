@@ -9,6 +9,8 @@ def generation_failure(event):
     messages = {
         'unknown': ('The manager turn failed.', 'Inspect saved details before continuing. A recovery copy preserves readable history without replaying completed actions.'),
         'context_limit': ('The request could not fit within the context budget.', 'Inspect the active instructions and attachments, or choose a model with more context. Completed actions were not replayed.'),
+        'context_compaction': ('Context compaction failed.', 'Original history is preserved. Repair context preparation before continuing; no foreground model request was sent for this step.'),
+        'context_measurement': ('Could not check conversation size.', 'Original history and the saved checkpoint are preserved. Check the counting diagnostic before continuing.'),
         'authentication': ('The selected provider rejected its credentials.', 'Check the selected provider in Settings before continuing.'),
         'rate_limit': ('The selected provider rate limit was reached.', 'Wait for the provider limit to reset before continuing.'),
         'content_filter': ('The provider stopped the request under its content policy.', 'Review the request and the provider guidance. Recovery does not clear a safety stop.'),
@@ -27,9 +29,73 @@ def generation_failure(event):
         guidance = 'Inspect the active instructions and attachments. This was a local budget check, not a provider response. Required content was not discarded; earlier actions were not replayed.'
     kind = event.get('error_type')
     kind = kind if isinstance(kind, str) and re.fullmatch(r'[A-Za-z][A-Za-z0-9_.]{0,99}', kind) else 'Error'
-    return {'category': category, 'errorType': kind, 'stage': stage,
+    code = event.get('error_code')
+    known = {'native_input_oversized', 'native_checkpoint_invalid', 'native_no_reduction',
+             'native_measurement_unavailable', 'native_compaction_failed', 'disabled',
+             'request_context_unavailable', 'invalid_native_contract', 'authoritative_measurement_unavailable',
+             'summary_output_limit', 'summary_empty', 'previous_failure', 'summary_failed', 'native_failed'}
+    code = code if isinstance(code, str) else None
+    if category == 'context_compaction':
+        stage = 'context_preparation'
+        if code == 'native_input_oversized':
+            summary = 'Saved history is too large for native compaction.'
+            guidance = 'Restore a compatible checkpoint or explicitly recover this history in bounded windows. Retrying the same request will not fix it. Original history is preserved; no foreground model request was sent for this step.'
+        elif code == 'native_checkpoint_invalid':
+            summary = 'The saved native checkpoint cannot be used by the selected provider or model.'
+            guidance = 'Restore a compatible checkpoint or explicitly recover the history. Original history is preserved; no automatic summary fallback was used.'
+        elif code in {'native_measurement_unavailable', 'authoritative_measurement_unavailable'}:
+            summary = 'Could not check conversation size.'
+            guidance = 'Original history and the saved checkpoint are preserved. The counting service returned no usable measurement; the underlying cause was not recorded. Try Continue conversation once. If it fails again, share diagnostics; resetting the chat is not required.'
+        elif code == 'summary_output_limit':
+            summary = 'The conversation summary reached its output limit.'
+            guidance = 'Increase the context module’s summary_max_output_tokens allowance before continuing. No incomplete summary was saved; original history is preserved.'
+        elif code == 'summary_empty':
+            summary = 'The summarizer returned no usable conversation summary.'
+            guidance = 'Check the summarization model and its output allowance before continuing. Original history is preserved; no empty summary was saved.'
+        elif code == 'previous_failure':
+            summary = 'Conversation preparation is waiting after an earlier compaction failure.'
+            guidance = 'Inspect the earlier failure and correct its cause, or wait for the retry cooldown before continuing. The conversation has not advanced; repeating the same request immediately will not bypass this protection.'
+        elif code in {'summary_failed', 'native_failed'}:
+            summary = ('The conversation summary could not be prepared.' if code == 'summary_failed'
+                       else 'The provider could not compact the conversation.')
+            guidance = 'Check provider availability and the saved compaction diagnostics before continuing. Original history is preserved; no foreground model request was sent for this step.'
+    count = {}
+    if category == 'context_measurement':
+        stage = 'context_preparation'
+        raw = event.get('count_failure')
+        raw = raw if isinstance(raw, dict) else {}
+        reasons = {
+            'timeout': 'The counting service timed out.',
+            'connection': 'The counting service could not be reached.',
+            'rate_limit': 'The counting service is rate limited.',
+            'service': 'The counting service is temporarily unavailable.',
+            'authentication': 'Check the selected AI connection’s credentials in Settings.',
+            'permission': 'The selected AI connection does not have permission to count this request.',
+            'quota': 'Check the selected AI connection’s quota or billing.',
+            'invalid_request': 'The counting service rejected the request format. Share diagnostics so we can investigate.',
+            'invalid_response': 'The counting service returned an invalid result. Share diagnostics so we can investigate.',
+        }
+        reason = raw.get('category')
+        reason = reason if isinstance(reason, str) else None
+        if reason in reasons:
+            count['category'] = reason
+        count['retryable'] = raw.get('retryable') is True and reason in {'timeout', 'connection', 'rate_limit', 'service'}
+        for key, low, high in [('httpStatus', 400, 599), ('attempts', 1, 3)]:
+            value = raw.get(key)
+            if type(value) is int and low <= value <= high:
+                count[key] = value
+        request_id = raw.get('requestId')
+        if isinstance(request_id, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,100}', request_id):
+            count['requestId'] = request_id
+        guidance = 'Original history and the saved checkpoint are preserved. ' + reasons.get(reason, 'The counting failure needs investigation.')
+        if count['retryable']:
+            guidance += ' Wait briefly, then choose Continue conversation to try again.'
+    return {**({'code': code} if category == 'context_compaction' and code in known else {}),
+            **({'countFailure': count} if category == 'context_measurement' else {}),
+            'category': category, 'errorType': kind, 'stage': stage,
             'summary': summary, 'guidance': guidance, 'effects': 'not_rolled_back',
-            'replayed': False, 'retryable': event.get('retryable') is True}
+            'replayed': False, 'retryable': count.get('retryable', False) if category == 'context_measurement' else event.get('retryable') is True}
+
 
 def save(server,identity,row,input_id=None):
     if row.get('type')!='generation.failed':return
