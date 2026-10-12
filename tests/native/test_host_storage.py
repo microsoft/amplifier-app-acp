@@ -204,3 +204,19 @@ def test_checkpoint_distinguishes_boolean_and_numeric_continuation_values(tmp_pa
     rows[0]['continuation']['value']=1
     store.save('root',rows,{})
     assert type(store.load('root')[0][0]['continuation']['value']) is int
+
+
+def test_checkpoint_preserves_only_sequence_restamps_not_user_metadata_edits(tmp_path):
+    store = SessionStore(tmp_path / 'sessions')
+    original = {'role': 'assistant', 'content': 'Earlier answer',
+                'metadata': {'_seq': 9, 'source': 'original'}}
+    store.save('root', [original], {})
+    transcript = store.directory('root') / 'transcript.jsonl'
+    before = transcript.read_bytes()
+    incoming = {**original, 'metadata': {'_seq': 0, 'source': 'original'}}
+    store.save('root', [incoming, {'role': 'user', 'content': 'Continue'}], {})
+    assert transcript.read_bytes().startswith(before)
+    assert store.load('root')[0][0] == original
+    incoming['metadata']['source'] = 'corrected'
+    store.save('root', [incoming], {})
+    assert store.load('root')[0] == [incoming]

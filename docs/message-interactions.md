@@ -184,3 +184,20 @@ receiptsCopied:false}`. Legacy `native.session_store.fork_session` is not this
 public ACP consumer and remains outside this acceptance. Transfer and selected
 private-store snapshot receiver ownership remain explicit separate gaps. Full
 native authority backups preserve the original adjunct and receipts.
+
+## Legacy continuation stability
+
+Checkpointing a resumed conversation preserves its unchanged leading rows. A
+context module's private `metadata._seq` restamp does not change the saved row's
+identity; actual content, continuation fields and other metadata still do. The
+native host requires Foundation's `SessionHistoryStore.save(preserve_prefix=True)`
+so older JSON formatting and byte offsets also survive atomic replacement.
+Ship these changes together in the qualified runtime composition.
+
+Reading old transcripts never backfills message IDs or changes canonical files.
+Installed-worker coverage includes plain text, text blocks and Anthropic thinking
+blocks through context-simple and context-managed. Quotes expose public text,
+reactions arrive on the next explicit user input without starting an extra turn,
+and references/reactions survive continuation and a cold restart. Separate trusted
+principals may remove only their own reactions; this is protocol coverage, not a
+claim about a multi-user web deployment.
