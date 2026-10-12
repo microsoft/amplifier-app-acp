@@ -158,6 +158,28 @@ class Worker:
                 args = {**args, '_contextInputs': ids,
                         '_contextBindings': bindings}
             return await self.bridge(operation, args)
+        register = getattr(coordinator, "register_capability", None)
+        if (assigned is None and callable(register)
+                and (self.start_config or {}).get("hostInfo", {}).get("features", {}).get("peerContinuation") is True):
+            async def peer_continuation_ready():
+                runtime, gate = self.runtime, self.activation_gate
+                generation = runtime.generation if runtime else None
+                generation_id = generation.get("id") if generation else None
+                epoch = self.peer_stop_epoch
+                def current():
+                    return bool(generation and gate and gate.current_valid
+                        and self.runtime is runtime and runtime.generation is generation
+                        and generation.get("id") == generation_id and self.peer_stop_epoch == epoch
+                        and not runtime.closed and not runtime.stop_requested
+                        and not self.retiring and not self.draining and not self.transport_closed
+                        and not self.ownership.yielding and not coordinator.cancellation.is_cancelled)
+                if not current():
+                    return False
+                task = self.controls.tasks.record() or {}
+                result = await bridge("coordination.continuation_ready", {
+                    "taskId": task.get("id"), "taskRevision": task.get("revision")})
+                return result.get("ready") is True and current()
+            register("web.peer_continuation_ready", peer_continuation_ready)
         return bridge
 
     def stage_original(self, input_id, original):
