@@ -23,13 +23,13 @@ class Diagnostics:
   with self.owner.db() as db:db.execute('INSERT INTO diagnostics(body) VALUES (?)',(json.dumps({'id':uuid.uuid4().hex,'attemptId':self.state.get('attemptId'),'phase':phase,'status':status,'at':time.time(),**safe}),))
   self.owner.changed()
  async def run(self,phase,function,*args,**kwargs):
-  phase_id=uuid.uuid4().hex
+  phase_id=uuid.uuid4().hex;started=time.monotonic()
   self.record(phase,'started',commandId=phase_id)
   try:
-   value=await function(*args,**kwargs);self.record(phase,'succeeded',commandId=phase_id,**getattr(value,'diagnostic_facts',{}));return value
+   value=await function(*args,**kwargs);self.record(phase,'succeeded',commandId=phase_id,**{**getattr(value,'diagnostic_facts',{}),'durationMs':round((time.monotonic()-started)*1000)});return value
   except BaseException as error:
    from .native.update_diagnostics import exception_type
-   self.record(phase,'interrupted' if isinstance(error,asyncio.CancelledError) else 'failed',commandId=phase_id,**{'errorType':exception_type(error),**getattr(error,'diagnostic_facts',{})});raise
+   self.record(phase,'interrupted' if isinstance(error,asyncio.CancelledError) else 'failed',commandId=phase_id,**{'errorType':exception_type(error),**getattr(error,'diagnostic_facts',{}),'durationMs':round((time.monotonic()-started)*1000)});raise
 
 class Generations:
  def __init__(self,home,config,on_change=None):
@@ -105,7 +105,7 @@ class Generations:
    self.save(row,signature)
    self.diagnostics.state={'attemptId':command}
    await self.publish(attemptId=command)
-   phase='runtime-'+operation.split('.')[-1]
+   phase='runtime-'+operation.split('.')[-1];started=time.monotonic()
    self.diagnostics.record(phase,'started',commandId=command)
    try:
     if operation=='generations.check':result=await self.check()
@@ -122,11 +122,11 @@ class Generations:
      generation=identity(args.get('generation') or active_release(self.home).get('current'))
      selected=await ensure(self.home,generation,{'id':sid,'workspace':workspace,'bundle':args.get('bundle')},shared_home=self.config.get('home'))
      result=await launcher(self.home,selected)
-    row={**row,'state':'succeeded','result':result,'settledAt':time.time()};self.save(row,signature);self.diagnostics.record(phase,'succeeded',commandId=command);return row
+    row={**row,'state':'succeeded','result':result,'settledAt':time.time()};self.save(row,signature);self.diagnostics.record(phase,'succeeded',commandId=command,durationMs=round((time.monotonic()-started)*1000));return row
    except BaseException as error:
     from .native.update_diagnostics import exception_type
     row={**row,'state':'unknown' if isinstance(error,asyncio.CancelledError) else 'failed','errorType':exception_type(error),'detail':'Generation operation failed; inspect sanitized diagnostics.','settledAt':time.time()};self.save(row,signature)
-    self.diagnostics.record(phase,'interrupted' if row['state']=='unknown' else 'failed',commandId=command,**{'errorType':row['errorType'],**getattr(error,'diagnostic_facts',{})})
+    self.diagnostics.record(phase,'interrupted' if row['state']=='unknown' else 'failed',commandId=command,**{'errorType':row['errorType'],**getattr(error,'diagnostic_facts',{}),'durationMs':round((time.monotonic()-started)*1000)})
     await self.publish(phase='error',error=row['detail']);
     if not isinstance(error,Exception):raise
     return row

@@ -24,6 +24,7 @@ async def test_diagnostic_attempts_survive_restart_and_replay_does_not_add_progr
     fetch=[row for row in before['events'] if row['phase']=='source-fetch']
     assert len(fetch)==2 and fetch[0]['commandId']==fetch[1]['commandId']
     assert len({row['id'] for row in before['events']})==4
+    assert all(isinstance(row.get('durationMs'),int) and row['durationMs']>=0 for row in before['events'] if row['status']=='failed')
     restarted=Generations(tmp_path,{})
     assert await restarted.perform(str(tmp_path),'generations.check',args)==failed
     assert restarted.inspect({})['diagnostics']==before
