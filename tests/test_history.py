@@ -34,6 +34,32 @@ def test_exact_visible_output_reference_is_passive_and_does_not_gain_input_autho
     with pytest.raises(ValueError,match='boolean'):exact_message(p,identity,revision,visible_reference_only=1)
     with pytest.raises(ValueError,match='changed'):exact_message(p,identity,'stale',visible_reference_only=True)
 
+def test_media_reference_matches_main_identity_without_granting_input_authority(tmp_path):
+    import hashlib
+    from amplifier_acp.history import exact_message, inspect, message_id
+    p=tmp_path/'session';p.mkdir()
+    row={'role':'assistant','content':[{'type':'text','text':'Saved 🎬 clip'},{'type':'text','text':'Original'}]}
+    data=(json.dumps(row)+'\n').encode();file=p/'transcript.jsonl';file.write_bytes(data);(p/'metadata.json').write_text('{}')
+    native=message_id(row,0)
+    legacy=hashlib.sha256(json.dumps(['session',0,'assistant','Saved 🎬 clip\nOriginal'],ensure_ascii=False).encode()).hexdigest()[:32]
+    revision=inspect(p)['revision']
+    for identity in [native,legacy]:
+        result=exact_message(p,identity,revision,media_reference_only=True)
+        assert result['message']=={'id':native,'role':'assistant','legacyMessageId':legacy}
+        assert result['selection']=='exact-media-reference' and result['requestedId']==identity
+        assert result['complete'] and not result['execution'] and result['mutationAuthority']=='none'
+    with pytest.raises(ValueError):exact_message(p,legacy,revision)
+    assert file.read_bytes()==data
+    with pytest.raises(ValueError,match='boolean'):exact_message(p,native,revision,media_reference_only=1)
+    file.write_text(json.dumps({'role':'assistant','content':'Changed'})+'\n')
+    with pytest.raises(ValueError):exact_message(p,legacy,inspect(p)['revision'],media_reference_only=True)
+
+@pytest.mark.parametrize('row',[{'role':'user','content':'Not an assistant'},{'role':'assistant','content':'Ephemeral','metadata':{'ephemeral':True}},{'role':'assistant','content':'','tool_calls':[{'id':'tool'}]},{'role':'system','content':'Instructions'}])
+def test_media_reference_rejects_unsuitable_originals(tmp_path,row):
+    from amplifier_acp.history import exact_message, inspect, message_id
+    p=tmp_path/'session';p.mkdir();(p/'metadata.json').write_text('{}');(p/'transcript.jsonl').write_text(json.dumps(row)+'\n')
+    with pytest.raises(ValueError):exact_message(p,message_id(row,0),inspect(p)['revision'],media_reference_only=True)
+
 def test_exact_old_source_refuses_duplicate_changed_and_oversized_originals(tmp_path):
     from amplifier_acp.history import exact_message, inspect
     p=tmp_path/'session';file=history(p,75)
@@ -81,7 +107,7 @@ async def test_exact_source_over_stdio_is_not_limited_to_recent_turns_or_a_worke
     client=await Client.launch(config)
     try:
         initialized=await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
-        assert initialized['result']['agentCapabilities']['_meta']['amplifier.dev/native']['history']['exactMessageRead']=={'version':1,'visibleReferenceOnly':1,'scan':'stream','maxRecordBytes':67108864,'maxMessageBytes':65536}
+        assert initialized['result']['agentCapabilities']['_meta']['amplifier.dev/native']['history']['exactMessageRead']=={'version':1,'visibleReferenceOnly':1,'mediaReferenceOnly':1,'scan':'stream','maxRecordBytes':67108864,'maxMessageBytes':65536}
         scope={'sessionId':sid,'cwd':str(cwd)}
         revision=(await client.request('_amplifier/history/inspect',scope))['result']['revision']
         result=await client.request('_amplifier/history/message',{**scope,'messageId':'turn-0','expectedRevision':revision})

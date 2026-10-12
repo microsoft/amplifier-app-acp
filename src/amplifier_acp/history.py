@@ -68,13 +68,13 @@ def _exact_segments(directory, app_home, history_cwd):
     return head, result, guards
 
 
-def exact_message(directory, identity, expected_revision, *, app_home=None, history_cwd=None, visible_reference_only=False):
+def exact_message(directory, identity, expected_revision, *, app_home=None, history_cwd=None, visible_reference_only=False, media_reference_only=False):
     """Read one original source across current and preserved context, without execution.
 
     Original IDs remain source references. Archive UI IDs never gain mutation or
     new-input authority. Scan every selected segment to refuse duplicate IDs.
     """
-    if type(visible_reference_only) is not bool:
+    if type(visible_reference_only) is not bool or type(media_reference_only) is not bool:
         raise HistoryError('Visible-reference selection must be boolean')
     if not isinstance(identity, str) or not identity or len(identity) > 512:
         raise HistoryError('Exact historical message identity required')
@@ -95,7 +95,7 @@ def exact_message(directory, identity, expected_revision, *, app_home=None, hist
         before, _ = stamp(selected_path)
         guards.append((selected_path, before))
         info=selected_path.lstat();fd=os.open(selected_path,os.O_RDONLY|getattr(os,'O_NOFOLLOW',0)|getattr(os,'O_NONBLOCK',0))
-        position=0;checksum=hashlib.sha256()
+        position=0;ordinal=0;checksum=hashlib.sha256()
         try:
             opened=os.fstat(fd)
             if (opened.st_dev,opened.st_ino)!=(info.st_dev,info.st_ino) or not stat.S_ISREG(opened.st_mode):
@@ -108,9 +108,15 @@ def exact_message(directory, identity, expected_revision, *, app_home=None, hist
                     if not isinstance(row,dict) or not isinstance(row.get('role'),str):
                         raise HistoryError('Malformed native history; files preserved')
                     marker=(row.get('metadata') or {}).get('amplifier_input',{})
-                    if marker.get('id')==identity or identity.startswith('native:') and message_id(row,position,epoch)==identity:
-                        matches+=1;selected=(position,row,descriptor)
-                    position+=len(line)
+                    canonical_id=message_id(row,position,epoch)
+                    legacy_id=None
+                    if media_reference_only and epoch is None:
+                        content=row.get('content','')
+                        raw=content if isinstance(content,str) else '\n'.join(block.get('text','') for block in content if isinstance(block,dict) and block.get('type') in {'text','output_text'}) if isinstance(content,list) else ''
+                        legacy_id=hashlib.sha256(json.dumps([directory.name,ordinal,row.get('role'),raw],ensure_ascii=False).encode()).hexdigest()[:32]
+                    if marker.get('id')==identity or identity.startswith('native:') and canonical_id==identity or media_reference_only and identity==legacy_id:
+                        matches+=1;selected=(position,row,descriptor,canonical_id,legacy_id)
+                    position+=len(line);ordinal+=1
         finally:os.close(fd)
         if descriptor and checksum.hexdigest() != descriptor.get('sha256'):
             raise HistoryError('Preserved source bytes changed')
@@ -120,11 +126,15 @@ def exact_message(directory, identity, expected_revision, *, app_home=None, hist
     if app_home is not None:guard_context_clear(app_home,directory.name)
     record(directory/'metadata.json')
     if matches!=1:raise HistoryError('The selected native message boundary is unavailable or ambiguous')
-    position,row,descriptor=selected
-    if visible_reference_only:
+    position,row,descriptor,canonical_id,legacy_id=selected
+    if visible_reference_only or media_reference_only:
         updates, diagnostics = content_updates(row, position)
         if not visible(row) or row.get('role') not in {'user','assistant'} or diagnostics or not any(update.get('content',{}).get('type')=='text' and update['content'].get('text','').strip() for update in updates):
             raise HistoryError('Choose a visible original user or assistant message')
+        if media_reference_only:
+            if row['role']!='assistant' or (row.get('metadata') or {}).get('ephemeral') is True:
+                raise HistoryError('Choose a saved assistant message for inline media')
+            return {'revision':revision,'selection':'exact-media-reference','requestedId':identity,'message':{'id':canonical_id,'role':'assistant',**({'legacyMessageId':legacy_id} if legacy_id else {})},'complete':True,'execution':False,'mutationAuthority':'none'}
         return {'revision':revision,'selection':'exact-visible-reference','message':{'id':identity,'role':row['role']},'complete':True,'execution':False,'mutationAuthority':'none'}
     if not visible(row) or row.get('role')!='user':raise HistoryError('Choose a visible native user message boundary')
     updates, diagnostics = content_updates(row, position)
