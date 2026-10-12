@@ -58,9 +58,14 @@
           "const": "unknown"
         },
         "clearKinds": {
-          "const": [
-            "python-bytecode"
-          ]
+          "type": "array",
+          "items": {
+            "enum": [
+              "python-bytecode",
+              "app-source-cache"
+            ]
+          },
+          "uniqueItems": true
         },
         "referenceIssues": {
           "type": "array",
@@ -104,7 +109,8 @@
               "source-binding",
               "unrecognized-cache",
               "configured-source",
-              "python-bytecode"
+              "python-bytecode",
+              "app-source-cache"
             ]
           },
           "label": {

@@ -40,9 +40,9 @@ async def test_cold_protocol_inventory_and_exact_derived_clear_preserve_all_sour
         from jsonschema import Draft202012Validator
         Draft202012Validator(json.loads((Path(__file__).parents[1]/'schemas/native-cache-page.v1.json').read_text())).validate(page)
         assert 'FIXTURE_SECRET' not in json.dumps(page) and 'key=fixture' not in json.dumps(page)
-        sources=[r for r in page['items'] if r['kind']=='cached-source'];assert len(sources)==1 and not sources[0]['clearable']
+        sources=[r for r in page['items'] if r['kind']=='app-source-cache'];assert len(sources)==1 and sources[0]['clearable']
         bytecodes=[r for r in page['items'] if r['kind']=='python-bytecode'];assert len(bytecodes)==1 and bytecodes[0]['clearable'],page
-        denied=await call(client,cwd,'maintenance.cache.preview',{'scanId':index['scanId'],'revision':index['revision'],'ids':[sources[0]['id']],'reviewed':True},okay=False);assert denied['data']['executed'] is False
+        denied=await call(client,cwd,'maintenance.cache.preview',{'scanId':index['scanId'],'revision':index['revision'],'ids':[sources[0]['id'],bytecodes[0]['id']],'reviewed':True},okay=False);assert denied['data']['executed'] is False
         review=await preview(client,cwd,index,[bytecodes[0]['id']]);auth=await hold(client,cwd)
         # Passive indexed reads remain possible under the native admin fence.
         assert (await call(client,cwd,'maintenance.cache.page',{'scanId':index['scanId'],'revision':index['revision'],'limit':1}))['nextCursor']
@@ -142,7 +142,7 @@ async def test_partial_clear_is_unknown_and_exact_retry_never_removes_remaining_
     try:
         scan=await owner.perform(str(cwd),'maintenance.cache.scan',{'commandId':'scan'})
         page=await owner.perform(str(cwd),'maintenance.cache.page',{'scanId':scan['scanId'],'revision':scan['revision']})
-        review=await owner.perform(str(cwd),'maintenance.cache.preview',{'scanId':scan['scanId'],'revision':scan['revision'],'ids':[r['id'] for r in page['items'] if r['clearable']],'reviewed':True})
+        review=await owner.perform(str(cwd),'maintenance.cache.preview',{'scanId':scan['scanId'],'revision':scan['revision'],'ids':[r['id'] for r in page['items'] if r['clearable'] and r['kind']=='python-bytecode'],'reviewed':True})
         held=owner.lifecycle.perform('acquire',CONTEXT);auth={k:held['lease'][k] for k in ('leaseId','commandId','fenceId')}
         original=Path.unlink;calls=[]
         def fail_after_one(path,*args,**kwargs):
@@ -171,7 +171,7 @@ async def test_cancelled_clear_joins_actual_file_thread_before_releasing_writer_
     try:
         scan=await owner.perform(str(cwd),'maintenance.cache.scan',{'commandId':'scan'})
         page=await owner.perform(str(cwd),'maintenance.cache.page',{'scanId':scan['scanId'],'revision':scan['revision']})
-        review=await owner.perform(str(cwd),'maintenance.cache.preview',{'scanId':scan['scanId'],'revision':scan['revision'],'ids':[r['id'] for r in page['items'] if r['clearable']],'reviewed':True})
+        review=await owner.perform(str(cwd),'maintenance.cache.preview',{'scanId':scan['scanId'],'revision':scan['revision'],'ids':[r['id'] for r in page['items'] if r['clearable'] and r['kind']=='python-bytecode'],'reviewed':True})
         held=owner.lifecycle.perform('acquire',CONTEXT);auth={k:held['lease'][k] for k in ('leaseId','commandId','fenceId')};original=Path.unlink
         def block(path,*args,**kwargs):
             if path==pyc:entered.set();assert finish.wait(10)
@@ -208,3 +208,84 @@ def test_public_cache_schema_matches_strict_wire_and_rejects_path_selectors():
     valid={'cwd':'/authorized/workspace','operation':'maintenance.cache.clear','args':{'commandId':'clear','previewHash':'a'*64}}
     validator=Draft202012Validator(schema);validator.validate(valid)
     assert list(validator.iter_errors({**valid,'args':{**valid['args'],'path':'/caller/chosen'}}))
+
+@pytest.mark.asyncio
+async def test_app_download_quarantine_preserves_exact_copy_and_duplicate_never_moves_new_cache(tmp_path):
+    from amplifier_acp.cache_inspection import tree_proof,Bounds
+    client,cwd,config,path=await setup(tmp_path)
+    source,pyc,_=repo(Path(config['appHome'])/'foundation/cache/fixture')
+    root=source.parent;before=tree_proof(root,Bounds(lambda:None))
+    try:
+        index,page=await scan(client,cwd)
+        item=next(r for r in page['items'] if r['kind']=='app-source-cache')
+        review=await preview(client,cwd,index,[item['id']]);assert review['coverage']=='verified-native-owned-cache-quarantine'
+        auth=await hold(client,cwd)
+        args={'commandId':'quarantine-once','previewHash':review['previewHash']}
+        result=await call(client,cwd,'maintenance.cache.clear',args,auth)
+        saved=Path(result['recoveryFolder'])/item['id']
+        assert not root.exists() and tree_proof(saved,Bounds(lambda:None))==before
+        assert result['quarantined']==[{'id':item['id'],'originalPath':str(root),'savedName':item['id']}]
+        root.mkdir();(root/'new-user-work.txt').write_text('keep new work')
+        again=await call(client,cwd,'maintenance.cache.clear',args,auth)
+        assert again['replayed'] is False and (root/'new-user-work.txt').read_text()=='keep new work'
+        assert saved.is_dir() and not client.events
+    finally:await client.close()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('change',['file','git','symlink','reference'])
+async def test_download_quarantine_refuses_stale_or_linked_cache_before_moving(tmp_path,change):
+    client,cwd,config,path=await setup(tmp_path)
+    source,pyc,git=repo(Path(config['appHome'])/'foundation/cache/fixture');root=source.parent
+    try:
+        index,page=await scan(client,cwd);item=next(r for r in page['items'] if r['kind']=='app-source-cache');review=await preview(client,cwd,index,[item['id']]);auth=await hold(client,cwd)
+        if change=='file':source.write_text('NEW USER CONTENT')
+        elif change=='git':git('config','fixture.changed','true')
+        elif change=='symlink':(root/'outside').symlink_to(cwd,target_is_directory=True)
+        else:(Path(config['home'])/'settings.yaml').write_text('source: '+str(root)+'\n')
+        denied=await call(client,cwd,'maintenance.cache.clear',{'commandId':'changed-cache','previewHash':review['previewHash']},auth,False)
+        assert denied['data']['executed'] is False and root.exists()
+        assert not (Path(config['appHome'])/'maintenance/cache-recovery').exists()
+    finally:await client.close()
+
+@pytest.mark.asyncio
+async def test_quarantine_lost_rename_ack_remains_unknown_and_never_replays(tmp_path,monkeypatch):
+    from amplifier_acp.admin import Administration
+    from test_admin_lifecycle import CONTEXT
+    from amplifier_acp.cache_inspection import digest
+    home=tmp_path/'home';home.mkdir();cwd=tmp_path/'workspace';cwd.mkdir()
+    config={'home':str(home),'appHome':str(tmp_path/'app'),'adminWorkspaceRoots':[str(cwd)],'adminMaintenance':True,'maintenanceExternalWriters':'stopped'}
+    owner=Administration(config);source,_,_=repo(tmp_path/'app/foundation/cache/fixture');root=source.parent
+    try:
+        index=await owner.perform(str(cwd),'maintenance.cache.scan',{'commandId':'scan'})
+        page=await owner.perform(str(cwd),'maintenance.cache.page',{'scanId':index['scanId'],'revision':index['revision']})
+        item=next(r for r in page['items'] if r['kind']=='app-source-cache')
+        review=await owner.perform(str(cwd),'maintenance.cache.preview',{'scanId':index['scanId'],'revision':index['revision'],'ids':[item['id']],'reviewed':True})
+        held=owner.lifecycle.perform('acquire',CONTEXT);auth={k:held['lease'][k] for k in ('leaseId','commandId','fenceId')}
+        original=Path.rename
+        def lost(path,target):
+            result=original(path,target)
+            if path==root:raise OSError('Lost rename acknowledgement')
+            return result
+        args={'commandId':'lost-quarantine','previewHash':review['previewHash']}
+        with monkeypatch.context() as patch:
+            patch.setattr(Path,'rename',lost)
+            with pytest.raises(OSError):await owner.perform(str(cwd),'maintenance.cache.clear',args,fence=auth)
+        receipt=await owner.perform(str(cwd),'maintenance.receipt',{'commandId':'lost-quarantine'});assert receipt['receipt']['state']=='unknown'
+        root.mkdir();(root/'new.txt').write_text('new cache')
+        duplicate=await owner.perform(str(cwd),'maintenance.cache.clear',args,fence=auth)
+        assert duplicate['receipt']['state']=='unknown' and (root/'new.txt').exists()
+        assert (tmp_path/'app/maintenance/cache-recovery'/digest('lost-quarantine')/item['id']/'sample.py').exists()
+    finally:await owner.close()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('reference', ['git+https://example.invalid/fixture@main#subdirectory=bundle.md','https://example.invalid/fixture.git','git+ssh://git@example.invalid/fixture.git@release','git@example.invalid:fixture.git'])
+async def test_equivalent_configured_repository_identity_protects_app_download(tmp_path,reference):
+    client,cwd,config,path=await setup(tmp_path);root=Path(config['appHome'])/'foundation/cache/fixture';repo(root)
+    Path(config['home'],'settings.yaml').write_text('bundle: '+json.dumps(reference)+'\n')
+    try:
+        _,page=await scan(client,cwd)
+        downloaded=next(row for row in page['items'] if row['id']==digest(str(root))[:32])
+        assert downloaded['clearable'] is False
+        assert downloaded['usage']=='configured'
+        assert 'configured-source' in downloaded['references']
+    finally:await client.close()

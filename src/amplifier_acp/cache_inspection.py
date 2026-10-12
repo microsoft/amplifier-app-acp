@@ -29,6 +29,25 @@ def public_source(value):
         return urlunsplit((parsed.scheme,parsed.hostname or '',parsed.path,'',''))
     except ValueError:return '[unrecognized source]'
 
+def source_key(value):
+    """Conservative repository match across credentials, refs and transports.
+
+    This key may protect extra downloads, but never authorizes their removal.
+    It is deliberately separate from the redacted display label.
+    """
+    if not isinstance(value,str) or len(value)>8192:return None
+    value=value.removeprefix('git+')
+    if '://' not in value:
+        match=re.fullmatch(r'(?:[^/@:]+@)?([^/:]+):(.+)',value)
+        if not match:return None
+        value='ssh://'+match[1]+'/'+match[2]
+    try:
+        parsed=urlsplit(value)
+        if parsed.scheme not in {'https','http','ssh','git'} or not parsed.hostname:return None
+        path=parsed.path.rsplit('@',1)[0].rstrip('/').removesuffix('.git')
+        return (parsed.hostname.lower(),path)
+    except ValueError:return None
+
 def git(root,*args):
     environment={k:v for k,v in os.environ.items() if not k.startswith('GIT_')}
     environment.update(GIT_CONFIG_GLOBAL=os.devnull,GIT_CONFIG_NOSYSTEM='1',GIT_TERMINAL_PROMPT='0',GIT_OPTIONAL_LOCKS='0')
@@ -96,3 +115,27 @@ class Bounds:
                 self();self.entries+=1
                 if self.entries>100000:raise ValueError('Cold cache inventory exceeds100000entries')
                 yield Path(entry.path)
+
+def tree_proof(root, bounds):
+    """Bind a quarantine to exact app-owned bytes, including Git metadata."""
+    root=checked(root); rows=[]; total=0
+    def visit(path):
+        nonlocal total
+        bounds(); info=path.lstat()
+        if stat.S_ISLNK(info.st_mode):raise ValueError('Linked cache content is preserved')
+        relative=str(path.relative_to(root))
+        if stat.S_ISDIR(info.st_mode):
+            rows.append([relative,'directory',info.st_mode])
+            for child in sorted(bounds.children(path)):visit(child)
+        elif stat.S_ISREG(info.st_mode) and info.st_nlink==1:
+            before=file_stamp(path); hashed=hashlib.sha256()
+            with path.open('rb') as stream:
+                while chunk:=stream.read(1024*1024):
+                    bounds();total+=len(chunk)
+                    if total>2*1024**3:raise ValueError('Cache review exceeds 2 GiB')
+                    hashed.update(chunk)
+            if file_stamp(path)!=before:raise ValueError('Cache changed during review')
+            rows.append([relative,'file',before,hashed.hexdigest()])
+        else:raise ValueError('Linked or special cache content is preserved')
+    visit(root)
+    return {'digest':digest(rows),'bytes':total,'entries':len(rows)}
