@@ -83,3 +83,18 @@ def test_current_effort_and_default_remain_visible_without_advertised_choices(ca
     assert [row['value'] for row in option['options']]==[DEFAULT,current]
     assert list(efforts.values())==[{'instance':'personal','model':'alpha','effort':'deep'}]
     assert option['options'][1]['description']=='Current effective effort; not advertised for a new selection.'
+
+
+def test_disconnected_oauth_policy_is_not_a_model_but_group_can_be_discovered():
+    data={'effective':{'instance':'account','model':'latest'},'providers':[{'id':'account','authentication':{'status':'unauthenticated'},'info':{'capabilities':['auth:oauth_device_code'],'defaults':{'model':'latest (resolves lazily; falls back to invented)'}}}]}
+    options,mapping,_=project(data)
+    group=options[0]['options'][1]
+    assert group['options']==[] and mapping=={}
+    assert group['_meta']['amplifier.dev/native']['requiresSignIn'] is True
+    assert options[0]['currentValue']==DEFAULT
+    import jsonschema
+    schema=json.loads((Path(__file__).parent/'schema/acp-v1.json').read_text())
+    jsonschema.validate(options[0],{'$ref':'#/$defs/SessionConfigOption','$defs':schema['$defs']})
+    data['providers'][0]['authentication']['status']='authenticated'
+    data['providers'][0]['modelCatalog']={'state':'available','fresh':True,'models':[{'id':'actual'}]}
+    assert project(data)[0][0]['options'][1]['options'][0]['name']=='actual'

@@ -211,6 +211,25 @@ missing input origin stays unknown. Imported/native transcript roles never prove
 current human authorization; the host's exact admitted-message reader is the
 consent authority. No input is replayed to enrich missing metadata.
 
+`_amplifier/history/message` verifies an original message ID against the current
+revision and the completed context-clear archive chain. It streams records,
+checks preserved segment hashes and workspace scope, and refuses duplicates,
+unresolved clears or changed sources. A preserved source carries
+`historicalOnly:true`, `mutationAuthority:'none'` and a `preservedSource` receipt;
+it never restores cleared execution context. This lets a separately verified,
+previously imported memory retain its original quotation. Archive UI IDs remain
+viewing-only and do not become original source IDs or new human admission.
+
+`history.savedMessages.version:1` advertises the passive
+`_amplifier/history/saved-messages` read. It returns up to 12 saved assistant
+messages from the current source segment, with canonical IDs and 512-character
+text previews. It scans at most 2 MiB / 512 rows, excludes hidden and ephemeral
+content, and refuses changed sources, incomplete writes and backup substitution.
+It does not open a worker or mutate history. During an already-running turn,
+the normal `app_control` pre-tool boundary checkpoints commentary before
+`get_state {path:"/messages"}` requests those IDs. This permits exact output
+placement without treating an unsaved streaming part as a persisted message.
+
 `questionTurns:{version:1,completion:'settled',active:false}` advertises the
 host-admitted `question.submit` native operation. It uses the same ACP streaming
 collector and terminal settlement as scheduled turns. Active sessions return
@@ -363,6 +382,23 @@ bridge and explicitly resuming the same Native identity for a **new** turn;
 no original uncertain turn is replayed. Definite `active_request` / `owned_work`
 retirement refusals keep the existing handle usable.
 
+## Explicit administration settings owners
+
+The initialized administration peer advertises `admin.configurationTargets`
+only with the complete v1 global-only, workspace-bound, isolated-results marker.
+Provider, routing, module and source operations can then carry an exact global
+or opaque-workspace `configurationTarget`. The distribution must resolve the
+workspace through its catalog and authorized working directory before dispatch.
+Mixed session, path or scope selectors refuse before admission. Native returns
+the owner on every completed result; clients must not apply it to another owner.
+
+Global provider/routing reads use a global-only SetupManager. Workspace managers
+remain keyed by the authorized canonical folder, with separate sign-in attempts
+and a bounded cache that never evicts an active login. Existing selected-session
+administration is unchanged. This adds no settings database or worker route.
+`tests/test_configuration_target.py` covers actual initialize metadata, global
+inheritance, workspace isolation and invalid-selector refusal.
+
 ## Canonical naming metadata extension
 
 Negotiated `_amplifier/naming` accepts exact `sessionId`, canonical history `cwd`,
@@ -383,3 +419,74 @@ The public bridge and generic Host own title serialization and projection.
 Manual saves persist canonical Native metadata first; generation captures the
 Host title revision before its model call and commits only after both Host and
 Native revisions agree. These methods alone do not restore the composed UI.
+
+The optional naming `backfill` marker permits a trusted idle scheduler to name
+an unnamed discovered chat without starting its conversation worker. Its empty
+arguments cannot supply a prompt, provider, or arbitrary command identity. Native
+checks the canonical history, saved names and legacy opt-outs, takes a bounded
+first-user excerpt, and uses the default configured provider with no tools and
+a 256-token output limit. A durable attempt is claimed before the provider call;
+an interrupted attempt is never replayed for the same history and naming policy.
+Late results lose to renamed, disabled, changed or deleted conversations. The
+existing admin maintenance participant tracks the entire request. Background
+cadence, media idleness and canonical Host title projection belong to composition.
+
+Passive history readers may negotiate `history.missingWorkspaceRead.version: 1`.
+An explicit `readOnlyMissingWorkspace: true` reads an ordinary missing-folder
+history only when its canonical workspace and native identity exactly match
+bounded metadata. It rejects managed histories and symlink paths, creates no
+folder, starts no runtime, and grants no message mutation scope. Restoring the
+original directory returns the session to normal workspace validation.
+
+### Plan presentation
+
+Successful root-session `todo` receipts produce standard ACP `plan` snapshots.
+The same projection is reconstructed from paired canonical call/result rows on
+passive history reads. Proposed input, failed results and child-session plans
+do not replace the root plan. Lists are limited to 200 entries and 16,000 text
+characters. The adapter preserves optional active wording in entry
+`_meta["amplifier.dev/todo"].activeForm`; an unreadable latest successful receipt
+emits an empty plan with plan-level `unavailable: true` in that metadata. Generic
+ACP clients receive the empty replacement instead of a stale plan. This metadata
+is read-only presentation and grants no authority or execution.
+
+`tests/test_plan.py` covers accepted/failed/root/child behavior, bounded large
+live plans, and passive canonical reconstruction. Native history also recognizes
+Core's `tool` call-name field alongside flat and function-shaped calls.
+
+### Reviewed shared-history removal
+
+When recovery administration and stopped external writers are configured,
+`native.admin.maintenance.historyCleanup` advertises version 1. The trusted
+coordinator holds every configured product owner, then calls
+`maintenance.history.census` for an exact project or native conversation family.
+`maintenance.history.preview` binds that census and the held product-reference
+revision to a private, ten-minute inventory. `maintenance.history.remove`
+requires the original preview, owner revision and explicit confirmation identity.
+These operations never start an agent.
+
+The Native owner removes only selected canonical history, its external capture
+files, retained history revisions and Foundation checkpoints. Working directories,
+stable writer locks and original control receipts remain. Permanent tombstones
+prevent restart, copy or restore of removed or uncertain identities. After any
+possible effect, an interruption stays unknown; the original receipt can be read
+without replay, and another removal is refused. Product artifacts and indexes are
+separate owner responsibilities, not implicitly deleted by this contract.
+
+### Saved output message references and visual evidence
+
+`sessionLifecycle.outputReferences` version 1 lets the trusted Host include up to
+500 exact output references in an authorized fork. Native proves each source
+message and returns retained/omitted dispositions plus the copied canonical IDs.
+Host input/response witnesses bind the admitted input identity, public role and
+exact text digest; ambiguous repeats refuse before creating a target. Migrated
+Main display IDs additionally bind the native session and original row ordinal.
+No output bytes or new execution authority enter this protocol. The completed
+fork receipt retains this proof for acknowledgment recovery.
+
+When the composition advertises saved-output inspection, the existing tool
+adapter attaches actual verified pixels to the current model request. It checks
+selection, exact hashes and the active input again before transport; stale
+selection or input changes strip visual content and leave truthful text. No
+image generation or earlier user request is replayed. Tests cover exact fork
+boundaries, actual stdio copy and request-local image delivery.

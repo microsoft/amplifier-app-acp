@@ -23,16 +23,20 @@ def resource_root():
 
 
 def app_behaviors(settings):
-    # Explicit lists, including [], are authoritative shared Amplifier settings.
     bundle = settings.get("bundle", {})
-    if "app" in bundle:
-        return list(bundle["app"])
     metadata = settings.get("web_bundles", {})
     disabled = set(metadata.get("excluded", []))
     disabled.update(row.get("uri") for row in metadata.get("entries", [])
                     if row.get("enabled") is False)
     features=json.loads(os.environ.get('AMPLIFIER_ACP_HOST_FEATURES','{}'))
     enabled={SHELL_BEHAVIOR_URI:features.get('unifiedShell') is True,IMAGEGEN_BEHAVIOR_URI:features.get('imageGeneration') is True}
+    if "app" in bundle:
+        behaviors = list(bundle["app"])
+        # Unified's older saved lists predate image tools. Only the negotiated
+        # product host may add this default; explicit removal still wins.
+        if enabled[IMAGEGEN_BEHAVIOR_URI] and IMAGEGEN_BEHAVIOR_URI not in disabled and IMAGEGEN_BEHAVIOR_URI not in behaviors:
+            behaviors.append(IMAGEGEN_BEHAVIOR_URI)
+        return behaviors
     return [uri for uri in DEFAULT_BEHAVIORS if uri not in disabled and enabled[uri]]
 
 

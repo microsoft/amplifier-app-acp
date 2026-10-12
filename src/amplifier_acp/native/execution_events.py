@@ -140,8 +140,9 @@ def public_tool_detail(value):
 
 
 class ExecutionEvents:
-    def __init__(self, root_id, emit):
+    def __init__(self, root_id, emit, detail_directory=None):
         self.root_id, self.emit = root_id, emit
+        self.detail_directory = detail_directory
         self.producer_id = str(uuid.uuid4())
         self.turn_id = None
         self.calls = {}
@@ -149,6 +150,7 @@ class ExecutionEvents:
         self.last_foreground_provider = {}
         self.requests = weakref.WeakKeyDictionary()
         self.nodes = {}
+        self.plan_calls = {}
         self.admission_guard = None
         self.provider_wrappers = {}
         self.streaming_calls = set()
@@ -165,7 +167,14 @@ class ExecutionEvents:
                 if observed != child:
                     self.children[sid] = observed
                     self.publish(observed)
-        row = {**row, "revision": self.nodes.get(row["id"], {}).get("revision", 0) + 1}
+        row = {**self.nodes.get(row["id"], {}), **row, "revision": self.nodes.get(row["id"], {}).get("revision", 0) + 1}
+        # Each call carries its own small owner header. A delegate may have
+        # started in an earlier turn/page; history readers need no global body.
+        child = self.children.get(row.get("sessionId"))
+        if child and row.get("kind") in {"llm", "tool"}:
+            fields = ("id", "sessionId", "label", "provider", "model", "phase",
+                      "routing", "parentProvider", "runId", "workerId")
+            row["delegate"] = {key: child[key] for key in fields if key in child}
         row = {**row, "liveObservation": True}
         self.nodes[row["id"]] = row
         self.emit({"type": "execution.event", "event": dict(row)})
@@ -386,6 +395,47 @@ class ExecutionEvents:
             return wrapper
         return provider
 
+    def capture(self, row, event, data):
+        if self.detail_directory is None or event not in {'llm:request','llm:response'}:
+            return row
+        field = 'request' if event == 'llm:request' else 'response'
+        raw = data.get('raw_' + field, data.get('raw'))
+        if raw is None:
+            return row
+        # Capture only adapter-supplied wire records. Never reconstruct a request.
+        from .provider_recording import redact_request, MAX_CAPTURE_CHARS
+        from pathlib import Path
+        import hashlib, os
+        try:
+            prior = data.get(field + '_capture', data.get('request_capture', {}))
+            prior = prior if isinstance(prior, dict) else {}
+            limit = MAX_CAPTURE_CHARS
+            if type(prior.get('limit_chars')) is int and prior['limit_chars'] > 0:
+                limit = min(limit, prior['limit_chars'])
+            safe, truncated = redact_request(raw, limit=limit)
+            truncated = truncated or prior.get('truncated') is True
+            text = json.dumps(safe, ensure_ascii=False, indent=2)
+            body = text.encode()
+            if len(body) > 1000000:
+                marker = b'\n[capture limit]'
+                text = body[:1000000-len(marker)].decode('utf-8', errors='ignore') + marker.decode()
+                body = text.encode(); truncated = True
+            digest = hashlib.sha256(body).hexdigest()
+            directory = Path(self.detail_directory)
+            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            name = row['id'].removeprefix('llm:') + '.' + field + '.json'
+            temporary = directory / (name + '.' + str(uuid.uuid4()) + '.tmp')
+            with temporary.open('x') as stream:
+                os.chmod(temporary, 0o600)
+                stream.write(text)
+            temporary.replace(directory / name)
+            return {**row, field+'Detail': {'callId':row['id'], 'field':field,
+                'sha256':digest, 'length':len(text), 'lines':text.count('\n')+1},
+                field+'Capture':{'redacted':True,'truncated':truncated,'limit_chars':limit,'limit_bytes':1000000}}
+        except Exception:
+            # Diagnostic failure cannot affect generation or export unsanitized data.
+            return row
+
     def hook(self, sid, event, data):
         if data.get("session_id", sid) != sid:
             return
@@ -421,11 +471,24 @@ class ExecutionEvents:
                 detail["output"] = public_tool_detail(result)
             elif event == "tool:error" and "error" in data:
                 detail["output"] = public_tool_detail(data["error"])
+            if sid == self.root_id and row.get('label') == 'todo':
+                from amplifier_acp.plan import accepted_plan, proposed_arguments
+                if event == 'tool:pre':
+                    self.plan_calls[key] = proposed_arguments(data.get('tool_input'))
+                else:
+                    arguments = self.plan_calls.pop(key, None)
+                    if event == 'tool:post' and row['phase'] == 'completed':
+                        detail['plan'] = accepted_plan(arguments if arguments is not None else data.get('tool_input'), result)
             self.publish({**row, **detail})
         elif event in {"llm:request", "llm:response", "provider:retry"}:
             current = CURRENT_CALL.get()
             if current:
                 row = self.nodes.get(current)
+                if row:
+                    captured = self.capture(row, event, data)
+                    if captured != row:
+                        self.publish(captured)
+                        row = captured
                 if row and event == "provider:retry":
                     self.publish({**row,"phase":"retrying"})
                 elif row and current in self.streaming_calls and event == "llm:response" and data.get("usage") is not None:
@@ -459,13 +522,16 @@ class ExecutionEvents:
                 self.requests.pop(task, None)
             elif event == "provider:retry":
                 row["phase"] = "retrying"
-            self.publish(row)
+            self.publish(self.capture(row, event, data))
 
     def usage(self):
         calls = [row for row in self.nodes.values() if row["kind"] == "llm"]
         usages = [with_gross_tokens(row.get("usage", {})) for row in calls]
         totals = {key:sum(usage.get(key, 0) for usage in usages)
-                  for key in ("inputTokens", "outputTokens", "totalTokens", "cacheReadTokens", "cacheWriteTokens", "grossInputTokens", "grossTotalTokens")}
+                  for key in ("inputTokens", "outputTokens", "totalTokens", "cacheReadTokens", "cacheWriteTokens", "grossInputTokens", "grossTotalTokens", "reasoningTokens")}
+        totals["metricKnownCalls"] = {key:sum(key in usage for usage in usages) for key in totals}
+        totals["calls"] = len(calls)
+        totals["tokenUnknownCalls"] = sum(not any(key in usage for key in ("inputTokens","outputTokens","totalTokens")) for usage in usages)
         priced = [row for row in calls if "costUsd" in row.get("usage", {})]
         totals.update(costUsd=sum(row["usage"]["costUsd"] for row in priced) if priced else None,
                       costType="reported" if priced and len(priced) == len(calls) else "partial" if priced else "unavailable")

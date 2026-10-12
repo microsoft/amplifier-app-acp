@@ -26,7 +26,8 @@ MAX_DOCUMENT = 256 * 1024
 MODULE_KEYS = {"session", "providers", "tools", "hooks", "agents", "context", "spawn"}
 # Conversation profiles known to the host/ecosystem. Other roots are explicitly
 # registered through bundle.added (the standalone role in the management UI).
-STANDALONE_PROFILES = {"foundation", "anchors", "anchors-amp-dev", "amplifier-dev", "exp-delegation", "work"}
+from .host.config import PRECONFIGURED_BUNDLES
+STANDALONE_PROFILES = set(PRECONFIGURED_BUNDLES)
 SECRET_KEYS = {"api_key", "apikey", "token", "access_token", "refresh_token", "id_token", "auth_token", "secret", "client_secret", "password", "passwd", "authorization", "cookie", "cookies", "credentials", "private_key", "bearer_token"}
 
 
@@ -77,18 +78,25 @@ def validate_uri(uri: str) -> str:
     raise ValueError("Use a registered bundle name or an HTTPS Git bundle URI.")
 
 
-async def git(*args: str, cwd: Path | None = None, timeout: int = 60) -> bytes:
-    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1"}
+async def git(*args: str, cwd: Path | None = None, timeout: int = 60, _env=None) -> bytes:
+    from ..repository_access import repository_environment
+    env = repository_environment(_env if _env is not None else {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1"})
+    started = asyncio.get_running_loop().time()
     process = await asyncio.create_subprocess_exec("git", "-c", "protocol.file.allow=never", "-c", "protocol.ext.allow=never", *args,
         cwd=cwd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     try:
-        output, _ = await asyncio.wait_for(process.communicate(), timeout)
+        output, error = await asyncio.wait_for(process.communicate(), timeout)
     except BaseException:
         if process.returncode is None:
             process.kill()
             await process.wait()
         raise
     if process.returncode:
+        from ..repository_access import anonymous_retry_environment
+        retry = anonymous_retry_environment(('git', *args), env, output, error)
+        remaining = timeout - (asyncio.get_running_loop().time() - started)
+        if retry is not None and remaining > 0:
+            return await git(*args, cwd=cwd, timeout=remaining, _env=retry)
         raise ValueError("The Git repository or revision could not be read. Check access and the URL.")
     if len(output) > 8 * 1024 * 1024:
         raise ValueError("The repository index is too large to inspect safely.")
@@ -116,8 +124,14 @@ def document_metadata(raw: str, path: str) -> dict | None:
     description = str(info.get("description") or "")[:500]
     display_name = info.get("display_name")
     label = {"display_name": display_name.strip()[:200]} if isinstance(display_name, str) and display_name.strip() else {}
-    behavior = "behaviors" in PurePosixPath(path).parts or (PurePosixPath(path).name not in {"bundle.md", "bundle.yaml", "bundle.yml"} and "session" not in value)
-    return {"name": name, **label, "description": description, "kind": "behavior" if behavior else "standalone"}
+    session = value.get('session') or {}
+    def module(row):
+        return row if isinstance(row, str) else row.get('module') if isinstance(row, dict) else None
+    declared_session = isinstance(session, dict) and all(module(session.get(key)) for key in ('orchestrator', 'context'))
+    # Discovery has not resolved includes or host overlays. Say so instead of
+    # guessing completeness from directory or filename conventions.
+    kind = 'standalone' if declared_session else 'bundle' if value.get('includes') else 'behavior'
+    return {"name": name, **label, "description": description, "kind": kind}
 
 
 def catalog_metadata(config, registry, name):
@@ -176,7 +190,7 @@ def sanitize_export(value, path=(), secrets=None):
     return copy.deepcopy(value)
 
 
-def offered_profiles(config, registry=None):
+def profile_candidates(config):
     """The picker and updater share one current, app-level profile authority."""
     # Cache inventory is historical evidence, not current alias authority.
     # Runtime resolves roots through current settings/registrations only.
@@ -186,6 +200,15 @@ def offered_profiles(config, registry=None):
     disabled = {row.get('name') for row in entries
                 if row.get('role') == 'standalone' and row.get('enabled') is False}
     return sorted(names - disabled)
+
+
+def offered_profiles(config, registry=None):
+    from .profile_catalog import read_catalog
+    candidates = profile_candidates(config)
+    catalog = read_catalog(config, candidates)
+    return [name for name in candidates if catalog.get(name, {}).get('complete') is not False
+            and catalog.get(name, {}).get('supportedLoop') is not False]
+
 
 class BundleManager:
     def __init__(self, home: Path, *, store=None):
@@ -362,9 +385,17 @@ class BundleManager:
                 # registrations. Keep the capability catalog below unfiltered.
                 names = offered_profiles(config, registry)
                 from .bundle_selection import catalog_entry
-                catalog = sorted((catalog_entry(name, catalog_metadata(config, registry, name)) for name in names),
+                catalog = sorted(({**catalog_entry(name, catalog_metadata(config, registry, name)),
+                                   'source': (config.resolve_source(config.registrations.get(name) or (registry.get(name) or {}).get('uri') or name) or config.registrations.get(name) or (registry.get(name) or {}).get('uri') or name)} for name in names),
                                  key=lambda row: (row['label'].casefold(), row['name'].casefold(), row['name']))
-                return {"bundles": self.public_entries(settings), "registeredBundles": catalog}
+                from .profile_catalog import read_catalog
+                facts = read_catalog(config, profile_candidates(config))
+                entries = self.public_entries(settings)
+                for entry in entries:
+                    if entry['role'] == 'standalone' and entry['name'] in facts:
+                        entry['profileComplete'] = facts[entry['name']]['complete']
+                        entry['profileSupported'] = facts[entry['name']].get('supportedLoop')
+                return {"bundles": entries, "registeredBundles": catalog}
             def mutate(current):
                 entries = self.entries(current)
                 excluded = set(current.get("web_bundles", {}).get("excluded", []))
@@ -374,13 +405,19 @@ class BundleManager:
                     if role not in {"behavior", "standalone"}:
                         raise ValueError("Choose behavior or standalone.")
                     name = args.get("name") or PurePosixPath(uri.split("#subdirectory=")[-1]).stem
-                    name = re.sub(r"[^A-Za-z0-9_-]+", "-", name).strip("-")[:100] or "bundle"
+                    # Standalone names are IDs, not display labels. Preserve
+                    # existing alias spelling on reads; new registrations use
+                    # lowercase kebab-case so labels cannot create casing traps.
+                    name = (re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:100].rstrip("-") or "bundle"
+                            if role == "standalone" else
+                            re.sub(r"[^A-Za-z0-9_-]+", "-", name).strip("-")[:100] or "bundle")
                     existing = next((row for row in entries if row["uri"] == uri and row["role"] == role), None)
+                    if role == "standalone" and any(row is not existing and row["role"] == role
+                            and row["name"].casefold() == name for row in entries):
+                        raise ValueError("That standalone bundle ID is already registered; choose another lowercase ID.")
                     if existing:
                         existing.update(enabled=True, name=name)
                     else:
-                        if role == "standalone" and any(row["role"] == role and row["name"] == name for row in entries):
-                            raise ValueError("That standalone bundle name is already registered; choose another name.")
                         entries.append({"id": uuid.uuid4().hex, "uri": uri, "name": name, "role": role, "enabled": True})
                     if review is not None:
                         saved = next(row for row in entries if row["uri"] == uri and row["role"] == role)

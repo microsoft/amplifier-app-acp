@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib,json,os,sqlite3,time,uuid
 from pathlib import Path
 import yaml
-from .cache_inspection import Bounds,bytecode,digest,inspect_git,public_source,read
+from .cache_inspection import Bounds,bytecode,digest,inspect_git,public_source,read,source_key,tree_proof
 from .maintenance_gate import Gate,checked
 from .private_store_snapshot import require_admin
 
@@ -42,7 +42,7 @@ class Caches:
             refs.append((kind,values))
             if kind.startswith('configured'):
                 for v in values:
-                    if v.startswith(('git+https://','https://','http://','ssh://','file://','/')):
+                    if source_key(v) is not None or v.startswith(('file://','/')):
                         configured.append((kind,v))
         for path,kind in [(owner.home/'settings.yaml','configured-shared'),(owner.app/'admin-settings.yaml','configured-native'),(Path(workspace)/'.amplifier/settings.yaml','configured-project'),(Path(workspace)/'.amplifier/settings.local.yaml','configured-local'),(owner.app/'foundation/registry.json','retained-registry'),(owner.app/'updates/active.json','generation-pointers')]:document(path,kind)
         if owner.config.get('runtimeManifest'):document(Path(owner.config['runtimeManifest']),'configured-runtime-manifest')
@@ -99,24 +99,29 @@ class Caches:
         identity=digest(str(path))[:32];base={'id':identity,'kind':'cached-source','label':path.name,'location':label,'usage':'unknown','references':[],'clearable':False,'reason':'Usage is unknown; source retirement is not authorized'}
         if kind!='git':return [{**base,'kind':'source-binding' if kind=='binding' else 'unrecognized-cache','reason':'Retained binding is source authority' if kind=='binding' else 'Unrecognized cache format or linked content; preserved'}]
         try:
-            metadata=json.loads(read(path/'.amplifier_cache_meta.json'));url=metadata.get('git_url');revision=metadata.get('commit');ref=metadata.get('ref');public=public_source(url)
+            metadata=json.loads(read(path/'.amplifier_cache_meta.json'));url=metadata.get('git_url');revision=metadata.get('commit');ref=metadata.get('ref');public=public_source(url);repository=source_key(url)
             if not isinstance(url,str) or not isinstance(revision,str):raise ValueError('Missing source identity')
             facts,derived=inspect_git(path,bounds)
             if facts['head']!=revision:raise ValueError('Cache metadata disagrees with Git identity')
             base.update(source={'url':public,'ref':ref if isinstance(ref,str) and len(ref)<=200 else None,'revision':revision},git=facts)
             evidence=[]
             for origin,values in refs['facts']:
-                if any(v==str(path) or v.startswith(str(path)+'/') or v==url or v.startswith('git+'+url+'@') or v==revision for v in values):evidence.append(origin)
+                if any(v==str(path) or v.startswith(str(path)+'/') or v==url or v.startswith('git+'+url+'@') or repository is not None and source_key(v)==repository or v==revision for v in values):evidence.append(origin)
             if label.startswith('generation'):evidence.append('retained-generation')
             if metadata.get('immutable'):evidence.append('shared-immutable-source')
             if metadata.get('buildInput'):evidence.append('shared-build-input')
-            if any(v==str(path) or v==url or v.startswith('git+'+url+'@') for _,v in refs['configured']):evidence.append('configured-source')
+            if any(v==str(path) or v==url or v.startswith('git+'+url+'@') or repository is not None and source_key(v)==repository for _,v in refs['configured']):evidence.append('configured-source')
             base.update(references=sorted(set(evidence))[:20],referencesTruncated=len(set(evidence))>20,usage='configured' if 'configured-source' in evidence else 'referenced' if evidence else 'unknown')
             base['reason']='Source roots remain retained; global consumer retirement is unproven'
             if facts['dirty'] or facts['untracked']:base['reason']='Local modifications or untracked/ignored content are preserved'
             if facts['unpushed']=='present':base['reason']='Local commits not reachable from the local upstream are preserved'
             rows=[base]
             frozen=any(e.startswith('retained-runtime') or e in {'retained-generation','shared-immutable-source','shared-build-input'} for e in evidence)
+            # Quarantine only unreferenced, clean app-owned downloads. This is
+            # reversible cache eviction, never shared source-store retirement.
+            if owned and repository is not None and not evidence and not refs['issues'] and not facts['dirty'] and not facts['untracked'] and facts['unpushed']=='none-local-proof':
+                proof=tree_proof(path,bounds)
+                rows[0]={**base,'kind':'app-source-cache','clearable':True,'bytes':proof['bytes'],'reason':'App-owned downloaded copy; clearing moves it intact to a private recovery folder','_private':{'sourceRoot':str(path),'treeProof':proof,'git':facts}}
             for proof in derived:
                 bounds();relative=str(Path(proof['path']).relative_to(path));clearable=owned and not frozen and not refs['issues'] and not facts['dirty'] and not facts['untracked'] and facts['unpushed']=='none-local-proof'
                 rows.append({'id':digest(proof['path'])[:32],'kind':'python-bytecode','label':relative,'location':label+'/'+path.name+'/'+relative,'usage':'derived','references':base['references'],'clearable':clearable,'reason':'Exactly reconstructible from unchanged retained Python source' if clearable else 'Referenced, modified, externally owned, or unverified source; derived bytes retained','bytes':proof['bytes'],'_private':{'proof':proof,'sourceRoot':str(path),'rootLabel':label,'sourceIdentity':base.get('source'),'git':facts}})
@@ -148,7 +153,7 @@ class Caches:
                 after=self.references(workspace,bounds)
                 if after['revision']!=refs['revision']:raise ValueError('Source reference authority changed during the cold scan')
                 bounds()
-                body={'scanId':scan,'revision':hasher.hexdigest(),'createdAt':created,'expiresAt':created+900,'counts':{k:n for k,n in db.execute("SELECT json_extract(body,'$.kind'),count(*) FROM cache_entries WHERE scan=? GROUP BY json_extract(body,'$.kind')",(scan,))},'coverage':{'sourceRetirement':False,'canonicalHistoryScanned':False,'externalUsage':'unknown','referenceIssues':refs['issues'][:50],'referenceIssuesTruncated':len(refs['issues'])>50,'clearKinds':['python-bytecode'],'retainedGenerations':len(refs['generations'])},'referenceRevision':refs['revision']}
+                body={'scanId':scan,'revision':hasher.hexdigest(),'createdAt':created,'expiresAt':created+900,'counts':{k:n for k,n in db.execute("SELECT json_extract(body,'$.kind'),count(*) FROM cache_entries WHERE scan=? GROUP BY json_extract(body,'$.kind')",(scan,))},'coverage':{'sourceRetirement':False,'canonicalHistoryScanned':False,'externalUsage':'unknown','referenceIssues':refs['issues'][:50],'referenceIssuesTruncated':len(refs['issues'])>50,'clearKinds':['python-bytecode','app-source-cache'],'retainedGenerations':len(refs['generations'])},'referenceRevision':refs['revision']}
                 db.execute('INSERT INTO cache_scans VALUES(?,?,?)',(scan,workspace,json.dumps(body)))
         return body
 
@@ -179,7 +184,10 @@ class Caches:
                 value=json.loads(row[0])
                 if not value['clearable']:raise CacheRefused('Selected cache entry is not proven disposable; original retained')
                 selected.append(value)
-            preview={'scanId':body['scanId'],'revision':body['revision'],'referenceRevision':body['referenceRevision'],'expiresAt':min(body['expiresAt'],time.time()+300),'items':selected,'bytes':sum(r['bytes'] for r in selected),'coverage':'verified-native-owned-bytecode-only','sourceDirectoriesRemoved':0,'canonicalFilesChanged':0}
+            quarantines=[r for r in selected if r['kind']=='app-source-cache']
+            for cached in quarantines:
+                if any(r['kind']=='python-bytecode' and r['_private']['sourceRoot']==cached['_private']['sourceRoot'] for r in selected):raise CacheRefused('Select a cache folder or its generated files, not both')
+            preview={'scanId':body['scanId'],'revision':body['revision'],'referenceRevision':body['referenceRevision'],'expiresAt':min(body['expiresAt'],time.time()+300),'items':selected,'bytes':sum(r['bytes'] for r in selected),'coverage':'verified-native-owned-cache-quarantine' if quarantines else 'verified-native-owned-bytecode-only','sourceDirectoriesRemoved':0,'canonicalFilesChanged':0}
             hashed=digest(preview);db.execute('INSERT OR IGNORE INTO cache_previews VALUES(?,?,?)',(hashed,workspace,json.dumps(preview)))
         return {'previewHash':hashed,**{k:v for k,v in preview.items() if k!='items'},'items':[{k:v for k,v in row.items() if k!='_private'} for row in selected]}
 
@@ -192,14 +200,19 @@ class Caches:
         if not row or row[0]!=workspace:raise CacheRefused('Exact reviewed cache preview is unavailable')
         body=json.loads(row[1])
         if digest(body)!=args['previewHash'] or time.time()>=body['expiresAt']:raise CacheRefused('Cache review expired or changed')
-        removed=[];bounds=Bounds(owner.ensure_open,120)
+        removed=[];effect_attempted=False;bounds=Bounds(owner.ensure_open,120)
         with Gate(owner.config,exclusive=True):
             try:
                 if require_admin(owner)!=authority:raise CacheRefused('Native administration lease changed')
                 refs=self.references(workspace,bounds)
                 if refs['revision']!=body['referenceRevision']:raise CacheRefused('Reference authority changed after review')
                 for value in body['items']:
-                    bounds();private=value['_private'];path=Path(private['proof']['path']);root=Path(private['sourceRoot'])
+                    bounds();private=value['_private'];root=Path(private['sourceRoot'])
+                    if value['kind']=='app-source-cache':
+                        if not root.is_relative_to(checked(owner.app/'foundation/cache')) or root==owner.app/'foundation/cache':raise CacheRefused('Cache is outside the app-owned download directory')
+                        if tree_proof(root,bounds)!=private['treeProof']:raise CacheRefused('Downloaded cache changed after review')
+                        continue
+                    path=Path(private['proof']['path'])
                     if bytecode(path)!=private['proof']:raise CacheRefused('Selected derived file or source changed after review')
                     facts,derived=inspect_git(root,bounds)
                     if facts!=private['git']:raise CacheRefused('Source Git identity changed after review')
@@ -207,15 +220,37 @@ class Caches:
                 # Only after every file and reference preflights successfully do
                 # any bytes disappear. Parent receipt was persisted beforehand.
                 for value in body['items']:
-                    bounds();private=value['_private'];path=Path(private['proof']['path'])
+                    bounds();private=value['_private']
+                    if value['kind']=='app-source-cache':
+                        root=checked(Path(private['sourceRoot']))
+                        if tree_proof(root,bounds)!=private['treeProof']:raise ValueError('Downloaded cache changed during clearing')
+                        recovery=checked(owner.app/'maintenance/cache-recovery'/digest(args['commandId']))
+                        recovery.mkdir(parents=True,mode=0o700,exist_ok=True)
+                        target=checked(recovery/value['id'])
+                        if target.exists():raise ValueError('Original cache recovery entry already exists; inspect without replay')
+                        # Same-filesystem rename preserves all bytes and permissions.
+                        # Its destination is derivable even after a lost reply.
+                        effect_attempted=True
+                        root.rename(target);removed.append(value['id'])
+                        for directory in (root.parent,recovery):
+                            fd=os.open(directory,os.O_RDONLY)
+                            try:os.fsync(fd)
+                            finally:os.close(fd)
+                        continue
+                    path=Path(private['proof']['path'])
                     if bytecode(path)!=private['proof']:raise ValueError('Derived bytes changed during clearing')
+                    effect_attempted=True
                     path.unlink();removed.append(value['id'])
                     fd=os.open(path.parent,os.O_RDONLY)
                     try:os.fsync(fd)
                     finally:os.close(fd)
             except Exception as error:
-                if not removed:
+                if not effect_attempted:
                     if isinstance(error,CacheRefused):raise
                     raise CacheRefused('Cache preflight refused; original files retained') from None
                 raise
-        return {'removedIds':removed,'removedBytes':body['bytes'],'sourceDirectoriesRemoved':0,'canonicalFilesChanged':0,'coverage':body['coverage'],'replayed':False}
+        result={'removedIds':removed,'removedBytes':body['bytes'],'sourceDirectoriesRemoved':0,'canonicalFilesChanged':0,'coverage':body['coverage'],'replayed':False}
+        if body['coverage']=='verified-native-owned-cache-quarantine':
+            result['recoveryFolder']=str(owner.app/'maintenance/cache-recovery'/digest(args['commandId']))
+            result['quarantined']=[{'id':r['id'],'originalPath':r['_private']['sourceRoot'],'savedName':r['id']} for r in body['items'] if r['kind']=='app-source-cache']
+        return result

@@ -5,15 +5,16 @@ import json
 import os
 from pathlib import Path
 
+from .provider_recording_policy import OPERATIONS as RECORDING_OPERATIONS
 from .generations import OPERATIONS as GENERATION_OPERATIONS
 from .maintenance import OPERATIONS as MAINTENANCE_OPERATIONS
 from .history_import import OPERATIONS as HISTORY_IMPORT_OPERATIONS
 from .voice_preferences import OPERATIONS as VOICE_PREFERENCE_OPERATIONS
 from .permissions import OPERATIONS as PERMISSION_OPERATIONS
 
-OPERATIONS=GENERATION_OPERATIONS | MAINTENANCE_OPERATIONS | HISTORY_IMPORT_OPERATIONS | VOICE_PREFERENCE_OPERATIONS | PERMISSION_OPERATIONS | {
- 'voice.configuration','voice.credential','voice.configure',
- 'providers.list','providers.schema','providers.models','providers.test','providers.testMessage','providers.credentials',
+OPERATIONS=RECORDING_OPERATIONS | GENERATION_OPERATIONS | MAINTENANCE_OPERATIONS | HISTORY_IMPORT_OPERATIONS | VOICE_PREFERENCE_OPERATIONS | PERMISSION_OPERATIONS | {
+ 'storage.roots','voice.configuration','voice.credential','voice.configure',
+ 'providers.imageModels','providers.configureImages','providers.list','providers.schema','providers.models','providers.test','providers.testMessage','providers.credentials',
  'providers.save','providers.remove','providers.move','providers.reorder','providers.finishSetup','providers.login','providers.loginStatus','providers.loginCancel',
  'routing.list','routing.show','routing.save','routing.use','modules.list','modules.save','modules.remove','modules.validate',
  'sources.list','sources.save','sources.remove','sources.validate','bundles.list','bundles.add','bundles.remove','bundles.toggle',
@@ -36,13 +37,14 @@ class AdminPreflightRefusal(ValueError):
   if isinstance(operation,str) and operation in OPERATIONS:self.data['operation']=operation
 
 class Administration:
- def __init__(self,config,on_idle=None):
+ def __init__(self,config,on_idle=None,on_generations_changed=None):
   from .preparation_policy import configure as configure_preparation
   configure_preparation(config)
   from .module_sources import configure
   configure(config)
   self.on_idle=on_idle
-  self.config=config;self.lock=asyncio.Lock();self.setup=None;self.bundles=None;self.registry=None;self.background_gates={}
+  self.on_generations_changed=on_generations_changed
+  self.config=config;self.lock=asyncio.Lock();self.setup=None;self.bundles=None;self.registry=None;self.background_gates={};self.configuration_managers={}
   from .admin_lifecycle import AdminLifecycle
   self.lifecycle=AdminLifecycle(self);self.effects=set();self.requests=set()
   self.roots=[Path(p).expanduser().resolve(strict=True) for p in config.get('adminWorkspaceRoots',[])]
@@ -74,6 +76,7 @@ class Administration:
   # Validate all request authority before imports, files, probes or network effects.
   workspace=self.workspace(cwd)
   if operation not in OPERATIONS:raise ValueError('Unknown native administration operation.')
+  if operation in RECORDING_OPERATIONS and self.config.get('adminProviderRecording') is not True:raise AdminLauncherRefusal('Provider recording requires trusted launcher enablement.',operation,'adminProviderRecording')
   if operation in PERMISSION_OPERATIONS and self.config.get('adminPermissions') is not True:raise AdminLauncherRefusal('File-access changes require explicit trusted launcher enablement.',operation,'adminPermissions')
   if operation in VOICE_PREFERENCE_OPERATIONS and self.config.get('adminVoicePreferences') is not True:raise AdminLauncherRefusal('Voice preference changes require explicit trusted launcher enablement.',operation,'adminVoicePreferences')
   if operation in HISTORY_IMPORT_OPERATIONS and self.config.get('adminHistoryImport') is not True:raise AdminLauncherRefusal('History import requires explicit trusted launcher enablement.',operation,'adminHistoryImport')
@@ -81,7 +84,12 @@ class Administration:
   if operation in GENERATION_OPERATIONS and self.config.get('adminGenerations') is not True:raise AdminLauncherRefusal('Native generation maintenance requires explicit trusted launcher enablement.',operation,'adminGenerations')
   if operation in {'voice.credential','voice.configure'} and self.config.get('adminVoiceCredentials') is not True:raise AdminLauncherRefusal('Voice credentials require explicit trusted launcher enablement.',operation,'adminVoiceCredentials')
   if not isinstance(args,dict):raise ValueError('Administration args must be an object.')
+  from .configuration_target import validate as validate_configuration_target
+  validate_configuration_target(operation,args)
   if any(key in args for key in ('home','appHome','sessionId','session_id')) or 'cwd' in args and operation!='maintenance.reset.preview':raise ValueError('Native homes and session identity are launcher-owned.')
+  if operation in {'providers.imageModels','providers.configureImages'}:
+   from .image_setup_contract import validate
+   validate(operation,{k:v for k,v in args.items() if k!='configurationTarget'})
   if args.get('workspace') and self.workspace(args['workspace'])!=workspace:raise ValueError('Workspace selector disagrees with authorized cwd.')
   settings_dir=Path(workspace)/'.amplifier'
   if settings_dir.exists() and not settings_dir.resolve().is_relative_to(Path(workspace)):
@@ -107,6 +115,18 @@ class Administration:
    raise
   finally:self.effects.discard(task);self.requests.discard(request);self.lifecycle.leave(ticket)
  async def execute(self,workspace,operation,args):
+  if operation=='storage.roots':
+   if args:raise ValueError('Storage roots are launcher-owned; no selectors are accepted')
+   self.initialize()
+   from .native.session_files import amplifier_home
+   from .storage_roots import storage_roots
+   return storage_roots(self.home.resolve(),amplifier_home().resolve())
+  if operation in RECORDING_OPERATIONS:
+   from .provider_recording_policy import ProviderRecording
+   from .maintenance_gate import Gate
+   owner=ProviderRecording(self.config)
+   if operation!='provider.recording.configure':return owner.perform(operation,args)
+   with Gate(self.config):return owner.perform(operation,args)
   if operation=='bundle.receipt':
    from .bundle_commands import BundleCommands
    if set(args)!={'commandId'}:raise ValueError('Exact bundle receipt commandId required')
@@ -151,7 +171,7 @@ class Administration:
    finally:
     # Interactive sign-in outlives its initial request and can later commit
     # settings. Retain it even if its initial presentation callback failed.
-    for row in getattr(self.setup,'logins',{}).values():
+    for row in [row for manager in [self.setup,*self.configuration_managers.values()] for row in getattr(manager,'logins',{}).values()]:
      task=row.get('task')
      if task is not None and not task.done() and task not in self.background_gates:
       from .admin_lifecycle import AdminGate
@@ -167,18 +187,32 @@ class Administration:
   if operation in GENERATION_OPERATIONS:
    self.initialize()
    from .generations import Generations
-   if not hasattr(self,'generations'):self.generations=Generations(self.home,self.config)
+   if not hasattr(self,'generations'):self.generations=Generations(self.home,self.config,self.on_generations_changed)
    result=await self.generations.perform(workspace,operation,args)
    if len(json.dumps(result).encode())>768*1024:raise ValueError('Native generation result exceeds bounded representation limit.')
    return result
   async with self.lock:
    self.initialize();values={**args,'workspace':workspace}
+   target=values.pop('configurationTarget',None);setup=self.setup
+   if target:
+    from .native.setup import SetupManager
+    values.setdefault('scope','global' if target['kind']=='global' else 'local')
+    # Separate provider probes and sign-in attempts by effective configuration
+    # owner. The opaque workspace ID never supplies filesystem authority.
+    key='global' if target['kind']=='global' else workspace
+    setup=self.configuration_managers.get(key)
+    if setup is None:
+     if len(self.configuration_managers)>=32:
+      idle=next((k for k,m in self.configuration_managers.items() if not any(r.get('task') is not None and not r['task'].done() for r in m.logins.values())),None)
+      if idle is None:raise ValueError('Finish a pending sign-in before opening more configuration owners.')
+      await self.configuration_managers.pop(idle).close()
+     setup=SetupManager(self.home,global_only=target['kind']=='global');self.configuration_managers[key]=setup
    if operation.startswith('voice.'):
     from .native.voice_admin import perform
     result=perform(self.setup,workspace,operation,args,preferences_access=self.config.get('adminVoicePreferences') is True)
    elif operation.startswith(('providers.','routing.')):
-    result=await self.setup.perform(operation,values)
-    if operation=='providers.loginStatus':result.update(providers=self.setup.provider_rows(workspace),providersWorkspace=workspace)
+    result=await setup.perform(operation,values)
+    if operation=='providers.loginStatus':result.update(providers=setup.provider_rows(workspace),providersWorkspace=workspace)
    elif operation.startswith(('modules.','sources.')):result=await self.registry.perform(operation,values)
    elif operation=='configuration.defaults':
     from .native.draft_defaults import resolve_defaults
@@ -203,6 +237,7 @@ class Administration:
     if operation=='bundles.list':
      from .native.bundle_selection import defaults
      result['bundleDefaults']=defaults(self.home,workspace,self.app_bundle())
+   if target:result={**result,'configurationTarget':target}
    if len(json.dumps(result).encode())>768*1024:raise ValueError('Native administration result exceeds bounded representation limit.')
    return result
  async def close(self):
@@ -210,6 +245,7 @@ class Administration:
   if self.requests:await asyncio.gather(*list(self.requests),return_exceptions=True)
   if hasattr(self,'maintenance'):await self.maintenance.close()
   if self.setup:await self.setup.close()
+  for manager in self.configuration_managers.values():await manager.close()
   from .maintenance import release_all
   for gates in list(self.background_gates.values()):release_all(gates)
   self.background_gates.clear()

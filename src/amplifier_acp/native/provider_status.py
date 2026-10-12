@@ -13,6 +13,20 @@ AUTH_CAPABILITIES = frozenset({"auth:oauth_device_code", "auth:oauth_pkce"})
 AUTH_STATES = frozenset({"authenticated", "expired", "unauthenticated"})
 
 
+def catalog_check(models):
+    """Describe list_models without inventing network or inference evidence.
+
+    The provider contract allows live, cached, static, and empty catalogs. A
+    successful return establishes only that the catalog API returned a list.
+    Keep reachable unknown; only an explicit inference test can verify a reply.
+    """
+    if not isinstance(models, (list, tuple)):
+        raise ValueError("Provider model catalog must be a list")
+    return {"catalogAvailable": True, "reachable": None,
+            "modelCount": len(models), "method": "provider.list_models",
+            "inferenceVerified": False}
+
+
 def authentication_status(provider, info):
     """Return (public observation or None, supported) without auth effects.
 

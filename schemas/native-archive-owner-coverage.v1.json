@@ -13,7 +13,7 @@
   "properties": {
     "included": {
       "type": "array",
-      "maxItems": 4,
+      "maxItems": 5,
       "items": {
         "type": "object",
         "required": [
@@ -31,14 +31,16 @@
               "native-import-records",
               "native-preference-receipts",
               "native-maintenance-records",
-              "native-retained-archives"
+              "native-retained-archives",
+              "native-recording-receipts"
             ]
           },
           "owner": {
             "enum": [
               "native-history-import",
               "native-voice-preferences",
-              "native-maintenance"
+              "native-maintenance",
+              "native-provider-recording"
             ]
           },
           "sourceRevision": {
@@ -189,7 +191,8 @@
             "enum": [
               "native-history-import",
               "native-voice-preferences",
-              "native-maintenance"
+              "native-maintenance",
+              "native-provider-recording"
             ]
           },
           "part": {
@@ -197,7 +200,8 @@
               "native-import-records",
               "native-preference-receipts",
               "native-maintenance-records",
-              "native-retained-archives"
+              "native-retained-archives",
+              "native-recording-receipts"
             ]
           },
           "reason": {
@@ -283,7 +287,8 @@
               "native-import-records",
               "native-preference-receipts",
               "native-maintenance-records",
-              "native-retained-archives"
+              "native-retained-archives",
+              "native-recording-receipts"
             ]
           }
         },

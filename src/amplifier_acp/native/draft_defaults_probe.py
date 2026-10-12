@@ -23,7 +23,9 @@ async def query(request):
     while not existing.is_dir() and existing.parent!=existing:existing=existing.parent
     config=load_config(existing,home=request['home'],global_only=bool(request.get('globalOnly')))
     config.workspace=workspace
-    _,bundle,_=await load_root_bundle(config,request['bundle'],execution_workspace=workspace)
+    from .host.bundle_paths import canonical_bundle_reference
+    bundle_identity=canonical_bundle_reference(config,request['bundle'])
+    _,bundle,_=await load_root_bundle(config,bundle_identity,execution_workspace=workspace)
     # Compose with normal application policy, then prepare only enabled root
     # provider sources. Metadata must support the same local/community sources
     # as a native mount without constructing a conversation, hooks or tools.
@@ -77,12 +79,15 @@ async def query(request):
         cls,values,module=constructs[selected]
         provider=construct_provider(cls,values)
         try:
-            try:return {'initialOptions':options(draft,rows,await discover(provider,selected,module))}
+            try:return {'initialOptions':options(draft,rows,await discover(provider,selected,module)),'bundleIdentity':bundle_identity}
             except Refused:return {'selectionRefused':True}
         finally:await close_provider(provider)
     first=rows[0] if rows else {}
     defaults=first.get('info',{}).get('defaults',{})
-    return {'providers':rows,'effective':{'instance':first.get('id'),'model':defaults.get('model') or defaults.get('default_model'),'effort':defaults.get('reasoning_effort') or first.get('effort')}}
+    from .bundle_selection import catalog_entry
+    name=getattr(bundle,'name',None)
+    label=catalog_entry(name)['label'] if isinstance(name,str) and 0<len(name)<=200 and '://' not in name else 'Custom bundle'
+    return {'bundleIdentity':bundle_identity,'bundleLabel':label,'providers':rows,'effective':{'instance':first.get('id'),'model':defaults.get('model') or defaults.get('default_model'),'effort':defaults.get('reasoning_effort') or first.get('effort')}}
 
 def main():
     output=os.fdopen(os.dup(sys.stdout.fileno()),'w')

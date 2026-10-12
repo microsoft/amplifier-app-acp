@@ -22,7 +22,11 @@ OPERATIONS={'maintenance.preview','maintenance.acquire','maintenance.snapshot',
 CACHE_OPERATIONS={'maintenance.cache.scan','maintenance.cache.page','maintenance.cache.preview','maintenance.cache.clear'}
 CAPTURE_OPERATIONS={'maintenance.capture.acquire','maintenance.capture.inspect','maintenance.capture.release'}
 from .app_reset import FIELDS as APP_RESET_FIELDS
-OPERATIONS |= CACHE_OPERATIONS | CAPTURE_OPERATIONS | set(APP_RESET_FIELDS)
+from .bundle_reference_repair import FIELDS as BUNDLE_REFERENCE_FIELDS
+from .workspace_cleanup import FIELDS as WORKSPACE_CLEANUP_FIELDS
+from .backup_cleanup import FIELDS as BACKUP_CLEANUP_FIELDS
+from .history_cleanup import FIELDS as HISTORY_CLEANUP_FIELDS
+OPERATIONS |= CACHE_OPERATIONS | CAPTURE_OPERATIONS | set(APP_RESET_FIELDS) | set(BUNDLE_REFERENCE_FIELDS) | set(WORKSPACE_CLEANUP_FIELDS) | set(BACKUP_CLEANUP_FIELDS) | set(HISTORY_CLEANUP_FIELDS)
 PARTS={'session-history','session-state','native-settings'}
 CHUNK=256*1024
 MAX_FILES=2048
@@ -453,10 +457,31 @@ class Maintenance:
         from .cache_maintenance import FIELDS as CACHE_FIELDS
         fields.update(CACHE_FIELDS)
         fields.update(APP_RESET_FIELDS)
+        fields.update(BUNDLE_REFERENCE_FIELDS)
+        fields.update(WORKSPACE_CLEANUP_FIELDS)
+        fields.update(BACKUP_CLEANUP_FIELDS)
+        fields.update(HISTORY_CLEANUP_FIELDS)
         from .capture_scope import FIELDS as CAPTURE_FIELDS
         fields.update(CAPTURE_FIELDS)
         if fields[operation] is not None and set(args)-fields[operation]:raise ValueError('Unsupported maintenance operation fields')
         async with self.lock:
+            if operation in HISTORY_CLEANUP_FIELDS and not hasattr(self,'history_cleanup'):
+                from .history_cleanup import HistoryCleanup
+                self.history_cleanup=HistoryCleanup(self)
+            if operation in {'maintenance.history.census','maintenance.history.preview'}:return await self.run(getattr(self.history_cleanup,operation.rsplit('.',1)[1]),workspace,args)
+            if operation in BACKUP_CLEANUP_FIELDS and not hasattr(self,'backups'):
+                from .backup_cleanup import Backups
+                self.backups=Backups(self)
+            if operation in {'maintenance.backups.inspect','maintenance.backups.preview'}:return await self.run(getattr(self.backups,operation.rsplit('.',1)[1]),workspace,args)
+            if operation in WORKSPACE_CLEANUP_FIELDS and not hasattr(self,'workspace_cleanup'):
+                from .workspace_cleanup import WorkspaceCleanup
+                self.workspace_cleanup=WorkspaceCleanup(self)
+            if operation=='maintenance.workspace.preview':return await self.run(self.workspace_cleanup.preview,workspace,args)
+            if operation in BUNDLE_REFERENCE_FIELDS and not hasattr(self,'bundle_references'):
+                from .bundle_reference_repair import BundleReferences
+                self.bundle_references=BundleReferences(self)
+            if operation in {'maintenance.bundleReferences.preview','maintenance.bundleReferences.page'}:
+                return await self.run(getattr(self.bundle_references,operation.rsplit('.',1)[1]),workspace,args)
             if operation in APP_RESET_FIELDS and not hasattr(self,'app_reset'):
                 from .app_reset import AppReset
                 self.app_reset=AppReset(self)
@@ -494,7 +519,11 @@ class Maintenance:
                 if prior[1]['state']=='refused':result.update(accepted=False,executed=False)
                 return result
             try:
-                if operation in APP_RESET_FIELDS:result=await self.run(self.app_reset.perform,workspace,operation,args)
+                if operation=='maintenance.history.remove':result=await self.run(self.history_cleanup.remove,workspace,args)
+                elif operation=='maintenance.backups.remove':result=await self.run(self.backups.remove,workspace,args)
+                elif operation=='maintenance.workspace.remove':result=await self.run(self.workspace_cleanup.remove,workspace,args)
+                elif operation=='maintenance.bundleReferences.apply':result=await self.run(self.bundle_references.apply,workspace,args)
+                elif operation in APP_RESET_FIELDS:result=await self.run(self.app_reset.perform,workspace,operation,args)
                 elif operation=='maintenance.acquire':
                     result=await self.run(self.acquire,workspace,args)
                     self.timer=asyncio.create_task(self.expire(result['leaseId'],max(0,result['expiresAt']-time.time())))
@@ -513,7 +542,7 @@ class Maintenance:
                 receipt={**receipt,'state':'succeeded','result':result,'settledAt':time.time()}
             except BaseException as error:
                 archive_failure=operation.startswith('maintenance.archive.') and isinstance(error,Exception)
-                known=(operation=='maintenance.acquire' and isinstance(error,Exception) and (self.lease is None or self.lease['released'])) or ((operation.startswith('maintenance.restore.') or operation in CACHE_OPERATIONS | CAPTURE_OPERATIONS | set(APP_RESET_FIELDS)) and getattr(error,'data',{}).get('executed') is False)
+                known=(operation=='maintenance.acquire' and isinstance(error,Exception) and (self.lease is None or self.lease['released'])) or ((operation.startswith('maintenance.restore.') or operation in CACHE_OPERATIONS | CAPTURE_OPERATIONS | set(APP_RESET_FIELDS) | set(BUNDLE_REFERENCE_FIELDS) | set(WORKSPACE_CLEANUP_FIELDS) | set(BACKUP_CLEANUP_FIELDS) | set(HISTORY_CLEANUP_FIELDS)) and getattr(error,'data',{}).get('executed') is False)
                 receipt={**receipt,'state':'refused' if known else 'failed' if archive_failure else 'unknown','errorType':type(error).__name__,'settledAt':time.time(),**({'executed':False} if known else {}),**({'settled':True,'canonicalFilesChanged':0} if archive_failure else {})}
                 await self.run(self.save,workspace,signature,receipt)
                 if archive_failure:

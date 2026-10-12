@@ -74,3 +74,36 @@ def test_async_method_is_not_started_or_implicitly_adopted():
     async def forbidden(): pytest.fail('Async authentication is not the passive status contract')
     result, supported = authentication_status(SimpleNamespace(auth_status=forbidden), {'capabilities':['auth:oauth_device_code']})
     assert not supported and result['reason'] == 'async-status-unsupported'
+
+
+@pytest.mark.parametrize('models', [[], [{'id':'cached-choice'}], None])
+async def test_mounted_catalog_check_is_not_connection_authority(tmp_path, monkeypatch, models):
+    monkeypatch.setenv('AMPLIFIER_WEB_HOME', str(tmp_path))
+    calls = []
+    class Provider:
+        async def list_models(self):
+            calls.append('catalog')
+            if models is None: raise ValueError('catalog unavailable')
+            return models
+        async def complete(self, *args, **kwargs): pytest.fail('No inference during catalog check')
+        async def login(self): pytest.fail('No sign-in during catalog check')
+    provider = Provider()
+    class Coordinator:
+        config = {'providers': []}
+        session_state = {}
+        def get(self, name): return {'providers': {'selected':provider}}.get(name)
+        def get_capability(self, name): return None
+        def register_capability(self, *args): pass
+    controls = RuntimeControls(SimpleNamespace(session_id='fixture', coordinator=Coordinator()),
+                               SimpleNamespace(generation=None, queued_inputs=0))
+    try:
+        if models is None:
+            with pytest.raises(ValueError, match='catalog unavailable'):
+                await controls.perform('configuration.providerTest', {'provider':'selected'})
+        else:
+            result = await controls.perform('configuration.providerTest', {'provider':'selected'})
+            assert result['catalogAvailable'] and result['reachable'] is None
+            assert result['modelCount'] == len(models) and result['inferenceVerified'] is False
+        assert calls == ['catalog']
+    finally:
+        await controls.close()

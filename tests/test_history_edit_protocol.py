@@ -60,3 +60,40 @@ async def test_worker_loss_during_context_revision_fences_resume_and_never_repla
         history=await client.request('_amplifier/history',{'sessionId':sid,'cwd':str(cwd),'limit':50})
         assert not any('Never automatically replay this' in u.get('content',{}).get('text','') for u in history['result']['updates'])
     finally:await client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('facts,top_level',[
+    ({'inputOrigin':origin},False) for origin in ('agent','coordination','peer','schedule','scheduled','scheduler','observation')
+]+[({'via':'peer'},True),({'via':'schedule'},True),({'scheduledRunId':'recorded-run'},False)])
+async def test_external_input_edit_refused_before_rewrite_or_admission(tmp_path,facts,top_level):
+    client,sid,cwd,config=await prepared(tmp_path)
+    try:
+        await prompt(client,sid,'Recorded external input','turn1')
+        # Seed imported history only after its writer has stopped.
+        await client.close()
+        native=next((tmp_path/'home/projects').glob('*/sessions/'+sid));file=native/'transcript.jsonl'
+        rows=[json.loads(line) for line in file.read_text().splitlines()]
+        original=next(row for row in rows if (row.get('metadata') or {}).get('amplifier_input',{}).get('id')=='turn1')
+        (original if top_level else original.setdefault('metadata',{})).update(facts)
+        file.write_text(''.join(json.dumps(row)+'\n' for row in rows))
+        from client import Client
+        from test_session_lifecycle import initialize
+        client=await Client.launch(config);await initialize(client)
+        resumed=await client.request('session/resume',{'sessionId':sid,'cwd':str(cwd),'mcpServers':[]})
+        assert 'result' in resumed,resumed
+        before=file.read_bytes();events=native/'events.jsonl';events.write_text('preserved events\n')
+        revision=(await action(client,sid,cwd,'inspect'))['result']['historyRevision']
+        page=await client.request('_amplifier/history',{'sessionId':sid,'cwd':str(cwd),'limit':50})
+        source=next(row for row in page['result']['updates'] if row.get('sessionUpdate')=='user_message_chunk')
+        assert all(source['_meta']['amplifier.dev/history'][key]==value for key,value in facts.items())
+        # The Host's pre-admission edit-context read also refuses this boundary.
+        prefix=await client.request('_amplifier/history/before',{'sessionId':sid,'cwd':str(cwd),'beforeTurnId':'turn1','expectedRevision':revision,'includeEditContext':True})
+        assert 'own messages' in prefix['error']['message'],prefix
+        result=await client.request('_amplifier/native',{'sessionId':sid,'operation':'history.revise','args':{'operationId':'external-edit','inputId':'replacement','targetMessageId':'turn1','expectedHistoryRevision':revision,'text':'Misattributed human replacement'}})
+        assert result.get('result')=={'accepted':False,'executed':False,'reason':'Choose one of your own messages to edit.'},result
+        assert file.read_bytes()==before and events.read_text()=='preserved events\n'
+        assert not any(row.get('params',{}).get('event',{}).get('type')=='history.revised' for row in client.events)
+        saved=await client.request('_amplifier/history/edit',{'sessionId':sid,'cwd':str(cwd),'operationId':'external-edit'})
+        assert saved['result']['receipt'] is None,saved
+    finally:await client.close()

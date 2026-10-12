@@ -1,0 +1,24 @@
+{
+  "repository": "microsoft/amplifier-unified",
+  "revision": "9e2ccb60a9c6a512c47f92895959c2be540b1f3d",
+  "purpose": "Bundled reference resources; runtime support must be discovered from the connected host action schemas.",
+  "files": {
+    "bundle.yaml": "7f90bc717f2a50555fe0e22d4f71fb49757d035be851658aa1a6f425380200b9",
+    "docs/shell/README.md": "74cdbebd56deeec18f7babac6c55880cdd464790d3ddd179e255c825b31bd3ae",
+    "docs/shell/behavior.md": "6b26f5ebabb8e215ec1cc66e35326f58ccce5383fbacb178593a540fd76d7432",
+    "docs/shell/components.md": "00f6c64127a53a004307b3c2d3dd67a9499ae5528a9bb1c4f127854d48a52b01",
+    "docs/shell/conversation-surfaces.md": "60b02c8eae2c8ec908fc74ec9b5b87596dd8e88d7ed4ec5090543d6df2c02477",
+    "docs/shell/customization-roadmap.md": "40817b2d2442d36f3c88c4cce0a1889c795a1d1a4fd0576e458cd5ee4bbd08d8",
+    "docs/shell/themes.md": "0e8ae9cb1757fc4c7ecb82886a195ab7d6a6f6048235946b231b09fd5b47072b",
+    "examples/shell-controls/README.md": "195e78648281c051ba652c58e053bbf7b761ea0af6f82012f061e80d0056d578",
+    "examples/shell-controls/index.js": "be0391403834e3fb65045820afc1ccb75f096bec141b1f8cfca70e4c9f03ae11",
+    "examples/shell-controls/manifest.json": "5b244070622710d8a7e81200818ea51bedbd6d8d2611237e3ceb1388ecddadc5",
+    "examples/shell-navigator/index.js": "75ba928b57ec63a8b923976095440c5469bdb258fa46cb27741fc01a5d154f19",
+    "examples/shell-navigator/manifest.json": "01bf5bbac348e3af58b659099e330fefe99b1bccf607c227d4c7a7ccb290c0c7",
+    "examples/shell-reader/index.js": "61df6f6d8f21e6c968a0b51b45aa280886af5471a0a0b92920909cf282e2dd5c",
+    "examples/shell-reader/manifest.json": "843009fa8003422b105fcfe3fcbb01a16ff9361b35b8c151a0b62fe148f45bcc",
+    "packages/shell-sdk/index.d.ts": "8f3b0bb33dcb0a1e5e14d740b2f43010d570eaf354fbd7ed34ab9b500fe8da8b",
+    "packages/shell-sdk/index.js": "1b358735db3b8de9802370cbe9c03911388b78ae36c20ed44fcba68fb915bbae",
+    "packages/shell-sdk/package.json": "940d8b06ff6d9201e5301d8c3aa52740ce04dfe994175a3c929c5b3c161f01bc"
+  }
+}

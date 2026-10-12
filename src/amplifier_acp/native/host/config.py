@@ -35,6 +35,14 @@ FOUNDATION_SOURCE = "git+https://github.com/microsoft/amplifier-foundation@main"
 WORK_SOURCE = "git+https://github.com/microsoft/amplifier-bundle-work@main#subdirectory=bundle.md"
 
 
+PRECONFIGURED_BUNDLES = {
+    "anchors": "git+https://github.com/microsoft/amplifier-foundation@main#subdirectory=bundles/anchors/bundle.md",
+    "anchors-amp-dev": "git+https://github.com/microsoft/amplifier-foundation@main#subdirectory=bundles/anchors-amp-dev/bundle.md",
+    "work": WORK_SOURCE,
+    "work-amp-dev": "git+https://github.com/microsoft/amplifier-bundle-work@main#subdirectory=bundles/work-amp-dev.md",
+}
+
+
 _KEY_FILE_VALUES = {}
 
 
@@ -166,8 +174,7 @@ class HostConfig:
     def registrations(self):
         return {
             "foundation": FOUNDATION_SOURCE,
-            "anchors": "git+https://github.com/microsoft/amplifier-foundation@main#subdirectory=bundles/anchors/bundle.md",
-            "work": WORK_SOURCE,
+            **PRECONFIGURED_BUNDLES,
             **self.settings.get("bundle", {}).get("added", {}),
             **self.bundle_sources,
         }

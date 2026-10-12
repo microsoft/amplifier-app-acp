@@ -14,6 +14,7 @@ async def test_initialize_advertises_closed_scoped_signin_marker_only_for_admin(
     if enabled:
         marker=native['admin']['providerSignIn']
         assert marker=={'version':1,'workspaceBound':True,'scopedAttempts':True}
+        assert native['admin']['imageSetup']=={'version':1,'catalog':'provider-image-models','preservesChat':True,'exclusive':True}
         assert type(marker['version']) is int and marker['workspaceBound'] is True and marker['scopedAttempts'] is True
     else:assert 'admin' not in native
     assert not server.sessions and not list((tmp_path/'home').glob('projects/*/sessions/*'))

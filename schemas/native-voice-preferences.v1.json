@@ -54,7 +54,8 @@
                     "gpt-live-1",
                     "gpt-realtime-2.1"
                   ],
-                  "description": "Saved preference only; current transport does not automatically switch."
+                  "description": "Saved preference only; current transport does not automatically switch.",
+                  "minLength": 0
                 },
                 "voice": {
                   "type": "string",
@@ -63,6 +64,10 @@
                 },
                 "interruptions": {
                   "type": "boolean"
+                },
+                "fallbackVoice": {
+                  "type": "string",
+                  "maxLength": 200
                 }
               }
             }

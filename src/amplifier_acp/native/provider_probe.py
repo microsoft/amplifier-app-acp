@@ -58,10 +58,14 @@ async def query(request):
         info=schema_provider.get_info()
         if inspect.isawaitable(info): info=await info
         schema=await config_schema(schema_provider, info=info)
+        image_info = None
+        if callable(getattr(schema_provider, 'get_image_generation_info', None)):
+            image_info = schema_provider.get_image_generation_info()
+            if inspect.isawaitable(image_info): image_info = await image_info
     finally:
         await close_provider(schema_provider)
     if request['action']=='providers.schema':
-        return {'info':public(info),'configSchema':public(schema)}
+        return {'info':public(info),'configSchema':public(schema),'imageGeneration':public(image_info)}
     config=materialize_provider_config(request.get('config',{}),schema)
     if request['module']=='provider-github-copilot' and config.get('github_token'):
         os.environ['COPILOT_AGENT_TOKEN']=config['github_token']
@@ -79,7 +83,16 @@ async def query(request):
             return {'status': ('advertised' if any(row['id'] == request['model'] for row in result['models'])
                                else 'not-advertised') if result['modelsSupported'] else 'unverified'}
         info=public(await invoke('get_info'))
-        result={'info':info,'configSchema':public(schema)}
+        result={'info':info,'configSchema':public(schema),'imageGeneration':public(image_info)}
+        if request['action'] == 'providers.imageModels':
+            supported = callable(getattr(provider, 'list_image_models', None)) and isinstance(image_info, dict)
+            result['imageModelsSupported'] = supported
+            result['imageModels'] = public(await invoke('list_image_models')) if supported else []
+            return result
+        if request['action'] == 'naming.complete':
+            from .provider_test import naming_completion
+            result['naming'] = await naming_completion(provider, config, request.get('model'), request['prompt'])
+            return result
         if request['action'] == 'providers.testMessage':
             from amplifier_acp.native.provider_test import test_message
             result['messageTest'] = await test_message(provider, config, request.get('model'), info)
@@ -89,7 +102,8 @@ async def query(request):
         if not supported and request['action']=='providers.test':raise ValueError('Provider does not expose model discovery')
         result['models']=public(await invoke('list_models')) if supported else []
         if request['action']=='providers.test':
-            result['test']={'reachable':True,'modelCount':len(result['models']),'method':'provider.list_models'}
+            from amplifier_acp.native.provider_status import catalog_check
+            result['test']=catalog_check(result['models'])
         return result
     finally:
         await close_provider(provider)

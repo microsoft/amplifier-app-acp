@@ -31,6 +31,12 @@ class FixtureProvider:
         await asyncio.sleep(60)
         return True
     async def complete(self,request,**kwargs):
+        if self.config.get('namingResponse'):
+            if self.config.get('namingAudit'):
+                import json
+                with Path(self.config['namingAudit']).open('a') as output:
+                    output.write(json.dumps({'tools':request.tools,'max_output_tokens':request.max_output_tokens,'extended_thinking':kwargs.get('extended_thinking'),'messages':[row.model_dump(mode='json') for row in request.messages]})+'\n')
+            return ChatResponse(content=[TextBlock(text=self.config['namingResponse'])],finish_reason='stop')
         if self.config.get('promptAuditFile'):
             import json
             with Path(self.config['promptAuditFile']).open('a') as output:
@@ -67,7 +73,7 @@ class FixtureProvider:
         if self.config.get('inputOutcomeFailure') and 'fail-outcome' in str(prompt):
             from amplifier_core import InvalidRequestError
             if self.config.get('inputOutcomeAfterTool') and request.messages[-1].role != 'tool':
-                return ChatResponse(content=[TextBlock(text='Before fixture tool effect.')],tool_calls=[ToolCall(id='permit-call',name='fixture_permit',arguments={})],finish_reason='tool_calls')
+                return ChatResponse(content=[TextBlock(text='Before fixture tool effect.')],tool_calls=[ToolCall(id='effect-call',name='fixture_effect',arguments={})],finish_reason='tool_calls')
             if self.config.get('inputOutcomeCheckpoint'):
                 original = self.coordinator.get_capability('live.checkpoint')
                 async def checkpoint(*args, **kwargs):
@@ -80,6 +86,17 @@ class FixtureProvider:
         if self.config.get('coordinationFixture') and 'spawn-persistent' in str(prompt) and not getattr(self,'coordinationSpawned',False):
             self.coordinationSpawned=True
             return ChatResponse(content=[TextBlock(text='Starting persistent fixture worker.')],tool_calls=[ToolCall(id='delegate-fixture',name='delegate',arguments={'agent':'fixture-child','instruction':'child-initial','persistent':True})],finish_reason='tool_calls')
+        if self.config.get('workerRecoveryFixture') and request.messages[-1].role != 'tool':
+            # The official delegate adds parent context before the child task.
+            task_prompt = str(prompt).rsplit('[YOUR TASK]\n', 1)[-1].strip()
+            if prompt == 'spawn-file-worker':
+                return ChatResponse(content=[],tool_calls=[ToolCall(id='delegate-file-worker',name='delegate',arguments={'agent':'fixture-child','instruction':'child-create-file','persistent':True})],finish_reason='tool_calls')
+            if str(prompt).startswith('resume-file-worker '):
+                return ChatResponse(content=[],tool_calls=[ToolCall(id='resume-file-worker',name='delegate',arguments={'session_id':str(prompt).split(' ',1)[1],'instruction':'child-after-stop'})],finish_reason='tool_calls')
+            if task_prompt == 'child-create-file':
+                return ChatResponse(content=[],tool_calls=[ToolCall(id='child-write',name='write_file',arguments={'file_path':'worker-created.txt','content':'Preserved worker output before stop.\n'})],finish_reason='tool_calls')
+            if task_prompt == 'child-after-stop':
+                return ChatResponse(content=[],tool_calls=[ToolCall(id='child-read',name='read_file',arguments={'file_path':'worker-created.txt'})],finish_reason='tool_calls')
         if 'steering-late' in str(prompt):
             checkpoint=self.coordinator.get_capability('live.checkpoint')
             async def paused_checkpoint(*args,**kwargs):
@@ -129,6 +146,15 @@ async def mount(coordinator,config=None):
             decision=await coordinator.approval_system.request_approval('Fixture permission',options=['allow','deny'])
             return ToolResult(success=True,output={'decision':decision})
     await coordinator.mount('tools',Permit(),name='fixture_permit')
+
+    if config and config.get('inputOutcomeToolAudit'):
+        class Effect:
+            name='fixture_effect';description='Write the owned failure-test receipt';input_schema={'type':'object','properties':{}}
+            async def execute(self,args):
+                from pathlib import Path
+                Path(config['inputOutcomeToolAudit']).write_text('one owned tool effect')
+                return ToolResult(success=True,output='Saved the owned tool effect')
+        await coordinator.mount('tools',Effect(),name='fixture_effect')
 
     class Wait:
         name='fixture_wait';description='Wait for an isolated fixture test gate';input_schema={'type':'object','properties':{}}

@@ -80,3 +80,28 @@ missing/changed platform receipts, replacement reconciliation, live preflight
 rollback, and the absence of Core sessions or model calls. This implements only
 native participants; application service stop is unavailable until every required
 configured owner and the platform authority have qualified compatible support.
+
+## Durable distribution release after replacement
+
+Peers advertise `reconcileRelease:{version:1,durable:true,receipt:true}`. The private
+`reconcileRelease` operation takes the original five distribution fence fields,
+`outcome:ready|unchanged` and exact authenticated proof fields `verified`,
+`fenceId`, `commandId`, `outcome`, `instanceId`, `dataScope`, `receiptId`.
+Ready binds a distinct observed host; unchanged binds the original host. The
+configured host authenticates these receipts before using this private channel.
+
+A replacement must find the original acquired durable admission and original
+lease, hold actual exclusive administration writer ownership, and have no local
+requests, sign-in, maintenance or capture work. It does not reacquire the original
+admission. Proof-bound completion and removal of that original hold commit in
+one existing-journal transaction. Failure keeps the original hold. Identical
+lost-reply retries return the original result, including after another restart;
+reading a completed receipt cannot remove a newer hold. Missing, pending, refused
+or aborted evidence and older peers do not establish successful retirement.
+
+The result includes `released:true,reconciled:true,intakeClosed:false`, the original
+`lease`, the settling `adminInstanceId` and `workerStarted:false`. On an identical
+retry this is historical completion evidence, not a claim that current intake is
+open. Original-acquisition, pre-retirement abort and recovery/service-stop
+contracts remain separate. See `test_admin_admission.py` and the subprocess
+`test_admin_lifecycle.py` for failure, restart, writer and authority checks.

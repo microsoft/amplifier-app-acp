@@ -36,6 +36,7 @@ def lifecycle_state(server,identity,cwd):
 def guard_copy_source(server,identity):
     """Copy only a coherent settled authority image; never finish its journals."""
     app=location(home(server),identity)
+    if (app/'history-removal.json').exists():raise ValueError('Shared history removal was admitted; inspect its original receipt. This identity cannot be restarted or copied.')
     from .native.history_revision import guard_context_clear
     guard_context_clear(home(server), identity)
     for name in ('history-edit-pending.json','maintenance-reset-pending.json'):
@@ -45,6 +46,7 @@ def guard_copy_source(server,identity):
         if path.exists() and record(path).get('state')!='committed':raise ValueError('Native creation outcome is unresolved; source preserved')
 
 def guard_start(server,identity,cwd):
+    if (location(home(server),identity)/'history-removal.json').exists():raise ValueError('This saved conversation was permanently removed or its removal is unresolved; inspect the original receipt. No work replayed.')
     value=lifecycle_state(server,identity,cwd)
     if value['deleted']:raise ValueError('This native session was removed from discovery; restore it before continuing. Its history is preserved.')
     maintenance=location(home(server),identity)/'maintenance-reset-pending.json'
@@ -83,6 +85,9 @@ def canonical(directory,expected,*,app_home=None):
         rows.append((offset,row));offset+=len(line)
     if history.stamp(path)[0]!=revision:raise ValueError('Native history changed during capture')
     metadata=record(directory/'metadata.json')
+    if (history.stamp(path)[0]!=revision or
+            (app_home is not None and context_head(app_home,directory.name)!=epoch)):
+        raise ValueError('Native history changed during capture')
     return rows,metadata,revision
 
 def bound(rows,identity,*,user=False):
@@ -166,6 +171,8 @@ class Lifecycle:
         if len(json.dumps(selected).encode())>32768:raise ValueError('Native metadata inspection exceeds its bound')
         return {'sessionId':self.identity,'historyRevision':result['revision'],'metadata':selected,'diagnostics':result['diagnostics'],'location':self.inspected_location(),'state':lifecycle_state(self.server,self.identity,self.cwd),'preserved':PRESERVED,'failure':failure(self.server,self.identity),'forkBundles':[{'id':key,'name':key,'revision':fingerprint([key,value])} for key,value in self.fork_bundles().items()]}
     def perform(self,operation,args):
+        if operation not in {'inspect','receipt','export.read'} and (self.app/'history-removal.json').exists():
+            raise ValueError('Shared history removal was admitted; inspect its original receipt. This identity cannot be restored or changed.')
         if operation.startswith('managedFiles.'):
             from .managed_disposal import perform
             return perform(self,operation,args)
@@ -173,9 +180,12 @@ class Lifecycle:
         if operation.startswith('legacyCopy.'):
             from .retired_copy import perform
             return perform(self,operation,args)
-        fields={'inspect':set(),'receipt':{'commandId'},'export.read':{'snapshotId','offset','limit'},'delete.preview':set(),'fork':{'commandId','targetSessionId','expectedHistoryRevision','throughMessageId','mode','bundle','bundleRevision','resetModel','descendants','managedTarget'},'export':{'commandId','expectedHistoryRevision','format','scope','fromMessageId','throughMessageId','minimal'},'delete':{'commandId','expectedHistoryRevision','confirmationToken'},'delete.standard':{'commandId','expectedHistoryRevision'},'restore':{'commandId','expectedHistoryRevision'},'retention.hide':{'commandId','expectedHistoryRevision','modifiedBefore','descendants'}}
+        fields={'inspect':set(),'receipt':{'commandId'},'export.read':{'snapshotId','offset','limit'},'delete.preview':set(),'fork':{'commandId','targetSessionId','expectedHistoryRevision','throughMessageId','mode','bundle','bundleRevision','resetModel','descendants','managedTarget','outputReferences'},'export':{'commandId','expectedHistoryRevision','format','scope','fromMessageId','throughMessageId','minimal','includeExecution','includeConversationId','includeTimestamps','includeReferenceIds','exportContext'},'delete':{'commandId','expectedHistoryRevision','confirmationToken'},'delete.standard':{'commandId','expectedHistoryRevision'},'restore':{'commandId','expectedHistoryRevision'},'retention.hide':{'commandId','expectedHistoryRevision','modifiedBefore','descendants'}}
         if operation not in fields or not isinstance(args,dict) or set(args)-fields[operation]:raise ValueError('Unsupported lifecycle operation or arguments')
-        if len(json.dumps(args).encode())>32768:raise ValueError('Lifecycle arguments exceed their bound')
+        if len(json.dumps({key:value for key,value in args.items() if key not in {'exportContext','outputReferences'}}).encode())>32768:raise ValueError('Lifecycle arguments exceed their bound')
+        if 'exportContext' in args:
+            from .conversation_export import contribution
+            contribution(args['exportContext'])
         if operation=='inspect':return self.inspect()
         if operation=='receipt':return {'receipt':self.saved(args.get('commandId'))}
         if operation=='export.read':return self.read_export(args)
@@ -191,7 +201,9 @@ class Lifecycle:
                 return {**previous.get('result',{}),'receipt':previous,'replayed':False}
             from .lifecycle_family import own_descendants
             from contextlib import nullcontext
-            with self.own(), (own_descendants(self,args.get('descendants',[]),check=(lambda sid,cwd:Lifecycle(self.server,sid,cwd).validate_retention(args,None)) if operation=='retention.hide' else None) if operation in {'fork','retention.hide'} else nullcontext()) as family:
+            # Export freezes an exact saved revision and writes only its private
+            # snapshot/receipt. It does not acquire or retire the execution owner.
+            with (nullcontext() if operation=='export' else self.own()), (own_descendants(self,args.get('descendants',[]),check=(lambda sid,cwd:Lifecycle(self.server,sid,cwd).validate_retention(args,None)) if operation=='retention.hide' else None) if operation in {'fork','retention.hide'} else nullcontext()) as family:
                 inspected=self.inspect()
                 if inspected['location']['blocked']:raise ValueError('Resolve native execution relocation before lifecycle changes')
                 if args.get('expectedHistoryRevision')!=inspected['historyRevision']:raise ValueError('Native history changed; review a fresh revision')
@@ -316,14 +328,22 @@ class Lifecycle:
                     'disposition':'history-only' if (target_row.get('metadata') or {}).get(HISTORY_ONLY) is True else 'retained'}}
         from .message_copy import prepare
         reactions=prepare(self.server,self.identity,target,selected,positions,context)
-        return context,metadata,revision,copied,managed,reactions
+        boundary_index=None
+        if args.get('throughMessageId'):
+            boundary_index=positions.get(bound(selected,args['throughMessageId'],user=True))
+            if boundary_index is None or context[boundary_index].get('role')!='user':
+                raise ValueError('The selected user boundary is not retained in the fork')
+        from .fork_references import prepare as prepare_references, preserved_rows
+        archived=preserved_rows(self.directory,home(self.server),self.cwd,revision) if args.get('outputReferences') and rows.epoch else ()
+        references=prepare_references(args.get('outputReferences'),rows,selected,positions,source_session=self.identity,preserved=archived)
+        return context,metadata,revision,copied,managed,reactions,boundary_index,references
     def fork_bundles(self):
         choices=self.server.config.get('forkBundles',{})
         if not isinstance(choices,dict) or len(choices)>64 or any(not isinstance(k,str) or not 1<=len(k)<=200 or not isinstance(v,str) or not 1<=len(v)<=4096 for k,v in choices.items()):raise ValueError('Launcher fork bundle choices are invalid')
         return choices
     def fork(self,args,prepared):
         from amplifier_foundation.session.history import SessionHistoryStore
-        context,metadata,revision,copied,managed,reactions=prepared;target=args['targetSessionId'];target_app=location(home(self.server),target)
+        context,metadata,revision,copied,managed,reactions,boundary_index,references=prepared;target=args['targetSessionId'];target_app=location(home(self.server),target)
         from .managed_session import reserve_copy,complete_copy,copied_configuration,location as managed_location
         cwd=managed['workspace'] if managed else self.cwd
         target_app.mkdir(parents=True,exist_ok=False,mode=0o700)
@@ -346,7 +366,7 @@ class Lifecycle:
             from .message_copy import publish
             target_revision=history.inspect(destination)['revision']
             verify_originals=any((row.get('metadata') or {}).get('amplifier_public_message') is not None for row in context)
-            target_rows,_,_=canonical(destination,target_revision,app_home=home(self.server)) if reactions or verify_originals else ([],None,None)
+            target_rows,_,_=canonical(destination,target_revision,app_home=home(self.server)) if reactions or verify_originals or boundary_index is not None or references else ([],None,None)
             if target_rows or verify_originals:
                 expected=[row for row in context if preserve_system or row.get('role') not in {'system','developer'}]
                 if [row for _,row in target_rows] != expected:raise ValueError('Persisted target rows differ from prepared copy; creation remains unknown')
@@ -354,15 +374,29 @@ class Lifecycle:
             for name,value in copied.items():write(target_app/name,value)
             write(target_app/'execution-location.json',{'sessionId':target,'historyCwd':cwd,'executionDirectory':execution,'executionRevision':0})
             result={'sessionId':target,'creationConfirmed':True,'historyCwd':cwd,'executionDirectory':execution,'historyRevision':history.inspect(destination)['revision'],'source':{'sessionId':self.identity,'historyRevision':revision,**({'throughMessageId':args['throughMessageId']} if args.get('throughMessageId') else {})},'workReplayed':False,'mode':args.get('mode','complete'),'bundleSelection':args.get('bundle'),'preservedSource':True,'messageAnnotations':reaction_copy}
+            if references is not None:
+                from .fork_references import publish as publish_references
+                result['outputReferences']=publish_references(references,target_rows,context,preserve_system)
+            if boundary_index is not None:
+                # IDs include canonical bytes/offsets. A copied row can acquire a
+                # different ID even when its visible text is identical.
+                index=sum(1 for row in context[:boundary_index] if preserve_system or row.get('role') not in {'system','developer'})
+                position,row=target_rows[index]
+                result['forkBoundary']={'sourceMessageId':args['throughMessageId'],
+                    'targetMessageId':history.message_id(row,position,getattr(target_rows,'epoch',None)),
+                    'historyRevision':target_revision}
             if managed_record:result.update(location=managed_location(managed),configurationScope='global-and-session',runtimeStarted=False,generatedFilesCopied=False)
             write(target_app/'history-fork.json',{**marker,'state':'committed','result':result})
             if managed_record:complete_copy(self.server,managed_record,title=safe.get('name','Copied chat'),bundle=safe['bundle'])
             return result
         finally:target_handle.release()
     def prepare_export(self,args):
-        if type(args.get('minimal',False)) is not bool:raise ValueError('Export minimal flag must be a boolean')
+        from .conversation_export import options,render
+        options(args)
+        guard_copy_source(self.server,self.identity)
         rows,metadata,revision=canonical(self.directory,args['expectedHistoryRevision'],app_home=home(self.server));rows=scope_rows(rows,args)
-        public=[];omissions=[];attachments=0
+        guard_copy_source(self.server,self.identity)
+        public=[];omissions=[];attachments=0;aliases={}
         for position,row in rows:
             updates,issues=history.content_updates(row,position);omissions.extend(issues)
             if not history.visible(row):continue
@@ -381,14 +415,14 @@ class Lifecycle:
                     index=(update.get('_meta',{}).get('amplifier.dev/history') or {}).get('originalBlockIndex')
                     refs.append({**original['blocks'][index],'omittedPayload':True} if original is not None else
                                 {'type':block['type'],**({'uri':block['uri']} if 'uri' in block else {}),'omittedPayload':True})
-            public.append({'id':message_id(row,position,getattr(rows,'epoch',None)),'role':row['role'],'text':('' if original is not None else '\n').join(texts),**({'publicMessage':original} if original is not None else {}),**({'attachments':refs} if refs else {}),**({} if args.get('minimal') else {'provenance':history.provenance(row)})})
+            marker=(row.get('metadata') or {}).get('amplifier_input') or {}
+            if isinstance(marker.get('id'),str):aliases[marker['id']]=message_id(row,position,getattr(rows,'epoch',None))
+            public.append({'id':message_id(row,position,getattr(rows,'epoch',None)),'role':row['role'],'text':('' if original is not None else '\n').join(texts),**({'publicMessage':original} if original is not None else {}),**({'attachments':refs} if refs else {}),'provenance':history.provenance(row)})
         fmt=args.get('format','json')
-        if fmt=='json':body=json.dumps({'sessionId':self.identity,'historyRevision':revision,'messages':public},ensure_ascii=False,indent=2).encode();mime='application/json';extension='json'
-        elif fmt=='markdown':
-            body=('\n\n'.join('## '+row['role'].title()+'\n\n'+row['text']+(''.join('\n\n[Attachment reference: '+r.get('uri',r['type'])+'; payload omitted]' for r in row.get('attachments',[]))) for row in public)+'\n').encode();mime='text/markdown';extension='md'
-        else:raise ValueError('Unsupported export format')
+        body,details=render(public,args,self.identity,revision,aliases)
+        mime='application/json' if fmt=='json' else 'text/markdown';extension='json' if fmt=='json' else 'md'
         if len(body)>MAX_HISTORY:raise ValueError('Export exceeds selected 64 MiB bound')
-        return body,{'filename':f'conversation-{self.identity[:20]}.{extension}','mimeType':mime,'summary':{'format':fmt,'scope':args.get('scope','all'),'minimal':args.get('minimal',False),'requestedBoundaries':{key:args[key] for key in ('fromMessageId','throughMessageId') if key in args},'resolvedBoundaries':{'fromMessageId':public[0]['id'] if public else None,'throughMessageId':public[-1]['id'] if public else None},'messageCount':len(public),'bytes':len(body),'attachmentCount':attachments,'artifactCount':0,'omissions':[{'code':'tool_receipts_and_private_reasoning_excluded'},{'code':'artifact_and_attachment_payloads_excluded'},*omissions[:100]]},'historyRevision':revision}
+        return body,{'filename':f'conversation.{extension}' if not details['options']['includeConversationId'] else f'conversation-{self.identity[:20]}.{extension}','mimeType':mime,'summary':{'format':fmt,'scope':args.get('scope','all'),'minimal':args.get('minimal',False),'requestedBoundaries':{key:args[key] for key in ('fromMessageId','throughMessageId') if key in args},'resolvedBoundaries':{'fromMessageId':public[0]['id'] if public else None,'throughMessageId':public[-1]['id'] if public else None},'messageCount':len(public),'bytes':len(body),'attachmentCount':attachments,'artifactCount':details['artifactCount'],'executionSummaryCount':details['executionSummaryCount'],'options':details['options'],'omissions':[{'code':'tool_receipts_and_private_reasoning_excluded'},{'code':'artifact_and_attachment_payloads_excluded'},*details['omissions'],*omissions[:100]]},'historyRevision':revision}
     def export(self,args,prepared):
         body,description=prepared;digest=hashlib.sha256(body).hexdigest();snapshot=fingerprint({'commandId':args['commandId'],'digest':digest,'sessionId':self.identity})
         directory=self.app/'exports';directory.mkdir(exist_ok=True,mode=0o700)

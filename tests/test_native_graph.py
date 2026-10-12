@@ -26,7 +26,7 @@ async def test_native_graph_turn_resume_ownership_and_controls(tmp_path):
         control=await client.request('_amplifier/native',{'sessionId':sid,'operation':'configuration.inspect'})
         assert control['result']['plan']['session']['orchestrator']['module']=='loop-live'
         result=await client.request('session/prompt',{'sessionId':sid,'prompt':[{'type':'text','text':'offline first turn'}],'_meta':{'amplifier.dev/command':{'commandId':'stable-first-turn'}}})
-        assert result.get('result')=={'stopReason':'end_turn'},result
+        assert result.get('result')=={'stopReason':'end_turn','usage':{'inputTokens':8,'outputTokens':5,'totalTokens':13}},result
         validate('PromptResponse',result['result'])
         assert any('Native graph reply' in json.dumps(r) for r in client.events)
         path=home/'projects'/('-'+str(workspace).replace('/','-').lstrip('-'))/'sessions'/sid/'transcript.jsonl'

@@ -114,6 +114,32 @@ async def test_full_native_excluded_credentials_make_coverage_explicitly_incompl
     finally:await client.close()
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('included',[False,True])
+async def test_full_native_chatgpt_credential_layouts_require_explicit_review(tmp_path,included):
+    client,cwd,config,_,_=await full_setup(tmp_path)
+    home=Path(config['home']);app=Path(config['appHome'])
+    credentials={home/'openai-chatgpt-extra-oauth.json':b'{"refresh_token":"fixture-codex"}',
+                 home/'chatgpt-plan/default.json':b'{"refresh_token":"fixture-plan"}',
+                 home/'chatgpt-plan/host.json':b'{"host_id":"fixture-host"}',
+                 app/'config/chatgpt-sign-in/connection/token.json':b'{"refresh_token":"fixture-sign-in"}'}
+    for path,raw in credentials.items():path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(raw)
+    try:
+        auth=await hold(client,cwd)
+        created=await call(client,cwd,'maintenance.archive.create',{'commandId':'credentials-create','parts':['full-native-authority'],'privateContentReviewed':True,**({'includeCredentials':True,'credentialsReviewed':True} if included else {})},auth)
+        preview=await call(client,cwd,'maintenance.archive.prepare',{'commandId':'credentials-prepare','planId':created['planId'],'expectedRevision':0},auth)
+        assert preview['ownerCoverage']['completeNativeBackup'] is included
+        assert 'fixture-plan' not in json.dumps(preview)
+        _,raw=await capture(client,cwd,auth,preview,'credential-layouts')
+        with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
+            for path,expected in credentials.items():
+                root=home if path.is_relative_to(home) else app
+                name=('native-home/' if root==home else 'app-home/')+str(path.relative_to(root))
+                if included:assert archive.extractfile(name).read()==expected
+                else:assert name not in archive.getnames()
+        assert all(path.read_bytes()==raw for path,raw in credentials.items()) and not client.events
+    finally:await client.close()
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('bad',['unknown-home','unqualified-environment','missing-external-declaration','external-writers'])
 async def test_full_native_refuses_unknown_or_unprotected_authority(tmp_path,bad):
     client,cwd,config,path,_=await full_setup(tmp_path)

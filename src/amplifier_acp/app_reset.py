@@ -74,6 +74,7 @@ class AppReset:
             if not prior or prior[1]['state']!='succeeded' or prior[1]['operation']!='maintenance.appReset.apply' or prior[1]['result']['postResetRevision']!=revision:refused('Original reset is unavailable or app settings changed afterward')
         prepared=uuid.uuid4().hex
         body={'ownerId':OWNER,'preparedId':prepared,'parts':[PART],'revision':revision,'expiresAt':time.time()+600,'containsPrivateContent':True,'credentialsIncluded':False,'coverage':'explicit-app-local-parts','preserved':PRESERVED,'omissions':['other product configuration','shared settings and credentials'],'restoresCommandId':original,'items':[{'part':PART,'present':raw is not None,'operation':'restore' if original else 'clear-bundle-active-only'}]}
+        body['storage']={'affectedPaths':[str(self.path)],'retainedOriginals':{'path':str(self.owner.root/'receipts.sqlite3'),'table':'app_reset_previews','recordId':prior[1]['result']['preparedId'] if original else prepared}}
         body['reviewHash']=digest(body)
         private={'before':base64.b64encode(raw).decode() if raw is not None else None}
         with self.owner.db() as db:db.execute('INSERT INTO app_reset_previews VALUES(?,?,?,?)',(prepared,workspace,json.dumps(body),json.dumps(private)))

@@ -16,25 +16,36 @@ def identity(value):
  return value
 
 class Diagnostics:
- def __init__(self,owner):self.owner=owner
+ def __init__(self,owner):self.owner=owner;self.state={}
  def record(self,phase,status,**facts):
   from .native.update_diagnostics import exception_type
-  safe={k:v for k,v in facts.items() if k in {'errorType','exitCode','durationMs','stdoutBytes','stderrBytes','timedOut','probe'}}
-  with self.owner.db() as db:db.execute('INSERT INTO diagnostics(body) VALUES (?)',(json.dumps({'phase':phase,'status':status,'at':time.time(),**safe}),))
+  safe={k:v for k,v in facts.items() if k in {'errorType','exitCode','durationMs','stdoutBytes','stderrBytes','timedOut','probe','anonymousRetry','commandId'}}
+  with self.owner.db() as db:db.execute('INSERT INTO diagnostics(body) VALUES (?)',(json.dumps({'id':uuid.uuid4().hex,'attemptId':self.state.get('attemptId'),'phase':phase,'status':status,'at':time.time(),**safe}),))
+  self.owner.changed()
  async def run(self,phase,function,*args,**kwargs):
-  self.record(phase,'started')
+  phase_id=uuid.uuid4().hex;started=time.monotonic()
+  self.record(phase,'started',commandId=phase_id)
   try:
-   value=await function(*args,**kwargs);self.record(phase,'succeeded',**getattr(value,'diagnostic_facts',{}));return value
+   value=await function(*args,**kwargs);self.record(phase,'succeeded',commandId=phase_id,**{**getattr(value,'diagnostic_facts',{}),'durationMs':round((time.monotonic()-started)*1000)});return value
   except BaseException as error:
    from .native.update_diagnostics import exception_type
-   self.record(phase,'interrupted' if isinstance(error,asyncio.CancelledError) else 'failed',**{'errorType':exception_type(error),**getattr(error,'diagnostic_facts',{})});raise
+   self.record(phase,'interrupted' if isinstance(error,asyncio.CancelledError) else 'failed',commandId=phase_id,**{'errorType':exception_type(error),**getattr(error,'diagnostic_facts',{}),'durationMs':round((time.monotonic()-started)*1000)});raise
 
 class Generations:
- def __init__(self,home,config):
+ def __init__(self,home,config,on_change=None):
+  self.on_change=on_change;self.notification_pending=False
   self.home=Path(home).resolve();self.config=config;self.directory=self.home/'updates';self.directory.mkdir(parents=True,exist_ok=True,mode=0o700)
   self.path=self.directory/'generation-owner.sqlite3';self.diagnostics=Diagnostics(self);self.inventory=[]
   if self.path.is_symlink():raise ValueError('Generation receipts cannot be symlinks')
   with self.db(write=False):pass
+ def changed(self):
+  if self.on_change is None or self.notification_pending:return
+  self.notification_pending=True
+  def notify():
+   self.notification_pending=False
+   try:self.on_change()
+   except Exception:pass  # Advisory metadata never changes a saved result.
+  asyncio.get_running_loop().call_soon(notify)
  @contextmanager
  def db(self,write=True):
   from .journal_schema import connect
@@ -49,6 +60,7 @@ class Generations:
  async def publish(self,**values):
   state={**self.state(),**values}
   with self.db() as db:db.execute("INSERT OR REPLACE INTO state VALUES ('current',?)",(json.dumps(state),))
+  self.changed()
   return state
  def receipt(self,command):
   with self.db(write=False) as db:row=db.execute('SELECT body FROM commands WHERE id=?',(command,)).fetchone() if db else None
@@ -60,10 +72,11 @@ class Generations:
   if type(limit)is not int or not 1<=limit<=100 or not isinstance(cursor,str) or len(cursor)>200:raise ValueError('Bounded generation page required')
   with self.db(write=False) as db:
    rows=db.execute('SELECT id,body FROM inventory WHERE id>? ORDER BY id LIMIT ?',(cursor,limit+1)).fetchall() if db else []
-   diagnostics=[json.loads(r[0]) for r in db.execute('SELECT body FROM diagnostics ORDER BY sequence DESC LIMIT 30')] if db else []
+   diagnostics=[json.loads(r[0]) for r in db.execute('SELECT body FROM diagnostics ORDER BY sequence DESC LIMIT 50')] if db else []
+   failure=db.execute("SELECT body FROM diagnostics WHERE json_extract(body,'$.status') IN ('failed','interrupted','rejected') ORDER BY sequence DESC LIMIT 1").fetchone() if db else None
   from .native.updates import group_sources
   items=group_sources([json.loads(r[1]) for r in rows[:limit]])
-  return {**self.state(),'pointer':active_release(self.home),'items':items,'nextCursor':rows[limit-1][0] if len(rows)>limit else None,'diagnostics':{'events':diagnostics[::-1]},'scope':'native-runtime','applicationUpdateSupported':False}
+  return {**self.state(),'pointer':active_release(self.home),'items':items,'nextCursor':rows[limit-1][0] if len(rows)>limit else None,'diagnostics':{'events':diagnostics[::-1],'attemptId':self.state().get('attemptId'),'lastFailure':json.loads(failure[0]) if failure else None},'scope':'native-runtime','applicationUpdateSupported':False}
  async def perform(self,workspace,operation,args):
   if operation not in OPERATIONS:raise ValueError('Unknown generation operation')
   if operation=='generations.inspect':return self.inspect(args)
@@ -90,6 +103,10 @@ class Generations:
    row={'commandId':command,'operation':operation,'state':'running','createdAt':time.time()}
    if operation=='generations.repair':row['candidateGeneration']=uuid.uuid4().hex
    self.save(row,signature)
+   self.diagnostics.state={'attemptId':command}
+   await self.publish(attemptId=command)
+   phase='runtime-'+operation.split('.')[-1];started=time.monotonic()
+   self.diagnostics.record(phase,'started',commandId=command)
    try:
     if operation=='generations.check':result=await self.check()
     elif operation=='generations.prepare':result=await self.prepare(args)
@@ -105,10 +122,11 @@ class Generations:
      generation=identity(args.get('generation') or active_release(self.home).get('current'))
      selected=await ensure(self.home,generation,{'id':sid,'workspace':workspace,'bundle':args.get('bundle')},shared_home=self.config.get('home'))
      result=await launcher(self.home,selected)
-    row={**row,'state':'succeeded','result':result,'settledAt':time.time()};self.save(row,signature);return row
+    row={**row,'state':'succeeded','result':result,'settledAt':time.time()};self.save(row,signature);self.diagnostics.record(phase,'succeeded',commandId=command,durationMs=round((time.monotonic()-started)*1000));return row
    except BaseException as error:
     from .native.update_diagnostics import exception_type
     row={**row,'state':'unknown' if isinstance(error,asyncio.CancelledError) else 'failed','errorType':exception_type(error),'detail':'Generation operation failed; inspect sanitized diagnostics.','settledAt':time.time()};self.save(row,signature)
+    self.diagnostics.record(phase,'interrupted' if row['state']=='unknown' else 'failed',commandId=command,**{'errorType':row['errorType'],**getattr(error,'diagnostic_facts',{}),'durationMs':round((time.monotonic()-started)*1000)})
     await self.publish(phase='error',error=row['detail']);
     if not isinstance(error,Exception):raise
     return row
@@ -257,7 +275,7 @@ class Generations:
          qualified=fresh or (receipt/'runtime-installed.json').exists()
          overrides=await self.diagnostics.run('ecosystem-runtime-policy',prepare_overrides,project,receipt/'runtime-install-overrides.txt') if qualified else Path(__file__).parent/'native/runtime_deps/compatibility.txt'
          command=[shutil.which('uv'),'run','--locked','--no-sync','--project',str(project),'--python','3.13','python',str(Path(__file__).parent/'native/update_probe.py')]
-         flags=['--install-overrides',str(overrides)] if qualified else []
+         flags=['--install-overrides',str(overrides)]
          flags.append('--global-only')
          if refresh:
              from .preparation_policy import staging_environment
@@ -265,7 +283,7 @@ class Generations:
              # One collection pass and one resolver transaction for the shared
              # graph, followed by fresh read-only compatibility processes.
              await self.diagnostics.run('ecosystem-prepare', process, *command, str(workspace), profiles[0],
-                 *flags, '--profiles', str(profiles_file), env={**staging_env, 'UV_OVERRIDE': str(overrides)}, timeout=900)
+                 *flags, '--profiles', str(profiles_file), env=staging_env, timeout=900)
              return
          completed=0
          progress={'attemptId':getattr(self.diagnostics,'state',{}).get('attemptId'),
@@ -278,7 +296,7 @@ class Generations:
              nonlocal completed
              async with semaphore:
                  await self.diagnostics.run('ecosystem-prepare' if refresh else 'ecosystem-compatibility',process,*command,workspace,bundle,*flags,
-                     env={**readonly_env,'UV_OVERRIDE':str(overrides)},timeout=900)
+                     env=readonly_env,timeout=900)
                  completed+=1
                  await self.publish(probeProgress={**progress,'completed':completed,'lastCompletedAt':time.time()})
          # Installers remain serial. After freezing, mount isolated workers

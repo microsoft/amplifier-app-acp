@@ -14,7 +14,7 @@ try{
  const response=await client.subscribe(chat,{view:{turns:1}}),state=response.result.snapshot.state;
  const turn=state.turns.find(turn=>turn.id==='saved-input');assert.ok(turn,'canonical input identity must survive');
  const tool=turn.responseParts.find(part=>part.kind==='toolCall')?.toolCall;
- assert.ok(tool,'canonical tool must survive the official reducer');assert.equal(tool.toolCallId,'exact-call');assert.equal(tool.toolInput,'{"path":"owned.txt"}');
+ assert.ok(tool,'canonical tool must survive the official reducer');assert.equal(tool.toolCallId,'exact-call');assert.equal(tool.displayName,'read_file');assert.equal(tool.toolInput,'{"path":"owned.txt"}');
  console.log(JSON.stringify({turnId:turn.id,tool,turnState:turn.state,activeAgents:host.diagnostics().activeAgents}));
  assert.equal(host.diagnostics().activeAgents,0,'passive history must never start a worker');
  if(missing==='true'){

@@ -10,7 +10,7 @@ from amplifier_acp.history import page
 from amplifier_acp.native.session_files import project_slug
 
 
-@pytest.mark.parametrize('shape', ['function', 'flat', 'tool_use', 'tool_call'])
+@pytest.mark.parametrize('shape', ['function', 'flat', 'core', 'tool_use', 'tool_call'])
 @pytest.mark.parametrize('missing', [False, True])
 def test_canonical_tool_result_reaches_actual_host_reducer(tmp_path, shape, missing):
     host = os.environ.get('HISTORY_HOST_MODULE')
@@ -24,6 +24,8 @@ def test_canonical_tool_result_reaches_actual_host_reducer(tmp_path, shape, miss
     arguments = {'path': 'owned.txt'}
     if shape == 'function':
         call = {'role': 'assistant', 'content': '', 'tool_calls': [{'id': 'exact-call', 'function': {'name': 'read_file', 'arguments': json.dumps(arguments)}}]}
+    elif shape == 'core':
+        call = {'role': 'assistant', 'content': '', 'tool_calls': [{'id': 'exact-call', 'tool': 'read_file', 'arguments': arguments}]}
     elif shape == 'flat':
         call = {'role': 'assistant', 'content': '', 'tool_calls': [{'id': 'exact-call', 'name': 'read_file', 'arguments': arguments}]}
     else:

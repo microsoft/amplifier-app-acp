@@ -34,15 +34,147 @@ def inspect(directory):
     return {'available':True,'revision':revision,'diagnostics':diagnostics}
 
 
+def _exact_segments(directory, app_home, history_cwd):
+    """Select only this session's completed, scoped context-clear chain."""
+    from .native.history_revision import context_head, guard_context_clear, segment, _directory, _read, _command
+    head = context_head(app_home, directory.name, history_cwd) if app_home is not None else None
+    result = [(directory, head, None)]
+    guards = []
+    if app_home is None:
+        return head, result, guards
+    guard_context_clear(app_home, directory.name)
+    archive = head
+    seen = set()
+    while archive:
+        if history_cwd is None or archive in seen or len(seen) >= 32:
+            raise HistoryError('Preserved source chain is unavailable or ambiguous')
+        seen.add(archive)
+        selected, descriptor = segment(app_home, directory.name, archive)
+        descriptor_path = selected / 'segment.json'
+        receipt_path = _directory(app_home, directory.name) / ('context-' + archive + '.json')
+        before = (stamp(descriptor_path)[0], stamp(receipt_path)[0])
+        receipt = _read(receipt_path)
+        scope = {'sessionId': directory.name, 'historyCwd': str(Path(history_cwd).resolve())}
+        if (receipt.get('status') != 'succeeded' or receipt.get('operation') != 'context.clear'
+                or receipt.get('scope') != scope or _command(receipt.get('commandId')) != archive
+                or receipt.get('result', {}).get('archiveId') != archive
+                or any(descriptor.get(key) != value for key, value in scope.items())
+                or descriptor.get('sourceEpoch') != descriptor.get('previousArchive')
+                or _read(descriptor_path) != descriptor):
+            raise HistoryError('Preserved source has no completed exact context-clear receipt')
+        guards.extend([(descriptor_path, before[0]), (receipt_path, before[1])])
+        result.append((selected, descriptor['sourceEpoch'], descriptor))
+        archive = descriptor['previousArchive']
+    return head, result, guards
+
+
+def exact_message(directory, identity, expected_revision, *, app_home=None, history_cwd=None, visible_reference_only=False, media_reference_only=False):
+    """Read one original source across current and preserved context, without execution.
+
+    Original IDs remain source references. Archive UI IDs never gain mutation or
+    new-input authority. Scan every selected segment to refuse duplicate IDs.
+    """
+    if type(visible_reference_only) is not bool or type(media_reference_only) is not bool:
+        raise HistoryError('Visible-reference selection must be boolean')
+    if not isinstance(identity, str) or not identity or len(identity) > 512:
+        raise HistoryError('Exact historical message identity required')
+    if identity.startswith('archive:'):
+        raise HistoryError('Archived view identity is not an original source identity')
+    from .native.history_revision import context_head, guard_context_clear
+    from .session_lifecycle import MAX_HISTORY, record
+    directory=Path(directory);path,diagnostics=source(directory);revision,_=stamp(path)
+    if diagnostics:raise HistoryError('Recovered backup is not a complete current source; repair the source first')
+    if revision!=expected_revision:raise HistoryError('Native history changed; inspect a fresh revision')
+    head, segments, guards = _exact_segments(directory, app_home, history_cwd)
+    selected=None;matches=0
+    for location, epoch, descriptor in segments:
+        selected_path, diagnostics = source(location)
+        if diagnostics:raise HistoryError('Preserved source transcript is unavailable')
+        for part in (selected_path,*selected_path.parents):
+            if part.is_symlink():raise HistoryError('Native source files cannot traverse symbolic links')
+        before, _ = stamp(selected_path)
+        guards.append((selected_path, before))
+        info=selected_path.lstat();fd=os.open(selected_path,os.O_RDONLY|getattr(os,'O_NOFOLLOW',0)|getattr(os,'O_NONBLOCK',0))
+        position=0;ordinal=0;checksum=hashlib.sha256()
+        try:
+            opened=os.fstat(fd)
+            if (opened.st_dev,opened.st_ino)!=(info.st_dev,info.st_ino) or not stat.S_ISREG(opened.st_mode):
+                raise HistoryError('Native history changed during open')
+            with os.fdopen(fd,'rb',closefd=False) as stream:
+                while line:=stream.readline(MAX_HISTORY+1):
+                    if len(line)>MAX_HISTORY:raise HistoryError('Native history contains an oversized record; files preserved')
+                    checksum.update(line)
+                    row=json.loads(line)
+                    if not isinstance(row,dict) or not isinstance(row.get('role'),str):
+                        raise HistoryError('Malformed native history; files preserved')
+                    marker=(row.get('metadata') or {}).get('amplifier_input',{})
+                    canonical_id=message_id(row,position,epoch)
+                    legacy_id=None
+                    if media_reference_only and epoch is None:
+                        content=row.get('content','')
+                        raw=content if isinstance(content,str) else '\n'.join(block.get('text','') for block in content if isinstance(block,dict) and block.get('type') in {'text','output_text'}) if isinstance(content,list) else ''
+                        legacy_id=hashlib.sha256(json.dumps([directory.name,ordinal,row.get('role'),raw],ensure_ascii=False).encode()).hexdigest()[:32]
+                    if marker.get('id')==identity or identity.startswith('native:') and canonical_id==identity or media_reference_only and identity==legacy_id:
+                        matches+=1;selected=(position,row,descriptor,canonical_id,legacy_id)
+                    position+=len(line);ordinal+=1
+        finally:os.close(fd)
+        if descriptor and checksum.hexdigest() != descriptor.get('sha256'):
+            raise HistoryError('Preserved source bytes changed')
+    if (any(stamp(file)[0] != saved for file, saved in guards) or stamp(path)[0]!=revision
+            or (app_home is not None and context_head(app_home,directory.name,history_cwd)!=head)):
+        raise HistoryError('Native history changed during source capture')
+    if app_home is not None:guard_context_clear(app_home,directory.name)
+    record(directory/'metadata.json')
+    if matches!=1:raise HistoryError('The selected native message boundary is unavailable or ambiguous')
+    position,row,descriptor,canonical_id,legacy_id=selected
+    if visible_reference_only or media_reference_only:
+        updates, diagnostics = content_updates(row, position)
+        if not visible(row) or row.get('role') not in {'user','assistant'} or diagnostics or not any(update.get('content',{}).get('type')=='text' and update['content'].get('text','').strip() for update in updates):
+            raise HistoryError('Choose a visible original user or assistant message')
+        if media_reference_only:
+            if row['role']!='assistant' or (row.get('metadata') or {}).get('ephemeral') is True:
+                raise HistoryError('Choose a saved assistant message for inline media')
+            return {'revision':revision,'selection':'exact-media-reference','requestedId':identity,'message':{'id':canonical_id,'role':'assistant',**({'legacyMessageId':legacy_id} if legacy_id else {})},'complete':True,'execution':False,'mutationAuthority':'none'}
+        return {'revision':revision,'selection':'exact-visible-reference','message':{'id':identity,'role':row['role']},'complete':True,'execution':False,'mutationAuthority':'none'}
+    if not visible(row) or row.get('role')!='user':raise HistoryError('Choose a visible native user message boundary')
+    updates, diagnostics = content_updates(row, position)
+    if diagnostics or any(update.get('sessionUpdate') != 'user_message_chunk' for update in updates):
+        raise HistoryError('Complete historical user message projection is unavailable')
+    text = ''.join(update['content']['text'] for update in updates if update['content']['type'] == 'text')
+    metadata = provenance(row)
+    if descriptor:
+        metadata.update(historicalOnly=True, mutationAuthority='none', preservedSource={
+            'kind':'context-clear','archiveId':descriptor['archiveId'],'sha256':descriptor['sha256'],'complete':True})
+    message = {'id': identity, 'role': 'user', 'text': text,
+               '_meta': {'amplifier.dev/history': metadata}}
+    result = {'revision': revision, 'selection': 'exact-message', 'message': message,
+              'complete': True, 'execution': False}
+    if len(json.dumps(result, ensure_ascii=False).encode()) > 65536:
+        raise HistoryError('Historical message exceeds the complete-source byte bound')
+    return result
+
+
 def provenance(row):
     metadata=row.get('metadata') or {};marker=metadata.get('amplifier_input') or {}
     result={'authorization':'unverified-native-history','inputOrigin':'unknown'}
     # Only recorded facts. Input(kind=user) is not proof of current human consent.
-    for name in ('inputOrigin','activeInputId','questionId','observationId','scheduledRunId','voiceId','voiceItemId','createdAt'):
+    for name in ('inputOrigin','via','activeInputId','questionId','observationId','scheduledRunId','voiceId','voiceItemId','createdAt'):
         value=metadata.get(name,row.get(name))
         if value is None and name=='createdAt':value=metadata.get('timestamp')
         if isinstance(value,str) and len(value)<=8192:result[name]=value
         elif name=='createdAt' and type(value) in (int,float):result[name]=value
+    delivery = metadata.get('voiceDelivery')
+    peer = metadata.get('peerEnvelope')
+    if metadata.get('inputOrigin') == 'peer' and isinstance(peer, dict) and len(json.dumps(peer).encode()) <= 12000:
+        result['peerEnvelope'] = peer
+    if isinstance(delivery, dict) and delivery.get('version') == 1:
+        result['voiceDelivery'] = {key:value for key,value in delivery.items() if key != 'context'}
+    if result.get('inputOrigin') == 'peer' and isinstance(peer, dict) and peer.get('mode') == 'notify' and metadata.get('passive') is True:
+        result['recordedOnly'] = True
+    feedback = metadata.get('amplifier_context_event')
+    if isinstance(feedback, dict) and feedback.get('kind') == 'reaction' and len(json.dumps(feedback).encode()) <= 32768:
+        result['feedbackEvent'] = feedback
+        result['recordedOnly'] = True
     quote = metadata.get('replyTo')
     if isinstance(quote, dict) and len(json.dumps(quote).encode()) <= 32768:
         result['replyTo'] = quote
@@ -58,21 +190,31 @@ def steering_target(row):
     metadata=row.get('metadata') or {};marker=metadata.get('amplifier_input') or {}
     target=metadata.get('activeInputId')
     if (row.get('role')=='user' and marker.get('kind')=='steer'
-            and metadata.get('inputOrigin')=='steering'
+            and (metadata.get('inputOrigin')=='steering' or
+                 (metadata.get('inputOrigin')=='peer' and
+                  isinstance(metadata.get('peerEnvelope'),dict) and
+                  metadata['peerEnvelope'].get('mode')=='steer'))
             and isinstance(target,str) and 0<len(target)<=8192):
         return target
     return None
 
 
+def passive_peer(row):
+    metadata=row.get('metadata') or {};event=metadata.get('amplifier_context_event') or {}
+    return (row.get('role')=='user' and metadata.get('inputOrigin')=='peer'
+            and metadata.get('passive') is True and event.get('kind')=='peer-notification')
+
+
 def starts_turn(row,current):
-    if current is None or (row.get('metadata') or {}).get('amplifier_voice'):return True
+    if passive_peer(row):return current is None
+    if current is None or (row.get('metadata') or {}).get('amplifier_voice') or (row.get('metadata') or {}).get('amplifier_context_event'):return True
     return row.get('role')=='user' and steering_target(row)!=current
 
 
 def visible(row):
     metadata=row.get('metadata') or {}
     marker=metadata.get('amplifier_input') or {}
-    return (row.get('role') in {'user','assistant','tool'} and metadata.get('ephemeral') is not True
+    return (row.get('role') in {'user','assistant','tool'} and (metadata.get('ephemeral') is not True or metadata.get('amplifier_context_event', {}).get('kind') in {'reaction', 'peer-notification'})
             and marker.get('kind','user') in {'user','steer'} and marker.get('source','user')=='user')
 
 def content_updates(row,position):
@@ -87,6 +229,8 @@ def content_updates(row,position):
             updates.append({'sessionUpdate':'tool_call_update','toolCallId':identity,'status':'completed','rawOutput':blocks,'_meta':meta})
         else:diagnostics.append({'code':'unassociated_tool_result','position':position})
         return updates,diagnostics
+    # starts_turn keeps passive notices inside the generation's original turn;
+    # the chunk still preserves the canonical row role and peer attribution.
     kind='user_message_chunk' if role=='user' else 'agent_message_chunk'
     from .public_message import row_envelope
     try:original=row_envelope(row)
@@ -119,7 +263,7 @@ def content_updates(row,position):
             updates.append({'sessionUpdate':kind,'content':{'type':'resource_link','uri':block['image_url']['url'],'name':'Image'},'_meta':meta})
         elif tag in {'tool_call','tool_use'}:
             identity=block.get('id') or block.get('tool_call_id')
-            if identity:updates.append({'sessionUpdate':'tool_call','toolCallId':identity,'title':block.get('name','Tool'),'status':'in_progress','rawInput':block.get('arguments',block.get('input',{})),'_meta':meta})
+            if identity:updates.append({'sessionUpdate':'tool_call','toolCallId':identity,'title':block.get('name') or block.get('tool') or 'Tool','status':'in_progress','rawInput':block.get('arguments',block.get('input',{})),'_meta':meta})
         elif tag in {'thinking','redacted_thinking','reasoning'}:continue
         else:diagnostics.append({'code':'unsupported_content_type','type':tag,'position':position})
     for call in row.get('tool_calls') or []:
@@ -129,7 +273,7 @@ def content_updates(row,position):
             try:arguments=json.loads(arguments)
             except ValueError:pass
         if call.get('id') and not any(u.get('toolCallId')==call['id'] for u in updates):
-            updates.append({'sessionUpdate':'tool_call','toolCallId':call['id'],'title':fn.get('name','Tool'),'status':'in_progress','rawInput':arguments,'_meta':meta})
+            updates.append({'sessionUpdate':'tool_call','toolCallId':call['id'],'title':fn.get('name') or fn.get('tool') or 'Tool','status':'in_progress','rawInput':arguments,'_meta':meta})
     return updates,diagnostics
 
 def _cursor(revision,offset):
@@ -208,11 +352,11 @@ def _page(directory,*,cursor=None,limit=50,max_bytes=2_000_000,expected_revision
                 try:row=json.loads(raw)
                 except ValueError:raise HistoryError('Native transcript contains a malformed record; history was preserved.')
                 if not isinstance(row,dict) or not isinstance(row.get('role'),str):raise HistoryError('Native transcript record has no role.')
-                rows.append((position,row));turns+=int(row.get("role")=="user" and visible(row) and steering_target(row) is None);consumed=position;buffer=clean[:split+1] if split>=0 else b''
+                rows.append((position,row));turns+=int(row.get("role")=="user" and visible(row) and not passive_peer(row) and steering_target(row) is None);consumed=position;buffer=clean[:split+1] if split>=0 else b''
                 if not buffer:break
             if offset==0 and not buffer:break
     if stamp(path)[0]!=revision:raise HistoryError('Native history changed during read; retry the read with a fresh cursor.')
-    updates=[];groups=[];group_positions=[];current=None;public_rows=[]
+    updates=[];groups=[];group_positions=[];current=None;public_rows=[];plan_calls={}
     from .public_message import public_row,locator
     for position,row in reversed(rows):
         if include_public_rows:
@@ -227,8 +371,11 @@ def _page(directory,*,cursor=None,limit=50,max_bytes=2_000_000,expected_revision
         identity=message_id(row,position,epoch)
         voice=(row.get('metadata') or {}).get('amplifier_voice')
         if starts_turn(row,current['id'] if current else None):
-            current={'id':marker.get('id') or identity,'updates':[],'state':'unknown',**({'recordedOnly':True} if voice else {}),**({'archiveId':archive_id,'historicalOnly':True} if archive_id else {})}
+            current={'id':marker.get('id') or identity,'updates':[],'state':'unknown',**({'recordedOnly':True} if voice or (row.get('metadata') or {}).get('amplifier_context_event') else {}),**({'archiveId':archive_id,'historicalOnly':True} if archive_id else {})}
             groups.append(current);group_positions.append(position)
+            plan_calls.clear()
+        from .plan import history_plans
+        values.extend(history_plans(values, plan_calls))
         reference=message_reference(directory,row,position,epoch,archive_id=archive_id)
         for value in values:
             if include_public_rows and (row.get('metadata') or {}).get('amplifier_public_message') is not None:

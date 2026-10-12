@@ -55,13 +55,19 @@ def live_plan(plan, background_delegate=True):
     """Overlay supported streaming loops while preserving the bundle contract."""
     result = copy.deepcopy(plan)
     changed = []
-    root_loop = result.get("session", {}).get("orchestrator", {}).get("module")
+    root_loop = result.get("session", {}).get("orchestrator", {})
+    root_loop = root_loop if isinstance(root_loop, str) else root_loop.get("module")
     if root_loop not in {"loop-streaming", "loop-live"}:
         raise ValueError(f"Main session orchestrator {root_loop!r} is not compatible with live input. Select a bundle using loop-streaming or loop-live; custom orchestrators are not silently replaced.")
     def visit(node, prefix=""):
+        for key in ("orchestrator", "context"):
+            value = node.get("session", {}).get(key)
+            if isinstance(value, str):
+                node["session"][key] = {"module": value}
         context = node.get("session", {}).get("context", {})
         if context.get("module") == "context-managed" and context.get("config", {}).get("engine") == "boundary":
             context.setdefault("config", {}).setdefault("durable_checkpoints", True)
+            context["config"].setdefault("archive_recovery", True)
         loop = node.get("session", {}).get("orchestrator", {})
         if loop.get("module") in {"loop-streaming", "loop-live"}:
             original = loop["module"]
@@ -154,7 +160,23 @@ class SelectedProvider:
     def _execution_provider(self):
         return self.execution_adapter(self.original) if callable(self.execution_adapter) else self.original
     def __getattr__(self, name):
+        if name == "default_model" and self.selection.get("model"):
+            return self.selection["model"]
         method = getattr(self._execution_provider() if name in {'stream','request_budget'} else self.original, name)
+        if name == "compact_context" and callable(method):
+            async def compact(request, **kwargs):
+                selected, _ = self._selected_request(request, {}, consume=True)
+                # Compaction reserves its own output budget independently of
+                # the ordinary conversation's answer limit.
+                selected = selected.model_copy(update={"max_output_tokens": request.max_output_tokens})
+                return await method(selected, **kwargs)
+            return compact
+        if name == "validate_compacted_context" and callable(method):
+            def validate(message):
+                if "model" in inspect.signature(method).parameters:
+                    return method(message, model=self.selection.get("model"))
+                return method(message)
+            return validate
         if name in {"stream", "request_budget"} and callable(method):
             # Keep feature detection honest: providers without stream still
             # raise AttributeError, while streaming providers receive the same
@@ -203,6 +225,8 @@ class SelectedProvider:
             kwargs["model"] = self.selection["model"]
         effort = self.selection.get("effort")
         metadata = getattr(request, "metadata", None) or {}
+        if metadata.get("purpose") == "context-compaction":
+            updates.pop("max_output_tokens", None)
         if metadata.get("purpose") == "context-compaction" and request.reasoning_effort is not None:
             # Summaries have their own effort budget. Keep the same explicit
             # value in preflight and dispatch, including keyword-only providers.
@@ -602,6 +626,8 @@ def prepare_source_resolver(bundle, config, snapshot, components=None):
 @runtime_preparation.governed
 async def load_configured_bundle(registry, config, reference):
     """Apply the same source selections to roots and app behaviors as includes."""
+    from .bundle_paths import canonical_bundle_reference
+    reference = canonical_bundle_reference(config, reference)
     replacement = config.resolve_source(reference)
     if replacement is None:
         registered = registry.find(reference)
@@ -748,7 +774,8 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
         saved_bundle = saved_bundle.removeprefix("bundle:")
     if saved_bundle is not None and (not isinstance(saved_bundle, str) or not saved_bundle.strip()):
         raise ValueError("The saved session has no resolvable bundle.")
-    chosen = saved_bundle or bundle or config.active_bundle
+    from .bundle_paths import canonical_bundle_reference
+    chosen = canonical_bundle_reference(config, saved_bundle or bundle or config.active_bundle)
     bundle_identity = chosen
     directory = Path(report_dir or config.home / "runtime-reports" / runtime.session_id)
     registry, loaded, chosen = (resolved_root.take(config, chosen, execution_workspace=execution_workspace) if resolved_root is not None
@@ -761,7 +788,8 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
         loaded = apply_runtime_plan(loaded, edited, config, execution_workspace)
     if not snapshot:
         from .mentions import include_instruction_files
-        loaded = include_instruction_files(loaded)
+        loaded = include_instruction_files(loaded, config_home=config.settings_file.parent,
+                                           execution_workspace=execution_workspace)
     baseline = loaded.to_mount_plan()
     from ..provider_recording import apply_provider_recording
     apply_provider_recording(baseline, home=config.home)
@@ -801,6 +829,11 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
     if getattr(prepared, "resolver", None) is not None:
         prepared.resolver = ComponentResolver(prepared.resolver, components, config.launcher_module_sources)
     await materialize_bundle_providers(loaded, prepared)
+    # A restored or delegated plan keeps its exact image connection. Selection
+    # happens before mounting and never retries a dispatched image request.
+    if not snapshot and not getattr(loaded, '_host_provider_credentials_bound', False):
+        from ..image_defaults import apply_defaults
+        await apply_defaults(prepared.mount_plan, config.settings)
     apply_provider_environment(prepared.mount_plan)
     from ..session_files import project_slug
     prepared.mount_plan.update(application_host=application_host, root_session_id=runtime.session_id,
@@ -936,6 +969,20 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
             return HookResult()
         for event in ("tool:post", "tool:error", "orchestrator:complete", "context:compaction_finished"):
             coordinator.hooks.register(event, checkpoint_hook, name="unified-checkpoint-" + event)
+        async def saved_message_boundary(event, data):
+            # The streaming loop has added this response to context before tool
+            # execution, but tool:post has not checkpointed it yet. Commit that
+            # ordinary execution boundary before the agent asks for saved IDs.
+            # Passive history reads still never mount or write a session.
+            args = data.get('tool_input') or {}
+            if (data.get('session_id', runtime.session_id) == runtime.session_id
+                    and data.get('tool_name') == 'app_control'
+                    and args.get('operation') == 'get_state'
+                    and (args.get('args') or {}).get('path') == '/messages'):
+                await checkpoint()
+            return HookResult()
+        coordinator.hooks.register('tool:pre', saved_message_boundary,
+                                   name='unified-saved-message-boundary')
         async def cleanup_jobs():
             jobs.close()
         coordinator.register_cleanup(cleanup_jobs)
@@ -988,7 +1035,7 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
         raise
 
 
-async def prepare_dependencies(workspace, *, bundle=None, install_overrides=None, dependency_batch=None, global_only=False, runtime_plan=None):
+async def prepare_dependencies(workspace, *, bundle=None, install_overrides=None, dependency_batch=None, global_only=False, runtime_plan=None, profile_catalog=None):
     """Prepare a fresh qualification worker before importing its live runtime.
 
     This first probe only installs configured dependencies. A separate process
@@ -1008,6 +1055,19 @@ async def prepare_dependencies(workspace, *, bundle=None, install_overrides=None
     snapshot = is_snapshot(loaded)
     if runtime_plan is not None:
         loaded = apply_runtime_plan(loaded, runtime_plan, config, execution_workspace)
+    if profile_catalog is not None:
+        from ..profile_catalog import characteristics
+        facts = characteristics(loaded)
+        profile_catalog[bundle or config.active_bundle] = facts
+        # Registration does not promise a usable Unified conversation. Keep
+        # partial/custom-loop aliases for composition without preparing them as
+        # standalone sessions. An unusable selected default remains an error.
+        if not facts['complete'] or not facts['supportedLoop']:
+            if (bundle or config.active_bundle) == config.active_bundle:
+                if facts['hasLoop'] and not facts['supportedLoop']:
+                    live_plan(loaded.to_mount_plan())  # Explain the unsupported choice.
+                raise ValueError('The selected conversation profile is incomplete: ' + ', '.join(facts['missing']))
+            return None
     adapted, _ = live_plan(loaded.to_mount_plan())
     components = getattr(loaded, '_host_components', None) or required_components()
     loaded.session = adapted['session']

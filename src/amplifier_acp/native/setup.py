@@ -214,8 +214,8 @@ def validate_matrix(value):
 
 class SetupManager:
     def __init__(self,home,*,store=None,runtime_operation=None,progress=None,auth_command=None,probe_command=None,catalog=None,allow_missing_workspace=False,global_only=False):
-        from .provider_catalog import ProviderCatalog
-        self.catalog=catalog or ProviderCatalog()
+        from .provider_catalog import SharedProviderCatalog
+        self.catalog=catalog or SharedProviderCatalog(home)
         self.global_only=global_only
         self.allow_missing_workspace=allow_missing_workspace
         self.home=Path(home); self.store=store or SettingsStore(home)
@@ -230,6 +230,24 @@ class SetupManager:
             while not workspace.is_dir() and workspace.parent!=workspace:
                 workspace=workspace.parent
         return load_config(workspace,home=self.home,global_only=self.global_only)
+
+    def credential_check(self,workspace,module,env_var=None):
+        config=self.config(workspace)  # Also loads the owned keys.env.
+        result=environment_credential(module,env_var=env_var)
+        if env_var is not None or not result['supported']:return result
+        names=list(PROVIDER_ENV.get(module,()))
+        for row in config.providers:
+            if row.get('module')!=module:continue
+            value=row.get('config',{}).get(credential_field(module))
+            reference=re.fullmatch(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}',value) if isinstance(value,str) else None
+            if reference and reference.group(1) not in names:names.append(reference.group(1))
+        chosen=next((name for name in names if os.environ.get(name)),result['envVar'])
+        if chosen:result=environment_credential(module,env_var=chosen)
+        # Alternatives describe the default variable's supported fallbacks,
+        # independently of which available variable was selected. Otherwise an
+        # alternative selection repeats the default and hides its own name.
+        result['alternatives']=[name for name in names if name!=result['defaultEnvVar']]
+        return result
 
     @contextmanager
     def read_snapshot(self,workspace):
@@ -291,6 +309,8 @@ class SetupManager:
             raise ValueError('Provider configuration changed during discovery. The new configuration is being refreshed.')
         if action=='providers.models':
             result={**result,'modelsProviderId':args['id'],'modelsSupported':result.get('modelsSupported',result.get('supported',True))}
+        if action=='providers.imageModels':
+            result={**result,'imageModelsProviderId':args['id'],'imageModelsSupported':result.get('imageModelsSupported',False)}
         return result
 
     async def probe(self,action,args,workspace):
@@ -320,7 +340,7 @@ class SetupManager:
         stderr_task=asyncio.create_task(stderr_tail(process.stderr))
         try:
             try:
-                output,stderr=await asyncio.wait_for(asyncio.gather(communicate(process,json.dumps({'action':action,'model':args.get('model'),'module':module,'config':config,'source':provider_source(configured,module,row),'fallbackSource':KNOWN_PROVIDER_SOURCES.get(module),'registryHome':str(getattr(configured,'registry_home',self.home/'foundation'))}).encode()),stderr_task),90)
+                output,stderr=await asyncio.wait_for(asyncio.gather(communicate(process,json.dumps({'action':action,'model':args.get('model'),**({'prompt':args['prompt']} if action=='naming.complete' else {}),'module':module,'config':config,'source':provider_source(configured,module,row),'fallbackSource':KNOWN_PROVIDER_SOURCES.get(module),'registryHome':str(getattr(configured,'registry_home',self.home/'foundation'))}).encode()),stderr_task),90)
             except TimeoutError:
                 raise ValueError('Provider check timed out after 90 seconds. Check connectivity and credentials, then retry.') from None
             try:result=json.loads(output)
@@ -331,9 +351,13 @@ class SetupManager:
                 ) from None
             if result.get('error'):raise ValueError(result['error'])
             if process.returncode:raise ValueError(f'The provider check could not finish (exit code {process.returncode}). '+failure_detail(stderr))
-            metadata={'module':module,'info':result['info'],'configSchema':result['configSchema']}
+            metadata={'module':module,'info':result['info'],'configSchema':result['configSchema'],'imageGeneration':result.get('imageGeneration')}
             response={'providerMetadata':metadata}
+            if action=='providers.imageModels':response.update(imageModels=result.get('imageModels',[]),imageModelsProviderId=args['id'],imageModelsSupported=result.get('imageModelsSupported',False))
             if action=='providers.models':response.update(models=result.get('models',[]),modelsProviderId=args['id'],modelsSupported=result.get('modelsSupported',True))
+            if action=='naming.complete':
+                if result['naming'].get('error'):raise ValueError(result['naming']['error'])
+                response['text']=result['naming']['text']
             if action=='providers.testMessage':response['messageTest']={**result['messageTest'],'providerId':args['id'],'checkedAt':time.time()}
             if action=='providers.test':response['test']={**result['test'],'providerId':args['id']}
             return response
@@ -408,7 +432,7 @@ class SetupManager:
                 elif not config.get(field):
                     if old.get(field):config[field]=old[field]
                     else:
-                        credential=environment_credential(module)
+                        credential=self.credential_check(workspace,module)
                         if credential['supported'] and credential['available']:config[field]='${'+credential['envVar']+'}'
                 if module=='provider-openai-chatgpt':
                     same_provider=existing is not None and existing['module']==module
@@ -504,13 +528,22 @@ class SetupManager:
     async def perform(self,action,args):
         workspace=args.get('workspace') or str(Path.cwd());scope=args.get('scope','global')
         self.store.path(workspace,scope) # Validate scope even on reads.
+        if action in {'providers.imageModels','providers.configureImages'}:
+            from amplifier_acp.image_setup_contract import validate
+            validate(action,args)
         if action=='providers.credentials':
             cli=bool(await asyncio.to_thread(github_cli_token)) if args['module']=='provider-github-copilot' else False
-            self.config(workspace) # Load app-owned keys as well as the launch environment.
-            return {'credentialCheck':{**environment_credential(args['module'],env_var=args.get('envVar')), 'githubCliAvailable':cli,'requestedEnvVar':args.get('envVar',''), 'checkedAt':time.time()}}
-        if action=='providers.list':return {'providers':self.provider_rows(workspace),'providersWorkspace':str(workspace),'providersLoadedAt':time.time()}
-        if action in {'providers.schema','providers.models','providers.test','providers.testMessage'}:
+            return {'credentialCheck':{**self.credential_check(workspace,args['module'],env_var=args.get('envVar')), 'githubCliAvailable':cli,'requestedEnvVar':args.get('envVar',''), 'checkedAt':time.time()}}
+        if action=='providers.list':
+            from .image_defaults import preference
+            effective = self.config(workspace)
+            return {'providers': self.provider_rows(workspace), 'providersWorkspace': str(workspace),
+                    'providersLoadedAt': time.time(), 'imagePreference': preference(effective.settings, effective.providers)}
+        if action in {'providers.schema','providers.models','providers.imageModels','providers.test','providers.testMessage'}:
             return await (self.probe(action,args,workspace) if action in {'providers.test','providers.testMessage'} else self.cached_probe(action,args,workspace))
+        if action=='providers.configureImages':
+            from .image_setup import configure_images
+            return await configure_images(self,args,workspace,scope)
         if action in {'providers.move','providers.reorder'}:
             current=self.config(workspace)
             enabled={row['id'] for row in self.provider_rows(workspace) if row['enabled']}

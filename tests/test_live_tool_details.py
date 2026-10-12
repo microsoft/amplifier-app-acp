@@ -41,7 +41,7 @@ async def test_authoritative_hook_to_standard_acp(sid,terminal):
     async def notify(method,params):wire.append({'method':method,**params})
     server=SimpleNamespace(config={'home':'/unused'},extensions=set(),notify=notify)
     session=Session.__new__(Session)
-    session.server=server;session.identity='root';session.tools=set()
+    session.server=server;session.identity='root';session.tools=set();session.prompt=None
     session.coordination=SimpleNamespace(observe=lambda row:False)
     events=[];observer=ExecutionEvents('root',events.append)
     observer.hook(sid,'tool:pre',{'tool_call_id':'original-id','tool_name':'read_file','tool_input':{'path':'a.txt','secret':'private'}})
@@ -63,7 +63,7 @@ async def test_authoritative_hook_to_standard_acp(sid,terminal):
 async def test_terminal_first_and_concurrent_same_original_id():
     wire=[]
     async def notify(method,params):wire.append(params['update'])
-    session=Session.__new__(Session);session.identity='root';session.tools=set()
+    session=Session.__new__(Session);session.identity='root';session.tools=set();session.prompt=None
     session.server=SimpleNamespace(extensions=set(),notify=notify)
     session.coordination=SimpleNamespace(observe=lambda row:False)
     events=[];observer=ExecutionEvents('root',events.append)

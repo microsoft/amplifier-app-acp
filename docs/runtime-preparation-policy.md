@@ -59,3 +59,14 @@ also checks false/invalid launcher options, old Foundation refusal and the
 separate-prefix staging boundary. No account calls or live installation edits
 are needed. This does not qualify every third-party module's direct filesystem
 or arbitrary subprocess behavior.
+# Public repository download policy
+
+The trusted launcher may set `AMPLIFIER_GITHUB_ACCESS=anonymous` to fetch public
+sources independently of a restricted GitHub login. Native startup binds this
+policy for lazy Foundation children; bundle inspection, update commands and
+separate preparation children also apply it explicitly. It disables personal
+Git configuration, account helpers, injected headers/cookies and askpass for
+these children without editing personal files. Proxy and CA settings remain.
+Normal mode preserves existing authentication and source overrides. Anonymous
+mode does not grant private access or relax immutable runtime/source admission.
+It is process policy, not a per-session or peer-supplied option.

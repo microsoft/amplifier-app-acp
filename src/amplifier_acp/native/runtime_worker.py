@@ -88,6 +88,7 @@ class Worker:
         self.mounted_settings_stamp = {}
         self.config_inputs = ()
         self.command_lock = asyncio.Lock()
+        self.peer_stop_epoch = 0
         self.memory_task = None
         self.start_config = None
         self.remounting = False
@@ -157,6 +158,28 @@ class Worker:
                 args = {**args, '_contextInputs': ids,
                         '_contextBindings': bindings}
             return await self.bridge(operation, args)
+        register = getattr(coordinator, "register_capability", None)
+        if (assigned is None and callable(register)
+                and (self.start_config or {}).get("hostInfo", {}).get("features", {}).get("peerContinuation") is True):
+            async def peer_continuation_ready():
+                runtime, gate = self.runtime, self.activation_gate
+                generation = runtime.generation if runtime else None
+                generation_id = generation.get("id") if generation else None
+                epoch = self.peer_stop_epoch
+                def current():
+                    return bool(generation and gate and gate.current_valid
+                        and self.runtime is runtime and runtime.generation is generation
+                        and generation.get("id") == generation_id and self.peer_stop_epoch == epoch
+                        and not runtime.closed and not runtime.stop_requested
+                        and not self.retiring and not self.draining and not self.transport_closed
+                        and not self.ownership.yielding and not coordinator.cancellation.is_cancelled)
+                if not current():
+                    return False
+                task = self.controls.tasks.record() or {}
+                result = await bridge("coordination.continuation_ready", {
+                    "taskId": task.get("id"), "taskRevision": task.get("revision")})
+                return result.get("ready") is True and current()
+            register("web.peer_continuation_ready", peer_continuation_ready)
         return bridge
 
     def stage_original(self, input_id, original):
@@ -181,11 +204,14 @@ class Worker:
             event['rootSessionId'] = event_root_id
         root_generation = event_session_id == root_session_id and event_root_id == root_session_id
         if root_generation and event.get('type') == 'generation.started':
+            self.peer_terminal = None
             self.root_generation_outcome = None
             self.terminal_checkpointed = False
             self.pending_input_failure = None
             capability=self.session.coordinator.get_capability('live.steering')
             if isinstance(capability,dict):event['activeSteering']={key:capability[key] for key in ('version','mode','cancellable') if key in capability}
+            if isinstance(capability,dict) and capability.get('version')==1 and capability.get('mode')=='request_boundary' and callable(self.session.coordinator.get_capability('live.attachments.encode')):
+                event['activeSteering']['content']={'version':1,'attachments':True,'quotedReplies':True}
         elif root_generation and event.get('type') in {'generation.finished', 'generation.failed', 'generation.detached'}:
             self.root_generation_outcome = {
                 'generation.finished': 'completed',
@@ -197,9 +223,9 @@ class Worker:
             finish_scheduled_input(self.controls, event)
             from amplifier_acp.native.observation_input import finish as finish_observation_input
             finish_observation_input(self.controls, event)
-        if event.get('type') == 'generation.started':
+        if root_generation and event.get('type') == 'generation.started':
             self.context_inputs = []
-        if event.get('type') in {'input.delivered', 'steering.applied'} and event.get('input_id'):
+        if root_generation and event.get('type') in {'input.delivered', 'steering.applied'} and event.get('input_id'):
             if event['input_id'] not in self.context_inputs:
                 self.context_inputs = (self.context_inputs + [event['input_id']])[-8:]
         if self.naming:self.naming.observe(event)
@@ -211,6 +237,11 @@ class Worker:
             arguments = (job.get("tool_call") or {}).get("arguments", {})
             if isinstance(arguments, dict) and isinstance(arguments.get("agent"), str):
                 event["agent"] = arguments["agent"]
+        if root_generation and event.get('type') == 'generation.finished':
+            from .peer_results import terminal
+            proof = terminal(self, event)
+            if proof is not None:
+                event['peerTerminal'] = proof
         if root_generation and event.get('type') == 'generation.failed':
             # loop-live emits this before final job joining/checkpoint. It is
             # not terminal proof until the owning execute task has settled.
@@ -289,11 +320,13 @@ class Worker:
             retry = {}
             detail = "Waiting for the configured model to respond."
             if event == "context:compaction_started":
-                phase, detail = "compacting", "Making room in the conversation. You can keep sending updates."
+                phase, detail = "compacting", "Making room in the conversation. This can take a few minutes. You can keep sending updates."
+                if data.get("recovery"):
+                    detail = "Preparing recent context from saved history. This can take a few minutes. Older history remains available. You can keep sending updates."
             elif event == "context:compaction_progress":
                 phase = "compacting"
                 completed, remaining = data.get("completed_parts", 0), data.get("remaining_parts", 0)
-                detail = (f"Recovering oversized history · {completed} of {completed + remaining} parts saved."
+                detail = (f"Recovering oversized history · {completed} of {completed + remaining} parts saved. This can take a few minutes."
                           if remaining else "Conversation context prepared; continuing work.")
             elif event == "context:compaction_finished":
                 detail = "Conversation context prepared; continuing work." if data.get("outcome") == "completed" else "Context preparation " + str(data.get("outcome", "ended")) + "."
@@ -335,9 +368,6 @@ class Worker:
         try:
             publish({"type": "runtime.progress", "phase": "bundle-preparation",
                 "detail": "Loading your bundle and app behaviors; downloading or installing modules as needed."})
-            # Module activators run uv pip separately from the host project.
-            # Preserve an explicitly supplied user override if there is one.
-            os.environ.setdefault("UV_OVERRIDE", str(Path(__file__).with_name("runtime_deps") / "compatibility.txt"))
             # Load only app code, never the outer host's site-packages metadata.
             if __package__:
                 from .runtime_bootstrap import bootstrap_app_package
@@ -356,11 +386,14 @@ class Worker:
             from amplifier_module_loop_live.runtime import Runtime
             self.home = app_home()
             from amplifier_acp.native.runtime_qualification import active_install_overrides
-            install_overrides = active_install_overrides(self.home, os.environ.get("UV_OVERRIDE"))
-            if install_overrides is not None:
-                os.environ["UV_OVERRIDE"] = str(install_overrides)
+            # App dependency constraints belong only to module installers. A
+            # tool invoking uv must retain the caller's environment unchanged.
+            qualified_overrides = install_overrides = None
+            if not os.environ.get("UV_OVERRIDE"):
+                qualified_overrides = active_install_overrides(self.home)
+                install_overrides = qualified_overrides if qualified_overrides is not None else Path(__file__).with_name("runtime_deps") / "compatibility.txt"
             self.runtime = Runtime(session_id=config["id"], observer=self.observe, max_input_chars=200_000)
-            self.telemetry = ExecutionEvents(config["id"], publish)
+            self.telemetry = ExecutionEvents(config["id"], publish, self.home/'sessions'/config["id"]/'model-calls')
             workspace = Path(config.get("workspace") or config.get("workingDirectory") or os.getcwd()).expanduser().resolve(strict=True)
             from amplifier_acp.managed_session import runtime_scope
             managed_scope=runtime_scope(str(workspace),config["id"],{"managedSessionRoots":json.loads(os.environ.get("AMPLIFIER_ACP_MANAGED_ROOTS","[]"))})
@@ -405,8 +438,8 @@ class Worker:
                 shared_handle_getter=lambda: self.shared_handle,
                 write_guard=self.activation_gate.check_current, resolved_root=resolved_root,
                 execution_workspace=config.get("workingDirectory"), install_overrides=install_overrides,global_only=bool(managed_scope))
-            if install_overrides is not None:
-                active_install_overrides(self.home, str(install_overrides))
+            if qualified_overrides is not None:
+                active_install_overrides(self.home, str(qualified_overrides))
             self.module_source_overrides = report.get("moduleSourceOverrides", {})
             self.config_inputs = tuple(report.get("config_inputs", ()))
             if config.get("mcpServers"):
@@ -415,7 +448,7 @@ class Worker:
             from amplifier_acp.native.attachments import encode
             self.session.coordinator.register_capability('live.attachments.encode',encode)
             self.controls = RuntimeControls(self.session, self.runtime, self.telemetry)
-            self.controls.capacity.admit = (lambda row: self.bridge("capacity.admit", {"call": row})) if config.get("hostInfo",{}).get("features",{}).get("capacity") else None
+            self.controls.capacity.admit = (lambda row: self.bridge("capacity.admit", {"call": row, "budget": self.controls.capacity.snapshot()})) if config.get("hostInfo",{}).get("features",{}).get("capacity") else None
             self.telemetry.admission_guard = self.controls.capacity.guard
             # Preserve app controls on native mounts. A legacy common snapshot
             # retains its previous restoration policy during one-time recovery.
@@ -468,9 +501,16 @@ class Worker:
             from amplifier_acp.native.host.naming import LiveSessionNaming
             completed=[identity for event in config.get('generations',[]) if event.get('event')=='generation.finished' for identity in event.get('input_ids',[]) if identity in {t['id'] for t in config.get('execution',{}).get('turns',[])}]
             self.naming=LiveSessionNaming(self.session.coordinator,self.home,publish,completed)
+            from .peer_results import install as install_peer_results
+            install_peer_results(self)
             from amplifier_acp.native.input_provenance import Context as ProvenanceContext
             self.input_provenance_path=self.home/'sessions'/config['id']/'input-provenance.sqlite3'
             await self.session.coordinator.mount('context',ProvenanceContext(self.session.coordinator.get('context'),self.input_provenance_path,self.public_originals))
+            from amplifier_acp.native.passive_feedback import install as install_feedback
+            self.passive_feedback = install_feedback(self.controls, self.input_provenance_path.parent)
+            if config.get('hostInfo', {}).get('features', {}).get('peerNotifications'):
+                from amplifier_acp.native.passive_peer import install as install_peer
+                self.passive_peer = install_peer(self.controls, self.bridge)
             await self.ownership.register()
             self.execution = asyncio.create_task(self.session.execute(""))
             self.execution.add_done_callback(self.executed)
@@ -705,6 +745,8 @@ class Worker:
         """Serialize admission with parking and bind a per-work write token."""
 
         op = data.get("op")
+        if op == 'stop':
+            self.peer_stop_epoch += 1
         if self.retiring or self.draining:
             # Only an exact live reply settles work already owned by cleanup.
             # This grants no command admission, activation or Host mutation.
@@ -896,8 +938,8 @@ class Worker:
                 self.context_bindings = dict(list(self.context_bindings.items())[-64:])
                 provenance = data.get('input_provenance')
                 if provenance is not None:
-                    if provenance != {'inputOrigin': 'coordination'}:
-                        raise ValueError('Unrecognized prompt provenance')
+                    from amplifier_acp.native.input_provenance import validate_prompt
+                    validate_prompt(provenance)
                     from amplifier_acp.native.input_provenance import reserve
                     reserve(self.input_provenance_path, data['input_id'], provenance)
                 self.stage_original(data['input_id'],original)
@@ -925,12 +967,19 @@ class Worker:
                         result={'accepted':False,'executed':False,'reason':'This mounted runtime has no anchored request-boundary steering capability.'}
                     elif not generation or generation['id']!=arguments.get('generationId') or generation.get('initial_input_id')!=arguments.get('activeInputId'):
                         result={'accepted':False,'executed':False,'reason':'The requested generation ended before steering admission.'}
+                    elif arguments.get('contentVersion')==1 and not callable(self.session.coordinator.get_capability('live.attachments.encode')):
+                        result={'accepted':False,'executed':False,'reason':'This mounted runtime has no steering attachment encoder.'}
                     else:
                         from amplifier_acp.native.input_provenance import reserve
                         from amplifier_module_loop_live.runtime import Input
-                        reserve(self.input_provenance_path,arguments['inputId'],{'inputOrigin':'steering','activeInputId':arguments['activeInputId'],**({'steeringProvenance':arguments['provenance']} if arguments.get('provenance') else {})})
+                        reserve(self.input_provenance_path,arguments['inputId'],{'inputOrigin':'steering','activeInputId':arguments['activeInputId'],**({'voiceDelivery':arguments['voiceDelivery']} if arguments.get('voiceDelivery') else {}),**({'steeringProvenance':arguments['provenance']} if arguments.get('provenance') else {})})
                         self.stage_original(arguments['inputId'],arguments.get('public_message'))
-                        try:result=await capability['submit'](Input('steer',arguments['text'],id=arguments['inputId'],activation=self.activation),arguments['generationId'])
+                        try:
+                            text=arguments['text']
+                            if arguments.get('contentVersion')==1:
+                                from amplifier_acp.native.message_interactions import prepare_input
+                                text=await prepare_input(self.session.coordinator,text,arguments.get('reply_context'),max_chars=self.runtime.max_input_chars)
+                            result=await capability['submit'](Input('steer',text,id=arguments['inputId'],attachments=tuple(arguments.get('attachments',[])),activation=self.activation),arguments['generationId'])
                         except ValueError as error:
                             self.public_originals.discard(arguments['inputId'])
                             result={'accepted':False,'executed':False,'reason':str(error)}
@@ -942,10 +991,19 @@ class Worker:
                     from amplifier_acp.native.question_input import admit
                     authority=(lambda value:self.bridge("questions.delivery.admit",value)) if self.start_config.get("hostInfo",{}).get("features",{}).get("questions") else None
                     result=await admit(self.controls,self.runtime,arguments,self.activation,authorize=authority,provenance_path=self.input_provenance_path)
+                elif data["operation"] in {"peer.submit", "peer.steer"}:
+                    from amplifier_acp.native.peer_input import admit
+                    result = await admit(self.controls, self.runtime, arguments, self.activation,
+                        authorize=lambda value: self.bridge('coordination.delivery.admit', value),
+                        stop_epoch=lambda: (self.peer_stop_epoch, self.retiring, self.draining, self.transport_closed, self.ownership.yielding),
+                        provenance_path=self.input_provenance_path, originals=self.public_originals, steering=data['operation'] == 'peer.steer')
                 elif data["operation"] == "observation.submit":
                     from amplifier_acp.native.observation_input import admit
                     result = await admit(self.controls, self.runtime, arguments, self.activation,
                         authorize=lambda value: self.bridge("observation.admit", value),provenance_path=self.input_provenance_path)
+                elif data["operation"] == "voice.delivery.record":
+                    from amplifier_acp.native.voice_history import bind_delivery
+                    result = await bind_delivery(self.controls, arguments)
                 elif data["operation"] == "voice.transcript.record":
                     from amplifier_acp.native.voice_history import record
                     result = await record(self.controls, arguments)

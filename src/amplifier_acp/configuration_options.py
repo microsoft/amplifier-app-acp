@@ -92,12 +92,16 @@ def project(state):
         instances.add(instance)
         info=provider.get('info') or {}; catalog=provider.get('modelCatalog') or {}; models=model_rows(catalog.get('models',[]))
         sources={key:'catalog' for key in models}
+        oauth=any(str(cap).startswith('auth:oauth') for cap in info.get('capabilities',[]))
+        authentication=provider.get('authentication') or {}
+        auth_status=authentication.get('status')
+        requires_sign_in=oauth and auth_status=='unauthenticated'
         # Configured defaults remain useful before an explicit catalog read, but
         # are never described as proof of current provider/account availability.
         configured=(info.get('defaults') or {}).get('model') or (info.get('defaults') or {}).get('default_model')
-        if catalog.get('state','not-loaded')=='not-loaded' and text(configured):
+        if catalog.get('state','not-loaded')=='not-loaded' and text(configured) and not oauth:
             models.setdefault(configured,{'id':configured,'display_name':configured});sources.setdefault(configured,'configured')
-        if instance==selected_instance and text(selected_model):
+        if instance==selected_instance and text(selected_model) and not (oauth and (selected_model=='latest' or selected_model.startswith('latest ('))):
             models.setdefault(selected_model,{'id':selected_model,'display_name':selected_model});sources.setdefault(selected_model,'effective')
         choices=[]
         for model_id,model in models.items():
@@ -110,11 +114,11 @@ def project(state):
             if instance==selected_instance and model_id==selected_model:selected_row=model;selected_provider=provider
         if len(selections)>MAX_OPTIONS:raise ValueError('Model configuration exceeds the standard option bound')
         groups.append({'group':instance,'name':text(info.get('display_name')) or instance,'options':choices,
-            '_meta':{META:{'version':1,'instance':instance,'catalogState':catalog.get('state','not-loaded'),'catalogFresh':catalog.get('fresh') is True}}})
-    if not selections:return [], {}, {}
+            '_meta':{META:{'version':1,'instance':instance,'catalogState':catalog.get('state','not-loaded'),'catalogFresh':catalog.get('fresh') is True,'requiresSignIn':requires_sign_in,**({'authenticationStatus':auth_status} if auth_status in ('authenticated','unauthenticated','expired','unknown') else {})}}})
+    if not selections and not groups:return [], {}, {}
     groups.insert(0,{'group':'','name':'Selection policy','options':[{'value':DEFAULT,'name':'Bundle default',
         'description':'Clear the explicit model and reasoning selection; use the bundle policy.'}]})
-    current=token('model',selected_instance,selected_model) if state.get('pinned') else DEFAULT
+    current=token('model',selected_instance,selected_model) if state.get('pinned') and token('model',selected_instance,selected_model) in selections else DEFAULT
     model_option={'id':'model','name':'Model','category':'model','type':'select','currentValue':current,'options':groups,
         'description':'Models are grouped by configured provider instance. Select one model to apply its provider and model together.',
         '_meta':{META:{'version':1,'groupedProviderModels':True,'effective':{k:effective[k] for k in ('instance','model','effort') if text(effective.get(k))}}}}

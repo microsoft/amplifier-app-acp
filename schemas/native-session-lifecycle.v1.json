@@ -179,6 +179,177 @@
           "exclusiveMinimum": 0
         }
       }
+    },
+    "exportContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "source",
+        "work",
+        "artifacts",
+        "omissions"
+      ],
+      "description": "Optional bounded observation data from the authorized Host; not canonical history or execution authority. Maximum serialized size 1 MiB.",
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "source": {
+          "const": "host-retained-observations"
+        },
+        "work": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "anchor",
+              "status",
+              "toolCalls",
+              "modelCalls"
+            ],
+            "properties": {
+              "anchor": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "status": {
+                "enum": [
+                  "completed",
+                  "cancelled",
+                  "error",
+                  "unknown"
+                ]
+              },
+              "toolCalls": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1000000
+              },
+              "modelCalls": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1000000
+              },
+              "durationSeconds": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 31536000
+              }
+            }
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "title",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4000
+              },
+              "kind": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "messageId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              }
+            }
+          }
+        },
+        "omissions": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "pattern": "^[a-z_]+$"
+          }
+        }
+      }
+    },
+    "exportArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commandId",
+        "expectedHistoryRevision",
+        "format"
+      ],
+      "properties": {
+        "commandId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expectedHistoryRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "format": {
+          "enum": [
+            "markdown",
+            "json"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "all",
+            "from",
+            "range"
+          ]
+        },
+        "fromMessageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "throughMessageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "minimal": {
+          "type": "boolean"
+        },
+        "includeExecution": {
+          "type": "boolean"
+        },
+        "includeConversationId": {
+          "type": "boolean"
+        },
+        "includeTimestamps": {
+          "type": "boolean"
+        },
+        "includeReferenceIds": {
+          "type": "boolean"
+        },
+        "exportContext": {
+          "$ref": "#/$defs/exportContext"
+        }
+      }
     }
   },
   "allOf": [
@@ -210,6 +381,25 @@
         "properties": {
           "args": {
             "$ref": "#/$defs/retentionArgs"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "export"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "args"
+        ],
+        "properties": {
+          "args": {
+            "$ref": "#/$defs/exportArgs"
           }
         }
       }

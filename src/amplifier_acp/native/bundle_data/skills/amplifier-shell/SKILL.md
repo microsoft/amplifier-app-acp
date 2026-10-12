@@ -22,10 +22,15 @@ delivered by a behavior so agents can learn the shell's separate extension API.
    components, use the returned `slots`, `registry`, `resolvedInstances` and
    `componentCommands`; only author against contracts that host exposes. Discover
    theme actions separately when a CSS skin is requested.
-3. If working outside an app session, use the host's authenticated
-   `GET /api/actions` and `POST /api/actions` interfaces through the user's
-   configured connection. If no connection exists, author locally and report
-   activation as unverified. Never read credential files to invent a connection.
+3. If working outside an app session, use a configured client that supports the
+   connected host's advertised action protocol. Do not assume legacy HTTP
+   endpoints exist on an AHP host. If no connection exists, author locally and
+   report activation as unverified. Never read credential files to invent a connection.
+
+The bundled guides describe the shell's reference contracts. An AHP client may
+offer only a subset: discover each required action before using a workflow.
+An absent action, custom renderer, SDK profile, or data subscription is a
+capability gap; do not invent it or claim a placeholder completed the request.
 
 **Success criteria:** An explicit target client and the current supported
 actions are known, or work is clearly limited to an offline package.

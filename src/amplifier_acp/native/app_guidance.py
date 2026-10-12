@@ -73,6 +73,8 @@ async def install_app_access(coordinator, bridge, *, host_info=None):
     from .memory_delivery import MemoryDelivery, POLICY as MEMORY_POLICY
     async def scoped_bridge(operation,args):
         feature='context' if operation.startswith('context.') else 'memory' if operation.startswith('memory.') else 'outputs' if operation.startswith('outputs.') else 'visual' if operation.startswith(('voice.visual.','computer.visual.')) else None
+        if operation == 'context.manifest' and features.get('outputs'):
+            return await bridge(operation,args)
         if feature and not features.get(feature):raise ValueError('Host feature '+feature+' is not advertised.')
         return await bridge(operation,args)
     delivery=SurfaceDelivery(scoped_bridge)

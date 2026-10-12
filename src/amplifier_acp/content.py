@@ -36,7 +36,14 @@ def prompt_content(config, blocks):
             if len(attachments)>=8:raise RpcError(-32602,'Attach up to 8 images per prompt.')
             attachments.append(image_attachment(config,block))
         elif block.get('type')=='resource' and isinstance(block.get('resource'),dict) and isinstance(block['resource'].get('text'),str):
-            text.append('Embedded reference material: '+json.dumps(block['resource'],ensure_ascii=False))
+            if len(attachments)>=MAX_FILES:raise RpcError(-32602,'Attach up to 8 resources per prompt.')
+            resource=block['resource']
+            # Text resources are files too. Flattening them into the user text
+            # bypasses attachment handling and trips the short-message limit.
+            attachments.append(embedded_attachment(config,{
+                'mimeType':resource.get('mimeType','text/plain'),
+                'blob':base64.b64encode(resource['text'].encode('utf-8')).decode('ascii')}))
+            text.append('Embedded resource: '+str(resource.get('uri','')))
         elif block.get('type')=='resource' and isinstance(block.get('resource'),dict) and isinstance(block['resource'].get('blob'),str):
             if len(attachments)>=8:raise RpcError(-32602,'Attach up to 8 resources per prompt.')
             attachments.append(embedded_attachment(config,block['resource']))

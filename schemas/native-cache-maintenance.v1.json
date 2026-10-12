@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://microsoft.github.io/amplifier-acp/schemas/native-cache-maintenance.v1.json",
-  "description": "Launcher-authorized cold cache inspection. Source roots are always preserved; clear only removes exact reconstructible bytecode under a held recovery admin and exclusive native writer gate. No Core/model/network calls.",
+  "description": "Launcher-authorized cold cache inspection. Clear removes exact reconstructible bytecode or quarantines unreferenced clean app-owned downloads under a held recovery admin and exclusive native writer gate. Shared sources and retained runtimes remain protected. No Core/model/network calls.",
   "oneOf": [
     {
       "type": "object",

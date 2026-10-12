@@ -15,6 +15,33 @@ async def snapshot(tmp_path):
     return client,cwd,config,path,sid,auth,artifact,args
 
 @pytest.mark.asyncio
+async def test_full_restore_preserves_executable_and_read_only_source_modes(tmp_path):
+    import stat,subprocess
+    client,cwd,config,_,_=await full_setup(tmp_path)
+    source=Path(config['maintenanceFullNativeRoots']['sources'])/'exact-source';source.mkdir(parents=True)
+    script=source/'run.sh';script.write_text('#!/bin/sh\nexit 0\n');script.chmod(0o755)
+    subprocess.run(['git','init','-q',str(source)],check=True)
+    subprocess.run(['git','add','run.sh'],cwd=source,check=True)
+    subprocess.run(['git','-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','fixture'],cwd=source,check=True)
+    script.chmod(0o555);source.chmod(0o555)
+    try:
+        auth=await hold(client,cwd);preview=await prepare(client,cwd,auth,parts=['full-native-authority'])
+        artifact,_=await capture(client,cwd,auth,preview,'restore-modes')
+        args={'artifactId':artifact['artifactId'],'sha256':artifact['sha256'],'destination':{'rootId':'owned','name':'modes'},'privateContentReviewed':True}
+        plan=await call(client,cwd,'maintenance.restore.preview',args,auth)
+        applied=await call(client,cwd,'maintenance.restore.apply',{'commandId':'restore-modes-once','previewHash':plan['previewHash']},auth)
+        restored=Path(applied['directory'])/'sources/exact-source'
+        assert (restored/'run.sh').read_bytes()==script.read_bytes()
+        assert stat.S_IMODE((restored/'run.sh').stat().st_mode)==0o500
+        assert stat.S_IMODE(restored.stat().st_mode)==0o500
+        assert subprocess.check_output(['git','--no-optional-locks','status','--porcelain'],cwd=restored)==b''
+        assert stat.S_IMODE(script.stat().st_mode)==0o555
+        assert not client.events
+    finally:
+        source.chmod(0o755)
+        await client.close()
+
+@pytest.mark.asyncio
 async def test_protocol_restores_new_home_preserves_native_identity_and_never_replays(tmp_path,monkeypatch):
     client,cwd,config,path,sid,auth,artifact,args=await snapshot(tmp_path)
     from amplifier_acp.native.session_files import project_slug
@@ -73,7 +100,67 @@ async def test_destination_existing_and_review_changes_are_known_no_effect(tmp_p
     finally:await client.close()
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('kind',['traversal','duplicate','missing','link','version','digest','schema'])
+async def test_restore_retains_managed_and_module_source_evidence_without_activating_it(tmp_path):
+    client,cwd,config,path,sid=await full_setup(tmp_path)
+    await client.close()
+    external=tmp_path/'external-provider';external.mkdir()
+    config['moduleSources']={'provider-test':str(external)}
+    config['managedSessionRoots']=[str(tmp_path/'host-managed')]
+    path.write_text(json.dumps(config));client,_=await initialized(path)
+    try:
+        auth=await hold(client,cwd);preview=await prepare(client,cwd,auth,parts=['full-native-authority'])
+        artifact,raw=await capture(client,cwd,auth,preview,'source-evidence')
+        with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
+            header=json.load(archive.extractfile('native-archive.json'))
+        import jsonschema
+        jsonschema.validate(header,json.loads((Path(__file__).resolve().parents[1]/'schemas/native-full-archive.v1.json').read_text()))
+        # A different machine need not have original code or host allocations.
+        external.rmdir()
+        plan=await call(client,cwd,'maintenance.restore.preview',{'artifactId':artifact['artifactId'],'sha256':artifact['sha256'],'destination':{'rootId':'owned','name':'source-evidence'},'privateContentReviewed':True},auth)
+        applied=await call(client,cwd,'maintenance.restore.apply',{'commandId':'restore-source-evidence','previewHash':plan['previewHash']},auth)
+        target=Path(applied['directory']);launcher=json.loads((target/'native-launcher.json').read_text())
+        review=json.loads((target/'native-configuration-review.json').read_text())
+        assert review['sourceConfiguration']==header['nativeAuthority']['sourceConfiguration']
+        assert review['automaticActivation'] is False and len(review['requirements'])==3
+        assert 'moduleSources' not in launcher and 'managedSessionRoots' not in launcher
+        assert not client.events
+    finally:await client.close()
+
+@pytest.mark.parametrize('invalid',[
+    {'moduleSourceOverrides':{'sources':{},'authority':'trusted-launcher','sourceBodies':'only-within-declared-native-roots','automaticRestore':True}},
+    {'moduleSourceOverrides':{'sources':{'provider-test':'relative/code'},'authority':'trusted-launcher','sourceBodies':'only-within-declared-native-roots','automaticRestore':False}},
+    {'managedAllocations':{'roots':['relative/files'],'authority':'external-host-owner','included':False,'requiredForManagedActivation':True}},
+    {'managedAllocations':{'roots':['/old/files'],'authority':'external-host-owner','included':True,'requiredForManagedActivation':True}},
+])
+def test_archive_source_evidence_cannot_grant_automatic_restore(invalid):
+    from amplifier_acp.archive_sources import validate
+    with pytest.raises(ValueError):validate(invalid)
+
+@pytest.mark.asyncio
+async def test_installed_restore_rebinds_account_paths_and_retains_original_configuration(tmp_path):
+    import yaml
+    client,cwd,config,_,_=await full_setup(tmp_path)
+    home=Path(config['home']);token=home/'openai-chatgpt-oauth.json'
+    raw=b'{"refresh_token":"private-restore-fixture"}';token.write_bytes(raw)
+    original=yaml.safe_dump({'config':{'providers':[{'module':'provider-openai-chatgpt','config':{'token_file_path':str(token)}}]}}).encode()
+    (home/'settings.yaml').write_bytes(original)
+    try:
+        auth=await hold(client,cwd)
+        created=await call(client,cwd,'maintenance.archive.create',{'commandId':'account-create','parts':['full-native-authority'],'privateContentReviewed':True,'includeCredentials':True,'credentialsReviewed':True},auth)
+        preview=await call(client,cwd,'maintenance.archive.prepare',{'commandId':'account-prepare','planId':created['planId'],'expectedRevision':0},auth)
+        artifact,_=await capture(client,cwd,auth,preview,'account-source')
+        plan=await call(client,cwd,'maintenance.restore.preview',{'artifactId':artifact['artifactId'],'sha256':artifact['sha256'],'destination':{'rootId':'owned','name':'account-copy'},'privateContentReviewed':True,'credentialsReviewed':True},auth)
+        applied=await call(client,cwd,'maintenance.restore.apply',{'commandId':'account-restore','previewHash':plan['previewHash']},auth)
+        target=Path(applied['directory']);settings=yaml.safe_load((target/'native-home/settings.yaml').read_text())
+        assert settings['config']['providers'][0]['config']['token_file_path']==str(target/'native-home/openai-chatgpt-oauth.json')
+        assert (target/'native-home/openai-chatgpt-oauth.json').read_bytes()==raw==token.read_bytes()
+        assert (target/'configuration-originals/native-home/settings.yaml').read_bytes()==original==(home/'settings.yaml').read_bytes()
+        assert json.loads((target/'credential-relocation.json').read_text())['unresolved']==[]
+        assert not client.events
+    finally:await client.close()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('kind',['traversal','duplicate','missing','link','version','digest','schema','privileged-mode','boolean-mode'])
 async def test_restore_rejects_untrusted_archive_even_with_matching_outer_hash(tmp_path,kind):
     client,cwd,config,path,sid,auth,artifact,args=await snapshot(tmp_path)
     directory=Path(config['appHome'])/'maintenance/artifacts'/artifact['artifactId'];archive=directory/'snapshot.tar'
@@ -83,9 +170,14 @@ async def test_restore_rejects_untrusted_archive_even_with_matching_outer_hash(t
             members=[]
             for item in src:
                 members.append((item,src.extractfile(item).read()))
-        if kind=='schema':
+        if kind in {'schema','privileged-mode','boolean-mode'}:
             manifest=tmp_path/'untrusted.sqlite3';manifest.write_bytes(members[1][1])
-            with sqlite3.connect(manifest) as db:db.execute('CREATE TABLE unrecognized(body TEXT)')
+            with sqlite3.connect(manifest) as db:
+                if kind=='schema':db.execute('CREATE TABLE unrecognized(body TEXT)')
+                else:
+                    name,raw=db.execute("SELECT path,body FROM entries WHERE json_extract(body,'$.status')='included' LIMIT 1").fetchone()
+                    row=json.loads(raw);row['ownerMode']=0o4755 if kind=='privileged-mode' else True
+                    db.execute('UPDATE entries SET body=? WHERE path=?',(json.dumps(row),name))
             body=manifest.read_bytes();members[1]=(members[1][0],body);members[1][0].size=len(body)
             header=json.loads(members[0][1]);header['manifest'].update(bytes=len(body),sha256=hashlib.sha256(body).hexdigest());body=json.dumps(header).encode();members[0]=(members[0][0],body);members[0][0].size=len(body)
         altered=io.BytesIO()

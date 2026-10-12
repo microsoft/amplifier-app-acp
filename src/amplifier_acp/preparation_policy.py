@@ -42,6 +42,14 @@ def configure(config, environment=None):
         _foundation()  # Refuse unsupported protection before startup effects.
     from .source_closure import configure as configure_sources
     configure_sources(config, env)
+    # Bind once at trusted process startup so lazy Foundation Git/uv children
+    # inherit the same explicit policy. Peer requests cannot choose this mode.
+    from .repository_access import repository_environment
+    configured_environment = repository_environment(env)
+    if env.get('AMPLIFIER_GITHUB_ACCESS') == 'anonymous':
+        for key in set(env) - set(configured_environment):
+            del env[key]
+        env.update(configured_environment)
     if restricted:
         env[VARIABLE] = '1'
     return restricted
@@ -101,7 +109,8 @@ def staging_environment(environment, project, owned_root, *, prepared=True, read
             or not readonly and candidate == Path(sys.prefix).resolve()
             or prepared and (not candidate.is_dir() or not (candidate/'pyvenv.cfg').is_file())):
         raise ValueError('Mutable preparation requires a separate owned staged Python environment')
-    result = dict(environment)
+    from .repository_access import repository_environment
+    result = repository_environment(environment)
     if readonly: result[VARIABLE] = '1'
     else:
         result.pop(VARIABLE, None)

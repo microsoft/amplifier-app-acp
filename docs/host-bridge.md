@@ -19,9 +19,18 @@ The AHP host can opt into implemented capabilities in initialize:
 Metadata is bounded to 32 KiB; guidance to 16,000 characters. Omit features that
 are not implemented. Supported feature keys: `context`, `memory`, `outputs`,
 `visual`, `capacity`, `operations`, `questions`, `observation`, `unifiedShell`,
-`imageGeneration`. `unifiedShell`/`imageGeneration` only select implicit default
+`imageGeneration`, `imageResultArtifacts`. `unifiedShell`/`imageGeneration` only select implicit default
 behaviors when community settings have no explicit `bundle.app` list. For a
 consistent settings catalog, prefer explicit trusted `bundle.app` configuration.
+
+`imageResultArtifacts` additionally requires the host's `canvas.openFile` action
+to admit `expectedSha256` and verify it against the bytes saved as an immutable
+artifact. Native observes actual successful `image_generate` completions during
+an active root input and dispatches that shared action with a stable command ID.
+It never scans saved history, retries uncertain attachment writes, or regenerates
+an image after a display failure. Failure is reported in tool details while the
+original generation result and source file remain intact. Child image delivery
+and ordered image galleries require separate lineage support.
 
 The native supervisor emits JSON-RPC `_amplifier/host` requests:
 
@@ -51,7 +60,7 @@ inherits its assigned input IDs rather than a newly focused unrelated client.
 | `outputs.image.read` | `{id,sha256}`; exact immutable attachment payload; feature `outputs` |
 | `outputs.images.read` | `{images:[{id,sha256}]}`; ordered exact comparison; feature `outputs` |
 | `voice.visual.read` / `computer.visual.read` | `{captureId}`; previously authorized capture, no new capture side effect; feature `visual` |
-| `capacity.admit` | `{call:<native call evidence>}` -> `{allowed,budgetRevision,admittedAt?,reasons?}`; only installed with feature `capacity`; never silently bypass enabled saved budget |
+| `capacity.admit` | `{call:<native call evidence>,budget:<native policy snapshot>}` -> `{allowed,budgetRevision,admittedAt?,reasons?}`; only installed with feature `capacity`; never silently bypass enabled saved budget |
 | `operations.observe` | `{runtimeSessionId,event:<native operation lifecycle>}`; only feature `operations`; associate trusted child/root lineage |
 | `questions.admit` | `{questionIds:[...]}`; only feature `questions`; bind questions to admitted session/input |
 | `observation.admit` | native observation envelope from explicit `observation.submit`; requires a host decision, otherwise fails |
@@ -62,3 +71,12 @@ never contact omitted host features. `app_control` tool schema only lists the
 advertised operation subset. Generic discovery guidance promises no unavailable
 voice, canvas, publishing, drafts or global catalogs. The host may add short
 capability-specific guidance for its actual shipped owners.
+
+
+`imageResultMetadataV1: true` is an additional boolean feature negotiation for
+`imageResultArtifacts`. It supplies display-only `imageResult` fields on the
+same digest-checked `canvas.openFile` publication: version 1, scoped tool-call
+identity, original request ID, and generate/edit operation. Resources retains
+these fields with the immutable saved version so galleries can match jobs in
+request order. This grants no image generation or replay authority. Hosts that
+do not advertise the version continue to receive the existing publication.

@@ -164,6 +164,24 @@ class SessionStore:
         canonical = [row for row in rows if keep_system or not isinstance(row, dict) or row.get('role') not in {'system', 'developer'}]
         if history.transcript_path.is_file():
             current = history.load(include_events=False)
+            if not current.diagnostics:
+                # Context modules assign/restamp private compaction sequence
+                # numbers on resume. Preserve the original canonical row when
+                # this is its only change; references and reaction metadata bind
+                # to that original row and byte position, not the runtime seq.
+                def without_sequence(row):
+                    value = copy.deepcopy(row)
+                    meta = value.get('metadata')
+                    if isinstance(meta, dict):
+                        meta.pop('_seq', None)
+                        if not meta:
+                            value.pop('metadata', None)
+                    return json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=False)
+                for index, (original, incoming) in enumerate(zip(current.messages, canonical)):
+                    if without_sequence(original) != without_sequence(incoming):
+                        break
+                    canonical[index] = copy.deepcopy(original)
+                rows = canonical
             try:
                 unchanged = (json.dumps(current.messages, sort_keys=True, ensure_ascii=False, allow_nan=False) ==
                              json.dumps(canonical, sort_keys=True, ensure_ascii=False, allow_nan=False))
@@ -177,7 +195,8 @@ class SessionStore:
                 published(history.session_dir, saved_metadata)
                 return
         history.save(rows, saved_metadata,
-                     preserve_system=keep_system, merge_metadata=True)
+                     preserve_system=keep_system, merge_metadata=True,
+                     preserve_prefix=True)
         adopt(history.session_dir)
         self._initial_naming_policy(history.session_dir, initial_policy)
         from ..history_hints import published
@@ -201,6 +220,12 @@ class SessionStore:
         from ..naming import read
         if self.has_transcript(session_id):
             value = self.history(session_id).load(include_events=False)
+            changed = {item.source for item in value.diagnostics if item.code == 'changed_during_read'}
+            # Main 0.20.121: retry one metadata-only race, never a changing
+            # transcript or the inconsistent first snapshot. Edit callers
+            # retain their before/after transcript revision guards.
+            if changed and changed <= {'metadata', 'metadata_backup'}:
+                value = self.history(session_id).load(include_events=False)
             if diagnostics is not None:
                 diagnostics.extend(value.diagnostics)
             if any(item.code == 'changed_during_read' for item in value.diagnostics):

@@ -4,13 +4,21 @@ from pathlib import Path
 from contextlib import contextmanager
 
 def validate(args):
-    if not isinstance(args,dict) or set(args)-{'inputId','activeInputId','text','provenance','public_message'}:raise ValueError('Unsupported steering fields')
+    if not isinstance(args,dict) or set(args)-{'inputId','activeInputId','text','prompt','reply','provenance','public_message','voiceDelivery'}:raise ValueError('Unsupported steering fields')
+    if 'voiceDelivery' in args:
+        from .native.input_provenance import validate_prompt
+        validate_prompt({'inputOrigin':'voice','voiceDelivery':args['voiceDelivery']})
     if 'public_message' in args:
         from .public_message import validate as validate_public
         validate_public(args['public_message'],args.get('inputId'))
     for name in ('inputId','activeInputId'):
         if not isinstance(args.get(name),str) or not 1<=len(args[name])<=128:raise ValueError('Bounded steering and active input IDs required')
-    if not isinstance(args.get('text'),str) or not args['text'].strip() or len(args['text'])>16000:raise ValueError('Bounded nonempty steering text required')
+    if 'prompt' in args:
+        blocks=args['prompt']
+        if 'text' in args or not isinstance(blocks,list) or not 1<=len(blocks)<=33 or not isinstance(blocks[0],dict) or blocks[0].get('type')!='text' or not isinstance(blocks[0].get('text'),str) or len(blocks[0]['text'])>16000 or len(json.dumps(blocks,allow_nan=False).encode())>8*1024*1024:
+            raise ValueError('Bounded steering content required')
+    elif not isinstance(args.get('text'),str) or not args['text'].strip() or len(args['text'])>16000:raise ValueError('Bounded nonempty steering text required')
+    if 'reply' in args and 'prompt' not in args:raise ValueError('Quoted steering requires negotiated content')
     if 'provenance' in args and (not isinstance(args['provenance'],dict) or len(json.dumps(args['provenance'],allow_nan=False).encode())>8192):raise ValueError('Bounded steering provenance required')
 
 def signature(args):return hashlib.sha256(json.dumps(args,sort_keys=True,separators=(',',':'),allow_nan=False).encode()).hexdigest()
@@ -63,11 +71,62 @@ async def submit(session,args):
         if not session.prompt or session.prompt.done() or session.input_id!=args['activeInputId'] or not session.generation_id or not session.worker or session.worker.closed:
             return {'accepted':False,'executed':False,'reason':'The requested active generation is no longer available.'}
         generation=session.generation_id
+        from .message_metadata import guard_input_identity
+        from .relocation import home
+        command={**args,'generationId':generation}
+        if 'prompt' in args:
+            from .content import prompt_content
+            text,attachments=prompt_content(session.server.config,args['prompt'])
+            command={**command,'text':text,'attachments':attachments,'contentVersion':1}
+        store=None
+        actor=session.server.message_principal(session.identity) if session.server.message_principal else None
+        guard_input_identity(home(session.server)/'sessions'/session.identity/'message-interactions.sqlite3',
+            args['inputId'],reference=args.get('reply'),input_payload=args,actor_id=actor)
+        if 'reply' in args:
+            if not session.server.message_principal:raise ValueError('Quoted steering requires a configured message principal')
+            from .message_metadata import MessageMetadata,reserve_quote
+            from .native.history_revision import context_head
+            store=MessageMetadata(home(session.server),session.identity,actor_id=actor)
+            quote=reserve_quote(store,session.server.directory(session.cwd,session.identity),args['reply'],
+                input_id=args['inputId'],input_payload=args,epoch=context_head(home(session.server),session.identity,session.cwd))
+        if store is not None:command['reply_context']=quote
         session.steering.reserve(args,generation)
         try:
-            result=await session.worker.control('steer.submit',{**args,'generationId':generation})
+            result=await session.worker.control('steer.submit',command)
             if not result.get('accepted'):
                 return session.steering.update(args['inputId'],{**result,'disposition':'rejected'})
+            if store is not None:
+                from .message_metadata import quote_admitted
+                quote_admitted(store,args['inputId'])
             return session.steering.update(args['inputId'],result)
         except BaseException:
             session.steering.update(args['inputId'],{'disposition':'unknown','reason':'admission-or-effect-unconfirmed'});raise
+
+
+async def submit_peer(session, args):
+    """Same durable disposition journal; saved peer authority is checked in worker."""
+    from .native.peer_input import validate as validate_peer
+    validate_peer(args, steering=True)
+    async with session.steering_lock:
+        original = session.steering.read(args['inputId'])
+        if original:
+            exact = {**args, 'activeInputId': original['activeInputId']}
+            receipt = session.steering.read(args['inputId'], exact)
+            if receipt['disposition'] == 'reserved':
+                receipt = session.steering.update(args['inputId'], {'disposition': 'unknown', 'reason': 'admission-unconfirmed'})
+            return {**receipt, 'replayed': False}
+        if not session.prompt or session.prompt.done() or session.generation_id != args['targetGenerationId'] or not session.worker or session.worker.closed or session.cancelled:
+            return {'accepted': False, 'executed': False, 'reason': 'The exact peer steering generation is unavailable'}
+        from .message_metadata import guard_input_identity
+        from .relocation import home
+        guard_input_identity(home(session.server)/'sessions'/session.identity/'message-interactions.sqlite3', args['inputId'])
+        command = {**args, 'activeInputId': session.input_id}
+        session.steering.reserve(command, session.generation_id)
+        try:
+            result = await session.worker.control('peer.steer', command)
+            if not result.get('accepted'):
+                return session.steering.update(args['inputId'], {**result, 'disposition': 'rejected'})
+            return session.steering.update(args['inputId'], result)
+        except BaseException:
+            session.steering.update(args['inputId'], {'disposition': 'unknown', 'reason': 'peer-admission-unconfirmed'})
+            raise

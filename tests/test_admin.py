@@ -51,6 +51,7 @@ async def test_draft_defaults_probe_inspects_bundle_without_session(tmp_path):
   await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
   response=await client.request('_amplifier/admin',{'cwd':str(workspace),'operation':'configuration.defaults','args':{'bundle':values['bundle']}})
   assert response['result']['effective']['model']=='fixture-model',response
+  assert response['result']['bundleLabel']=='offline-native',response
   assert not (Path(values['home'])/'projects').exists()
  finally:await client.close()
 

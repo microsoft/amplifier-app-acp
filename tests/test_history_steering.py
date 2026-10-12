@@ -70,6 +70,19 @@ def test_orphan_steering_does_not_invent_original_turn(tmp_path):
     group = page(tmp_path, limit=1)['turnGroups'][0]
     assert group['id'] == STEER and group['state'] == 'unknown'
 
+def test_recorded_peer_steering_keeps_origin_and_original_turn(tmp_path):
+    rows, _, path = fixture(tmp_path)
+    rows[3]['metadata'].update(inputOrigin='peer', peerEnvelope={'mode':'steer','requestId':STEER})
+    path.write_text(''.join(json.dumps(row)+'\n' for row in rows))
+    result = page(tmp_path)
+    assert [g['id'] for g in result['turnGroups']] == [ORIGINAL, QUEUE]
+    projected = next(u['_meta']['amplifier.dev/history'] for u in result['updates']
+                     if u['_meta']['amplifier.dev/history'].get('nativeInput',{}).get('id') == STEER)
+    assert projected['inputOrigin'] == 'peer' and projected['activeInputId'] == ORIGINAL
+    rows[3]['metadata']['peerEnvelope']['mode'] = 'queue'
+    path.write_text(''.join(json.dumps(row)+'\n' for row in rows))
+    assert [g['id'] for g in page(tmp_path)['turnGroups']] == [ORIGINAL, STEER, QUEUE]
+
 @pytest.mark.parametrize('field,value', [('inputOrigin', 'unknown'), ('kind', 'user')])
 def test_conflicting_recorded_steering_facts_never_join(tmp_path, field, value):
     rows, _, path = fixture(tmp_path)

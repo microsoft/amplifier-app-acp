@@ -16,7 +16,7 @@ async def installed_fixture(tmp_path):
         archive.writestr('repair_fixture-1.0.dist-info/RECORD','')
     manifest='[project]\nname="repair-runtime"\nversion="0.1.0"\nrequires-python=">=3.13"\ndependencies=["repair-fixture"]\n[tool.uv.sources]\nrepair-fixture={path='+json.dumps(str(wheel))+'}\n'
     (project/'pyproject.toml').write_text(manifest)
-    subprocess.run(['uv','sync','--offline','--project',str(project),'--python','3.13'],check=True,capture_output=True)
+    subprocess.run(['uv','sync','--offline','--link-mode','hardlink','--project',str(project),'--python','3.13'],check=True,capture_output=True)
     graph=qualification.installed_graph(project)
     for name,body in {'runtime-project.json':{'project':project.name},'runtime-installed.json':graph,'profiles-qualified.json':{'profiles':['fixture']},'validated.json':{'generationSchema':1},'runtime-sources.json':{}}.items():(directory/name).write_text(json.dumps(body))
     for name,body in {'runtime.toml':manifest,'runtime-base.toml':manifest,'runtime.lock':(project/'uv.lock').read_text()}.items():(directory/name).write_text(body)
@@ -44,6 +44,9 @@ async def test_repair_real_uv_environment_preserves_original_and_requires_separa
     result=await owner.perform(str(tmp_path),'generations.repair',args)
     assert result['state']=='succeeded',result
     repaired=result['result']['generation'];assert probes==[repaired] and repaired!=generation
+    repaired_module=next((env.project_path(tmp_path,repaired)/'.venv').glob('lib/python*/site-packages/repair_fixture.py'))
+    assert not repaired_module.samefile(module)
+    assert repaired_module.stat().st_nlink == 1
     assert result['result']['activation']=='separate-generation-promotion'
     assert (tmp_path/'updates/active.json').read_bytes()==pointer and module.read_text()=='VALUE="damaged-original"\n'
     assert all(p.read_bytes()==raw for p,raw in original_files.items())

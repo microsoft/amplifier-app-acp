@@ -68,8 +68,14 @@ async def test_lazy_discovery_atomic_standard_commit_effort_and_cold_resume(tmp_
         thorough=next(r['value'] for r in effort['options'] if r['name']=='thorough')
         changed=await client.request('session/set_config_option',{'sessionId':sid,'configId':'reasoning_effort','value':thorough})
         assert 'result' in changed,changed
+        inspected=(await control('configuration.inspect'))['result']
+        assert inspected['effectiveProvider']=={'instance':'work','model':'work-new','effort':'thorough'}
+        assert inspected['providerPinned'] is True
+        assert not audit.exists()
         prompt=await client.request('session/prompt',{'sessionId':sid,'prompt':[{'type':'text','text':'deliberate offline selected request'}]})
         assert prompt['result']['stopReason']=='end_turn'
+        assert prompt['result']['usage']['inputTokens']==8
+        assert prompt['result']['usage']['outputTokens']==5
         assert {'instance':'work','model':'work-new','effort':'thorough'} in [json.loads(s) for s in audit.read_text().splitlines()]
         # Failure/refresh never silently unpins or substitutes a model.
         catalogs['work'].write_text(json.dumps({'error':True}))
@@ -169,4 +175,24 @@ async def test_removed_option_and_old_effort_refuse_without_effect_other_client_
         reset=await client.request('session/set_config_option',{'sessionId':sid,'configId':'model','value':'__default__'})
         assert 'result' in reset,reset
         assert (await control('configuration.providers'))['result']['pinned'] is False
+    finally:await client.close()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('removed',[False,True])
+async def test_advertised_model_selection_revalidates_catalog_after_idle_worker_retirement(tmp_path,removed):
+    config,cwd,audit,discovery,catalogs=fixture(tmp_path)
+    settings=json.loads(config.read_text());settings['idleSeconds']=1;config.write_text(json.dumps(settings))
+    client=await Client.launch(config)
+    try:
+        await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{NATIVE:{'version':1}}}})
+        sid=(await client.request('session/new',{'cwd':str(cwd),'mcpServers':[]}))['result']['sessionId']
+        await client.request('_amplifier/native',{'sessionId':sid,'operation':'configuration.providerModels','args':{'provider':'work'}})
+        value=choice(updates(client)[-1],'work','work-new')
+        if removed:catalogs['work'].write_text(json.dumps([{'id':'work-default'}]))
+        await asyncio.sleep(2.5)
+        result=await client.request('session/set_config_option',{'sessionId':sid,'configId':'model','value':value})
+        assert discovery.read_text().splitlines()==['work','work']
+        if removed:assert result['error']['code']==-32602
+        else:assert choice(result['result']['configOptions'],'work','work-new')==value
+        assert not audit.exists(), 'Configuration must not run inference or replay a turn'
     finally:await client.close()

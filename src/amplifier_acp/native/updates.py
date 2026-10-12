@@ -92,7 +92,8 @@ def source_key(url, ref):
             ref.removeprefix('refs/heads/'))
 
 async def process(*args, cwd=None, env=None, timeout=90, raw=False):
-    env=dict(os.environ if env is None else env);env.pop('VIRTUAL_ENV',None)
+    from ..repository_access import repository_environment
+    env=repository_environment(env);env.pop('VIRTUAL_ENV',None)
     started=time.monotonic()
     proc = await asyncio.create_subprocess_exec(*map(str,args), cwd=cwd, env=env,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, start_new_session=os.name != 'nt')
@@ -120,6 +121,14 @@ async def process(*args, cwd=None, env=None, timeout=90, raw=False):
             raise CommandTimeout(time.monotonic()-started) from None
         raise
     if proc.returncode:
+        from ..repository_access import anonymous_retry_environment
+        retry = anonymous_retry_environment(args, env, stdout, stderr)
+        remaining = timeout - (time.monotonic() - started)
+        if retry is not None and remaining > 0:
+            result = await process(*args, cwd=cwd, env=retry, timeout=remaining, raw=raw)
+            if hasattr(result, 'diagnostic_facts'):
+                result.diagnostic_facts['anonymousRetry'] = True
+            return result
         from .update_diagnostics import CommandFailure,command_facts
         raise CommandFailure(command_facts(stdout,stderr,proc.returncode,time.monotonic()-started))
     if raw:return stdout

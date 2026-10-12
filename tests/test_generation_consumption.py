@@ -19,6 +19,10 @@ async def test_existing_qualified_generation_requires_exact_launcher_before_moun
     try:
         await client.request('initialize',{'protocolVersion':1})
         response=await client.request('session/new',{'cwd':str(cwd),'mcpServers':[]})
-        assert 'explicit workerCommand' in response.get('error',{}).get('message',''),response
+        error=response['error'];assert error['code']==-32000,error
+        assert error['data']['category']=='worker_startup'
+        assert error['data']['inputSubmitted'] is False and error['data']['replayed'] is False
+        receipt=tmp_path/'app/logs/workers'/error['data']['diagnosticReceipt']
+        assert 'explicit workerCommand' in receipt.read_text()
         assert not (tmp_path/'home/projects').exists()
     finally:await client.close()

@@ -6,17 +6,41 @@ from .maintenance import CHUNK,file_stamp
 from .maintenance_gate import checked
 
 STORES={
+ 'native-recording-receipts':{'owner':'native-provider-recording','path':('diagnostics','recording-receipts.sqlite3'),'tables':('commands',)},
  'native-import-records':{'owner':'native-history-import','path':('history-imports','imports.sqlite3'),'tables':('commands','uploads')},
  'native-preference-receipts':{'owner':'native-voice-preferences','path':('voice-preferences','receipts.sqlite3'),'tables':('commands',)},
 }
 from .maintenance_store_snapshot import PARTS as MAINTENANCE_PARTS
 PARTS=set(STORES)|MAINTENANCE_PARTS
 
-def revision(path):
+def revision(path,maximum=1024*1024*1024,bounded=None):
     path=checked(path);wal=checked(Path(str(path)+'-wal'));journal=checked(Path(str(path)+'-journal'))
     if journal.exists():raise ValueError('Native store has an unresolved rollback journal; inspect its owner before archiving')
     if not path.exists() and wal.exists():raise ValueError('Native store has an orphan WAL; inspect its owner before archiving')
-    state={name:file_stamp(target) if target.exists() else None for name,target in [('database',path),('wal',wal)]}
+    shm=checked(Path(str(path)+'-shm'))
+    if shm.exists():file_stamp(shm)
+    deadline=time.monotonic()+30
+    def check():
+        if bounded:bounded()
+        if time.monotonic()>deadline:raise ValueError('Native store verification deadline exceeded')
+    state={};remaining=maximum
+    for name,target in [('database',path),('wal',wal)]:
+        check()
+        if not target.exists():state[name]=None;continue
+        before=file_stamp(target);remaining-=before[2]
+        if remaining<0:raise ValueError('Native store sources exceed verification byte budget')
+        digest=hashlib.sha256();size=0
+        with target.open('rb') as stream:
+            opened=os.fstat(stream.fileno())
+            if [opened.st_dev,opened.st_ino,opened.st_size,opened.st_mtime_ns,opened.st_ctime_ns]!=before:raise ValueError('Native store changed before verification')
+            while chunk:=stream.read(CHUNK):
+                check();size+=len(chunk)
+                if size>before[2]:raise ValueError('Native store grew during verification')
+                digest.update(chunk)
+        if size!=before[2] or file_stamp(target)!=before:raise ValueError('Native store changed during verification')
+        # SQLite may touch WAL ctime while opening a read-only connection.
+        # Bind stable identity and content; still detect all changes during reads.
+        state[name]={'stamp':before[:4],'sha256':digest.hexdigest()}
     return hashlib.sha256(json.dumps(state,sort_keys=True,separators=(',',':')).encode()).hexdigest()
 
 def require_admin(owner):
@@ -26,7 +50,8 @@ def require_admin(owner):
 
 def backup(path,image,remaining,bounded,tables=()):
     """Bounded standalone SQLite image, without modifying its owned source."""
-    before=revision(path)
+    source_limit=min(remaining*4,1024*1024*1024)
+    before=revision(path,source_limit,bounded)
     uri=path.as_uri()+'?mode=ro'+('&immutable=1' if not Path(str(path)+'-wal').exists() else '')
     source=sqlite3.connect(uri,uri=True,timeout=0,isolation_level=None)
     try:
@@ -48,7 +73,7 @@ def backup(path,image,remaining,bounded,tables=()):
         finally:target.close()
     finally:source.close()
     bounded()
-    if revision(path)!=before:raise ValueError('Native private store changed during snapshot preparation')
+    if revision(path,source_limit,bounded)!=before:raise ValueError('Native private store changed during snapshot preparation')
     with image.open('rb') as stream:os.fsync(stream.fileno())
     return counts
 
@@ -61,14 +86,14 @@ def prepare(owner,plan,parts,check,command_id):
         if require_admin(owner)!=authority:raise ValueError('Native administration lease changed during private snapshot')
         if time.monotonic()>=deadline:raise ValueError('Native private-store snapshot deadline exceeded')
     for part in sorted(set(parts)&STORES.keys()):
-        bounded();definition=STORES[part];path=checked(owner.app.joinpath(*definition['path']));before=revision(path)
+        bounded();definition=STORES[part];path=checked(owner.app.joinpath(*definition['path']));before=revision(path,min(remaining*4,1024*1024*1024),bounded)
         row={'part':part,'owner':definition['owner'],'sourceRevision':before,'scope':'all-records-in-configured-native-app-home','format':'sqlite-backup-image','status':'missing'}
         if not path.exists():result.append(row);continue
         if file_stamp(path)[2]>remaining:raise ValueError('Native private store exceeds remaining archive byte budget')
         image=checked(directory/(part+'.sqlite3'))
         counts=backup(path,image,remaining,bounded,definition['tables'])
         bounded()
-        if revision(path)!=before:raise ValueError('Native private store changed during snapshot preparation')
+        if revision(path,min(remaining*4,1024*1024*1024),bounded)!=before:raise ValueError('Native private store changed during snapshot preparation')
         size=file_stamp(image)[2]
         if size>remaining:raise ValueError('Native private-store image exceeds remaining archive byte budget')
         remaining-=size;digest=hashlib.sha256()

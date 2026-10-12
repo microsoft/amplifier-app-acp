@@ -6,7 +6,7 @@ from .maintenance_gate import checked
 from .history_import import encoded,token
 
 OPERATIONS={'voice.preferences.update','voice.preferences.receipt'}
-FIELDS={'preferredModel':'preferred_model','fallbackModel':'fallback_model','voice':'voice','interruptions':'interruptions'}
+FIELDS={'preferredModel':'preferred_model','fallbackModel':'fallback_model','voice':'voice','interruptions':'interruptions','fallbackVoice':'fallback_voice'}
 DEFAULTS={'preferredModel':'gpt-live-1','fallbackModel':'gpt-realtime-2.1','voice':'marin','interruptions':True}
 CATALOG=json.loads(Path(__file__).with_name('voice_options.json').read_text())
 MODELS={row['id']:{voice['id'] for voice in row['voices']} for row in CATALOG['models']}
@@ -16,9 +16,18 @@ MARKER='_amplifier_acp_preferences'
 def values(settings):
     voice=settings.get('voice') or {}
     if not isinstance(voice,dict):raise ValueError('Saved voice settings must be an object; original file preserved')
-    return {field:voice.get(key,DEFAULTS[field]) for field,key in FIELDS.items()}
+    # Do not materialize new optional defaults: legacy receipt revisions must
+    # still reconcile against their original four-field atomic proof marker.
+    return {field:voice.get(key,DEFAULTS.get(field,'')) for field,key in FIELDS.items() if field in DEFAULTS or key in voice}
 
 def revision(current):return hashlib.sha256(encoded(current)).hexdigest()
+
+def marker_matches(marker,current):
+    # Version-one markers covered four fields even if an external settings
+    # owner already stored fallback_voice. Preserve that exact historical proof.
+    version=marker.get('preferencesVersion',1)
+    covered={key:value for key,value in current.items() if key!='fallbackVoice'} if version==1 else current
+    return version in (1,2) and marker.get('revision')==revision(covered)
 
 def projection(settings,enabled=False):
     current=values(settings)
@@ -55,7 +64,7 @@ class VoicePreferences:
             receipt=json.loads(row['body'])
             if receipt['status']=='unknown':
                 settings=self.store.read(workspace);current=values(settings);marker=settings.get('voice',{}).get(MARKER,{})
-                if isinstance(marker,dict) and marker.get('commandId')==identity and marker.get('signature')==row['signature'] and marker.get('revision')==revision(current):
+                if isinstance(marker,dict) and marker.get('commandId')==identity and marker.get('signature')==row['signature'] and marker_matches(marker,current):
                     return {**receipt,'status':'succeeded','result':projection(settings,True)}
             return receipt
         finally:con.close()
@@ -79,7 +88,7 @@ class VoicePreferences:
                 def mutate(settings):
                     current=values(settings)
                     prior=(settings.get('voice') or {}).get(MARKER,{})
-                    if isinstance(prior,dict) and prior.get('commandId')!=identity and prior.get('revision')==revision(current):
+                    if isinstance(prior,dict) and prior.get('commandId')!=identity and marker_matches(prior,current):
                         old_row=con.execute('SELECT signature,body FROM commands WHERE id=?',(prior.get('commandId'),)).fetchone()
                         if old_row and old_row['signature']==prior.get('signature'):
                             old_receipt=json.loads(old_row['body'])
@@ -88,15 +97,20 @@ class VoicePreferences:
                                 con.execute('UPDATE commands SET body=? WHERE id=?',(encoded(old_receipt).decode(),prior['commandId']))
                     if revision(current)!=expected:raise Conflict(revision(current))
                     updated={**current,**patch}
-                    if any(not isinstance(updated[name],str) or updated[name] not in MODELS for name in ('preferredModel','fallbackModel')):raise Invalid('Choose an advertised voice model')
+                    if not isinstance(updated['preferredModel'],str) or updated['preferredModel'] not in MODELS:raise Invalid('Choose an advertised voice model')
+                    if not isinstance(updated['fallbackModel'],str) or updated['fallbackModel'] and updated['fallbackModel'] not in MODELS:raise Invalid('Choose an advertised fallback model or turn fallback off')
+                    fallback_voices=MODELS.get(updated['fallbackModel'],set())
+                    if 'fallbackModel' in patch and 'fallbackVoice' not in patch and updated.get('fallbackVoice') and updated['fallbackVoice'] not in fallback_voices:updated['fallbackVoice']=''
+                    if 'fallbackVoice' in updated and (not isinstance(updated['fallbackVoice'],str) or updated['fallbackVoice'] and updated['fallbackVoice'] not in fallback_voices):raise Invalid('Choose a voice available for the fallback model')
                     if 'preferredModel' in patch and 'voice' not in patch and (not isinstance(updated['voice'],str) or updated['voice'] not in MODELS[updated['preferredModel']]):updated['voice']='marin'
                     if not isinstance(updated['voice'],str) or updated['voice'] not in MODELS[updated['preferredModel']]:raise Invalid('Choose a voice available for the preferred model')
                     if type(updated['interruptions']) is not bool:raise Invalid('Voice interruptions must be on or off')
                     voice=settings.setdefault('voice',{})
-                    for field,key in FIELDS.items():voice[key]=updated[field]
+                    for field,key in FIELDS.items():
+                        if field in updated:voice[key]=updated[field]
                     # One bounded proof marker is atomic with these exact preferences.
                     # It contains no credential, account identity, or executable policy.
-                    voice[MARKER]={'commandId':identity,'signature':signature,'revision':revision(updated)}
+                    voice[MARKER]={'commandId':identity,'signature':signature,'revision':revision(updated),'preferencesVersion':2}
                 saved=self.store.update(workspace,'global',mutate)
                 receipt.update(status='succeeded',result=projection(saved,True))
             except (Conflict,Invalid) as exc:

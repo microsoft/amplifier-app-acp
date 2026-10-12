@@ -8,6 +8,7 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
+from datetime import UTC, datetime
 
 from .history import content_updates, message_id, source, stamp
 from .maintenance_gate import checked
@@ -132,7 +133,9 @@ class MessageMetadata:
         db = self._db()
         try:
             if db: db.execute('BEGIN')
-            return {'items': [self._projection(db, identity) for identity in ids], 'coverage': 'selected', 'sent': False}
+            events = [] if db is None else [json.loads(row[0]).get('result', {}).get('feedbackEvent') for row in db.execute('SELECT value FROM receipts ORDER BY rowid DESC LIMIT 100')]
+            return {'items': [self._projection(db, identity) for identity in ids], 'coverage': 'selected', 'sent': False,
+                    'feedbackEvents': [event for event in reversed(events) if event and event['target']['messageId'] in ids]}
         finally:
             if db: db.close()
 
@@ -196,6 +199,11 @@ class MessageMetadata:
                 if changed:
                     db.execute('INSERT INTO revisions VALUES(?,1) ON CONFLICT(message) DO UPDATE SET value=value+1', (identity,))
                 result = {**self._projection(db, identity), 'changed': changed, 'sent': False, 'commandId': command_id}
+                feedback = ({'version': 1, 'id': 'reaction:' + command_id, 'kind': 'reaction',
+                    'createdAt': datetime.now(UTC).isoformat(), 'emoji': emoji, 'present': present,
+                    'target': {key: row[key] for key in ('sessionId', 'messageId', 'role', 'sourceDigest', 'historyEpoch')},
+                    'excerpt': row['text'][:4000]} if changed else None)
+                if feedback: result['feedbackEvent'] = feedback
                 receipt = encoded({'actorId': self.actor_id, 'result': result})
                 if len(receipt.encode()) > MAX_RECEIPT_BYTES: raise MessageError('Message receipt exceeds its bound')
                 db.execute('INSERT INTO receipts VALUES(?,?,?)', (command_id, fingerprint, receipt))

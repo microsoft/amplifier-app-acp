@@ -11,7 +11,7 @@ FORMAT='amplifier-native-authority'
 VERSION=1
 WRITER_PROTECTION={'policy':'operator-attested-stopped','declaredBy':'trusted-launcher','nativeWriterGate':'exclusive-held-through-capture','nativeAdminGate':'exclusive-held-through-capture','cooperativeSessionLeasesHeld':False,'noncooperatingWriters':'not-independently-observed','requiresOperatorVerification':True}
 TRANSIENT_NAMES={'owner.lock','session.lock','generation-owner.lock','lifecycle.lock','.unified-migration.lock','.amplifier-acp-maintenance.lock','.amplifier-acp-admin-writers.lock','settings.yaml.lock','settings.local.yaml.lock','keys.env.lock','admin-settings.yaml.lock'}
-HOME_NAMES={'projects','sessions','settings.yaml','settings.local.yaml','config.yaml','routing','routing.local','bundles','agents','contexts','skills','memory','todos','cache','keys.env'}
+HOME_NAMES={'projects','sessions','settings.yaml','settings.local.yaml','config.yaml','routing','routing.local','bundles','agents','contexts','skills','memory','todos','cache','keys.env','chatgpt-plan'}
 APP_NAMES={'sessions','runtime-reports','diagnostics','restore-receipts','updates','runtime','foundation','source-store','config','routing','bundles','history-imports','voice-preferences','permissions','maintenance','admin-settings.yaml'}
 
 def state_root():
@@ -60,7 +60,8 @@ def source_config(owner,root_rows):
         result['moduleSourceOverrides']={'sources':validate(owner.config['moduleSources']),
             'authority':'trusted-launcher','sourceBodies':'only-within-declared-native-roots',
             'automaticRestore':False}
-    return result
+    from .archive_sources import validate
+    return validate(result)
 
 def prepare(owner,plan,parts,check,command_id,include_credentials):
     authority=require_admin(owner)
@@ -102,7 +103,7 @@ def prepare(owner,plan,parts,check,command_id,include_credentials):
             # Never call a locally modified installed graph a disposable cache.
             verify_runtime(owner,path.parent)
             omit(label,'qualified installed environment; preserved lock/source receipts authorize separate repair','derived');return
-        credentials=path.name=='keys.env' or path.name.endswith('-oauth.json') or 'chatgpt-sign-in' in path.parts
+        credentials=path.name=='keys.env' or path.name.endswith('-oauth.json') or any(name in path.parts for name in ('chatgpt-sign-in','chatgpt-plan'))
         if credentials and not include_credentials:omit(label,'credential storage was not explicitly selected and reviewed','authoritative');return
         if path.name.endswith(('-wal','-journal')):
             database=Path(str(path).rsplit('-',1)[0])
@@ -110,7 +111,7 @@ def prepare(owner,plan,parts,check,command_id,include_credentials):
             omit(label,'committed records captured by the standalone database image','transient');return
         if stat.S_ISDIR(info.st_mode):
             target=checked(payload/label);target.mkdir(mode=0o700,parents=True,exist_ok=True)
-            record({'path':label,'status':'directory'})
+            record({'path':label,'status':'directory','ownerMode':stat.S_IMODE(info.st_mode)&0o700})
             with os.scandir(path) as scan:
                 for entry in scan:
                     if depth==0:
@@ -149,7 +150,7 @@ def prepare(owner,plan,parts,check,command_id,include_credentials):
         digest=hashlib.sha256()
         with target.open('rb') as stream:
             while block:=stream.read(CHUNK):bounded();digest.update(block)
-        record({'path':label,'status':'included','bytes':size,'sha256':digest.hexdigest(),'format':'sqlite-backup-image' if is_db else 'file'})
+        record({'path':label,'status':'included','bytes':size,'sha256':digest.hexdigest(),'format':'sqlite-backup-image' if is_db else 'file','ownerMode':stat.S_IMODE(info.st_mode)&0o700})
     try:
         for row in selected:copy(row['id'] if row['kind']=='directory' else row['id']+'/source',Path(row['path']),root_id=row['id'])
         # Metadata selects only identities; trusted configured workspace roots

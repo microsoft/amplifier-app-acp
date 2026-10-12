@@ -7,11 +7,11 @@ API key, probe an account, mount Core, start a worker, or change an existing cal
 The media owner continues to own call admission, active-call policy and transport.
 
 Initialize advertises `amplifier.dev/native.admin.voice.preferences` as
-`{version:1,cas:true,receipt:true,fields:["preferredModel","fallbackModel","voice","interruptions"]}`
+`{version:1,cas:true,receipt:true,fields:["preferredModel","fallbackModel","voice","interruptions","fallbackVoice"]}`
 only when enabled. `voice.configuration` always returns sanitized saved defaults:
 
-- `preferredModel`, `fallbackModel`, `voice`, `interruptions`;
-- `preferencesRevision`: SHA256 of these four canonical values;
+- `preferredModel`, `fallbackModel`, `voice`, `interruptions`, optional `fallbackVoice`;
+- `preferencesRevision`: SHA256 of canonical values; the optional field participates only when saved;
 - `preferenceFields`: the writable field names, or an empty list when disabled;
 - `models`: bounded catalog entries `{id,name,description,voices:[{id,name,description}],...}`;
 - `fallbackBehavior: "stored-only"`.
@@ -23,7 +23,7 @@ supported transport choices, not current account access or external availability
 No model call was used to qualify these settings.
 
 `_amplifier/admin` operation `voice.preferences.update` takes
-`{commandId,expectedRevision,patch}`. Patch accepts only the advertised four fields;
+`{commandId,expectedRevision,patch}`. Patch accepts only advertised fields;
 credential fields remain exclusive to the separate private `voice.configure`
 operation. Model and voice compatibility and a strict boolean for interruptions
 are validated. Changing the preferred model without explicitly choosing a voice
@@ -54,12 +54,13 @@ leaves the original outcome unknown; it never authorizes replay. The original
 receipt store is independent owner data, not implicitly included in a selected
 native-session archive.
 
-Both the old application's connect path and the extracted media worker choose the
-preferred model only. The legacy fallback field was saved but not consumed.
-Preserving `fallbackModel` therefore does **not** implement automatic fallback.
-Clients must label that limitation or leave the fallback control read-only. A
-future transport implementation needs its own safe admission/error policy and
-account qualification before claiming automatic fallback.
+Native stores defaults; its `stored-only` description denotes that authority
+boundary. The media owner can advertise `on-model-unavailable` when its installed
+transport implements bounded fallback. Empty `fallbackModel` disables it.
+Optional `fallbackVoice` selects a compatible voice; empty uses the preferred
+speaking voice when compatible, otherwise Marin. Changing the fallback model
+clears an incompatible fallback voice. Reads and unrelated writes do not add this
+optional field, preserving legacy four-field revisions and unknown proof markers.
 
 The product composition must expose the separate operation only after negotiation,
 retain exact command IDs through loss/recovery, project the authoritative returned

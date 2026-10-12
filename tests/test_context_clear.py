@@ -80,6 +80,98 @@ async def pages(client,sid,cwd,limit=1):
 
 
 @pytest.mark.asyncio
+async def test_fork_verifies_preserved_output_and_omits_it_after_actual_clear(tmp_path):
+    from test_session_lifecycle import action
+    config,cwd,sid,directory,rows,audit=seeded(tmp_path)
+    legacy=hashlib.sha256(json.dumps([sid,1,'assistant','retained answer'],ensure_ascii=False).encode()).hexdigest()[:32]
+    client=await opened(config,cwd,sid)
+    try:
+        _,args=await reviewed(client,sid,'outputs-clear')
+        cleared=await control(client,sid,'context.clear',args)
+        assert 'result' in cleared,cleared
+    finally:await client.close()
+    values=json.loads(config.read_text())
+    values['workerCommand']=['/must-not-start-for-output-copy'];config.write_text(json.dumps(values))
+    current={'role':'user','content':'Current work','metadata':{'amplifier_input':{'id':'current-input'}}}
+    (directory/'transcript.jsonl').write_text(json.dumps(current)+'\n')
+    archive=Path(values['appHome'])/'sessions'/sid/'history-revisions'/('context-'+cleared['result']['archiveId'])/'transcript.jsonl'
+    original=archive.read_bytes()
+    cold=await Client.launch(config);await initialize(cold)
+    try:
+        revision=(await action(cold,sid,cwd,'inspect'))['result']['historyRevision']
+        refs=[{'key':'previous-output','legacyMessageId':legacy},{'key':'current-output','messageId':'current-input'}]
+        target=str(uuid.uuid4())
+        args={'commandId':'outputs-fork','targetSessionId':target,'expectedHistoryRevision':revision,'outputReferences':refs}
+        archive.write_bytes(original.replace(b'retained answer',b'modified reply'))
+        refused=await action(cold,sid,cwd,'fork',args)
+        assert 'error' in refused and not (directory.parent/target).exists(),refused
+        archive.write_bytes(original)
+        copied=await action(cold,sid,cwd,'fork',{**args,'commandId':'outputs-fork-verified'})
+        assert copied.get('result',{}).get('creationConfirmed'),copied
+        proof=copied['result']['outputReferences']
+        assert proof['complete'] and proof['execution'] is False
+        assert [row['disposition'] for row in proof['items']]==['omitted','retained']
+        assert proof['items'][1]['targetMessageId'].startswith('native:')
+        target_rows=[json.loads(line) for line in (directory.parent/target/'transcript.jsonl').read_text().splitlines()]
+        assert target_rows==[current]
+        assert archive.read_bytes()==original and not audit.exists()
+    finally:await cold.close()
+
+
+@pytest.mark.asyncio
+async def test_retained_memory_source_survives_actual_clear_without_execution_or_new_authority(tmp_path):
+    config,cwd,sid,directory,rows,audit=seeded(tmp_path)
+    rows[0]['metadata']={'inputOrigin':'ui','amplifier_input':{'version':1,'kind':'user','source':'user','id':'saved-memory-source'}}
+    history=directory/'transcript.jsonl'
+    history.write_text(''.join(json.dumps(row)+'\n' for row in rows))
+    original=history.read_bytes()
+    client=await opened(config,cwd,sid)
+    try:
+        _,args=await reviewed(client,sid,'clear-memory')
+        cleared=await control(client,sid,'context.clear',args)
+        assert 'result' in cleared,cleared
+        archive_id=cleared['result']['archiveId']
+        assert history.read_bytes()==b''
+    finally: await client.close()
+    values=json.loads(config.read_text());values['workerCommand']=['/must-not-start-for-memory-source'];config.write_text(json.dumps(values))
+    cold=await Client.launch(config);await initialize(cold)
+    async def read(identity='saved-memory-source'):
+        revision=(await cold.request('_amplifier/history/inspect',{'sessionId':sid,'cwd':str(cwd)}))['result']['revision']
+        return await cold.request('_amplifier/history/message',{'sessionId':sid,'cwd':str(cwd),'messageId':identity,'expectedRevision':revision})
+    try:
+        source=await read()
+        assert 'result' in source,source
+        result=source['result'];message=result['message'];meta=message['_meta']['amplifier.dev/history']
+        assert message['id']=='saved-memory-source' and message['text']=='identical original'
+        assert result['execution'] is False and meta['historicalOnly'] is True and meta['mutationAuthority']=='none'
+        assert meta['preservedSource']=={'kind':'context-clear','archiveId':archive_id,'sha256':hashlib.sha256(original).hexdigest(),'complete':True}
+        assert 'error' in await read('archive:'+archive_id+':saved-memory-source')
+        revisions=Path(values['appHome'])/'sessions'/sid/'history-revisions'
+        receipt_file=revisions/('context-'+archive_id+'.json')
+        receipt_bytes=receipt_file.read_bytes()
+        for key, value in [('status','unknown'),('scope',{'sessionId':sid,'historyCwd':'/another/workspace'})]:
+            changed=json.loads(receipt_bytes);changed[key]=value;receipt_file.write_text(json.dumps(changed))
+            assert 'error' in await read()
+            receipt_file.write_bytes(receipt_bytes)
+        descriptor_file=revisions/('context-'+archive_id)/'segment.json'
+        descriptor_bytes=descriptor_file.read_bytes();changed=json.loads(descriptor_bytes)
+        changed.update(previousArchive=archive_id,sourceEpoch=archive_id);descriptor_file.write_text(json.dumps(changed))
+        assert 'error' in await read()
+        descriptor_file.write_bytes(descriptor_bytes)
+        # The same identity in the active segment must never shadow the original.
+        history.write_text(json.dumps(rows[0])+'\n')
+        assert 'error' in await read()
+        history.write_bytes(b'')
+        archive=Path(values['appHome'])/'sessions'/sid/'history-revisions'/('context-'+archive_id)/'transcript.jsonl'
+        saved=archive.read_bytes();archive.write_bytes(saved.replace(b'identical',b'different'))
+        assert 'error' in await read()
+        archive.write_bytes(saved)
+        assert 'result' in await read()
+        assert history.read_bytes()==b'' and not audit.exists() and not cold.events
+    finally: await cold.close()
+
+
+@pytest.mark.asyncio
 async def test_actual_clear_preserves_exact_bytes_goal_and_cold_receipt_after_lost_reply(tmp_path):
     boundary=tmp_path/'clear-boundary'
     config,cwd,sid,directory,_,audit=seeded(tmp_path,contextClearAudit=str(boundary))

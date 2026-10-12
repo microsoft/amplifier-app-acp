@@ -7,7 +7,7 @@ from amplifier_foundation.session.metadata import SessionMetadataStore,metadata_
 from .configuration_clone import location
 from .native.naming import automatic_metadata,accept_generated
 
-CAPABILITY={'version':1,'method':'_amplifier/naming','passiveMetadata':True,'commandIds':True,'replayUnknown':False}
+CAPABILITY={'version':1,'method':'_amplifier/naming','passiveMetadata':True,'commandIds':True,'replayUnknown':False,'titlePreview':True,'prepareGeneration':True,'backfill':{'version':1,'cold':True,'boundedExcerpt':True,'durableAttempts':True}}
 MAX_BYTES=16384
 
 def encoded(value):
@@ -119,9 +119,24 @@ async def handle(server,params):
     if operation=='read':
         if args:raise ValueError('Naming inspection takes no arguments')
         return projection(SessionMetadataStore(directory).read())
+    if operation=='preview':
+        if args:raise ValueError('Title preview takes no arguments')
+        from .chat_title_preview import read
+        metadata=SessionMetadataStore(directory).read()
+        return read(directory,{'title':metadata.get('name','Conversation '+owner.identity[:8]),'titleSource':metadata.get('name_source')})
     if operation=='receipt':
         if set(args)!={'commandId'}:raise ValueError('Exact original naming command required')
         return {'receipt':commands.receipt(args['commandId']),'replayed':False}
+    if operation=='prepare':
+        if args:raise ValueError('Naming preparation takes no arguments')
+        from .maintenance_gate import Gate
+        from .native.naming import prepare_regeneration
+        with Gate(server.config):return projection(prepare_regeneration(directory))
+    if operation=='backfill':
+        if args:raise ValueError('Automatic naming takes no client-provided prompt or command')
+        from .maintenance_gate import Gate
+        from .naming_backfill import perform
+        with Gate(server.config):return await perform(owner,commands)
     validate(operation,args)
     if operation=='generate':raise ValueError('Generation requires the selected naming lifecycle')
     from .maintenance_gate import Gate

@@ -35,7 +35,7 @@ class Session:
     def __init__(self,server,identity,cwd):
         self.server,self.identity,self.cwd=server,identity,cwd
         self.bundle_override=None;self.execution_directory=cwd;self.relocating=False
-        self.worker=None; self.prompt=None; self.input_id=None; self.cancelled=False
+        self.worker=None; self.prompt=None; self.input_id=None; self.cancelled=False; self.prompt_calls={}
         self.streamed=False; self.had_deltas=False; self.last_model_id=None; self.awaiting_children=False; self.tools=set(); self.lock=asyncio.Lock();self.report={}
         from .steering import Receipts
         from .relocation import home
@@ -83,7 +83,7 @@ class Session:
             if location['blocked']:raise RpcError(-32000,'Native relocation outcome is unresolved; inspect its receipt before execution.',{'outcome':'unknown','replayed':False})
             self.execution_directory=location['executionDirectory']
         if self.worker and (self.worker.closed or self.worker.transport_closed or self.cancelled):await self.worker.close()
-        if self.worker and self.worker.process.returncode is None:return
+        if self.worker and self.worker.process and self.worker.process.returncode is None:return
         config={**self.server.config,'executionDirectory':self.execution_directory,**({'cloneBundle':self.bundle_override} if self.bundle_override else {})}
         self.coordination.lost()
         self.worker=NativeWorker(self.identity,self.cwd,config,self.observe,self.bridge)
@@ -154,7 +154,7 @@ class Session:
         if self.coordination.observe(row) and NATIVE in self.server.extensions:
             await self.server.notify('_amplifier/event',{'sessionId':self.identity,'event':{'type':'workers.changed'}})
         root=row.get('sessionId') or row.get('session_id') or self.identity
-        is_root=root==self.identity
+        is_root=root==self.identity and (row.get('rootSessionId') or row.get('root_session_id') or self.identity)==self.identity
         if (is_root and kind=='session.naming' and isinstance(row.get('name'),str)
                 and 0<len(row['name'])<=200 and type(row.get('nameRevision')) is int and row['nameRevision']>=0):
             await self.publish_title()
@@ -162,6 +162,12 @@ class Session:
             from .lifecycle_failure import save as save_failure,supersede
             if kind=='generation.failed':save_failure(self.server,self.identity,row,self.input_id)
             else:supersede(self.server,self.identity)
+        if is_root and kind=='runtime.error' and row.get('phase')=='worker_startup' and row.get('inputSubmitted') is False:
+            from .lifecycle_failure import save_startup
+            save_startup(self.server,self.identity,row)
+        if is_root and kind=='runtime.ready':
+            from .lifecycle_failure import supersede
+            supersede(self.server,self.identity,source='recorded-native-startup')
         if is_root and kind=='generation.started':
             self.generation_id=row.get('generation_id')
             if self.prompt and not self.prompt.done():row={**row,'activeInputId':self.input_id}
@@ -194,8 +200,12 @@ class Session:
             if text:await self.update('agent_message_chunk',content={'type':'text','text':text});self.streamed=True
         elif kind=='execution.event':
             event=row.get('event',{})
+            if self.prompt and not self.prompt.done() and event.get('kind')=='llm' and event.get('lifecycle')!='background' and event.get('id'):
+                self.prompt_calls[event['id']]=event.get('usage',{})
             if event.get('kind')=='llm' and event.get('phase')=='running' and event.get('lifecycle')!='background' and event.get('sessionId')==self.identity and event.get('id')!=self.last_model_id:
                 self.last_model_id=event.get('id');self.streamed=False;self.had_deltas=False
+            if event.get('kind') in {'llm','worker'} and NATIVE in self.server.extensions:
+                await self.server.notify('_amplifier/event',{'sessionId':self.identity,'event':{'type':'execution.event','event':event,'activeInputId':self.input_id}})
             if event.get('kind')=='tool':
                 identity=event.get('toolCallId') or event.get('id')
                 if not identity:return
@@ -203,17 +213,31 @@ class Session:
                 identity=str(event.get('sessionId') or self.identity)+':'+str(identity)
                 status={'running':'in_progress','completed':'completed','error':'failed','cancelled':'failed'}.get(event.get('phase'),'pending')
                 data={'toolCallId':identity,'status':status}
+                # Presentation-only metadata travels with standard ACP calls;
+                # it never grants worker controls or changes execution identity.
+                detail={key:event[key] for key in ('sessionId','parentId','startedAt','endedAt','delegate') if key in event}
+                data['_meta']={'amplifier.dev/execution':{'version':1,**detail}}
                 if 'input' in event:data['rawInput']=event['input']
                 if 'output' in event:
                     data['rawOutput']=event['output']
                     output=event['output']
                     text=output if isinstance(output,str) else json.dumps(output,ensure_ascii=True,separators=(',',':'))
                     data['content']=[{'type':'content','content':{'type':'text','text':text}}]
+                if event.get('label') == 'image_generate' and event.get('phase') == 'completed':
+                    from .image_artifacts import deliver
+                    delivery = await deliver(self, event)
+                    if delivery:
+                        data.setdefault('content', []).append({'type':'content','content':{'type':'text','text':delivery}})
                 if identity not in self.tools:
                     self.tools.add(identity);data.update(title=event.get('label','Tool'),kind='other')
                     await self.update('tool_call',**data)
                 else:
                     await self.update('tool_call_update',**data)
+                if event.get('sessionId') == self.identity and event.get('label') == 'todo' and event.get('phase') == 'completed':
+                    from .plan import accepted_plan
+                    plan = event.get('plan') if 'plan' in event else accepted_plan(event.get('input'), event.get('output'))
+                    if plan is not None:
+                        await self.update('plan', **{key: value for key, value in plan.items() if key != 'sessionUpdate'})
         elif kind in {'generation.finished','generation.failed','generation.detached'} and is_root:
             if not self.prompt or self.prompt.done():return
             ids=row.get('input_ids',[])
@@ -223,7 +247,9 @@ class Session:
                 return
             if kind=='generation.finished':
                 if not self.streamed and row.get('text'):await self.update('agent_message_chunk',content={'type':'text','text':row['text']})
-                self.prompt.set_result({'stopReason':'cancelled' if self.cancelled else 'end_turn'})
+                from .prompt_usage import prompt_usage
+                usage=prompt_usage(self.prompt_calls)
+                self.prompt.set_result({'stopReason':'cancelled' if self.cancelled else 'end_turn',**({'usage':usage} if usage is not None else {})})
             elif kind=='generation.detached' and self.cancelled:self.prompt.set_result({'stopReason':'cancelled'})
             else:
                 data={k:row[k] for k in ('error_type','error_category','retryable','cancellation') if k in row}
@@ -270,9 +296,18 @@ class Session:
         async with self.lock:return await self.configure_idle(identity,value)
 
     async def configure_idle(self,identity,value):
+        advertised=getattr(self,'model_choices',{}).get(value) if identity=='model' else None
         await self.start()
         # Validate against current owner state, not a stale client/private draft.
         await self.refresh_options(notify=False)
+        # A cold worker loses its in-memory discovery cache. A deliberate
+        # selection may re-read that one advertised provider, then validate the
+        # token against current choices. Never accept a stale choice blindly.
+        if advertised and value not in self.model_choices:
+            provider=next((row for row in self.provider_state.get('providers',[]) if row.get('id')==advertised['instance']),None)
+            if provider and provider.get('modelCatalog',{}).get('state')=='not-loaded':
+                await self.worker.control('configuration.providerModels',{'provider':advertised['instance']})
+                await self.refresh_options(notify=False)
         option=next((r for r in self.config_options if r['id']==identity),None)
         choices=[item for row in (option or {}).get('options',[]) for item in row.get('options',[row])]
         if not option or value not in {r['value'] for r in choices}:raise RpcError(-32602,'Unknown session configuration option or value.')
@@ -393,8 +428,10 @@ class Session:
             from .content import prompt_content
             value,attachments=prompt_content(self.server.config,blocks)
             provenance=(meta or {}).get('amplifier.dev/input') if NATIVE in self.server.extensions else None
-            if provenance is not None and (not isinstance(provenance,dict) or set(provenance)!={'inputOrigin'} or provenance.get('inputOrigin')!='coordination'):
-                raise RpcError(-32602,'Prompt provenance supports only the negotiated coordination origin marker; it grants no human authority.')
+            if provenance is not None:
+                from .native.input_provenance import validate_prompt
+                try: validate_prompt(provenance)
+                except ValueError as error: raise RpcError(-32602,str(error)) from error
             self.reject_failed_input(self.input_id)
             reply=(meta or {}).get('amplifier.dev/messageReply')
             quote=None
@@ -420,6 +457,7 @@ class Session:
                 if previous.get('delivery')=='accepted':
                     raise RpcError(-32001,'This input was already admitted. Read native history; it was not replayed.',{'outcome':'already-admitted','commandId':command_id,'replayed':False})
             self.cancelled=False;self.streamed=False;self.had_deltas=False;self.last_model_id=None;self.awaiting_children=False;self.pending_input_failure=None
+            self.prompt_calls={}
             self.prompt=asyncio.get_running_loop().create_future()
             try:
                 admitted=await self.worker.command('send',public_input_transport='acp',text=value,input_id=self.input_id,attachments=attachments,**({'reply_context':quote} if quote is not None else {}),**({'input_provenance':provenance} if provenance is not None else {}),**({'public_message':public_message} if public_message is not None else {}))
@@ -437,7 +475,7 @@ class Session:
         if self.lock.locked():return {'accepted':False,'executed':False,'reason':'A turn is already active.'}
         identity=args.get('inputId')
         if not isinstance(identity,str) or not identity or len(identity)>200:raise RpcError(-32602,'A bounded deterministic inputId is required.')
-        if operation!='observation.submit' and (not isinstance(args.get('text'),str) or not args['text'].strip()):raise RpcError(-32602,'Input text is required.')
+        if operation not in {'observation.submit','peer.submit'} and (not isinstance(args.get('text'),str) or not args['text'].strip()):raise RpcError(-32602,'Input text is required.')
         if operation=='schedule.submit' and args.get('kind') not in {'task','monitor'}:raise RpcError(-32602,'Scheduled kind must be task or monitor.')
         resident=self.worker if require_existing else None
         def available():
@@ -460,6 +498,7 @@ class Session:
             if previous.get('delivery')=='accepted':
                 raise RpcError(-32001,'Input was already admitted; inspect its history.',{'outcome':'already-admitted','commandId':identity,'replayed':False})
             self.input_id=identity;self.cancelled=False;self.streamed=False;self.had_deltas=False;self.last_model_id=None;self.awaiting_children=False;self.pending_input_failure=None
+            self.prompt_calls={}
             self.prompt=asyncio.get_running_loop().create_future()
             try:
                 try:result=await worker.control(operation,args)
@@ -664,7 +703,7 @@ class Server:
             return {'protocolVersion':1,'agentInfo':{'name':'amplifier-acp','title':'Amplifier','version':__version__},
                 'agentCapabilities':{'loadSession':True,'sessionCapabilities':{'resume':{},'close':{},'delete':{}},
                     'promptCapabilities':{'image':True,'audio':False,'embeddedContext':True},
-                    '_meta':{NATIVE:{'version':1,**runtime_preparation.metadata(),'publicMessagePreservation':__import__('amplifier_acp.public_message',fromlist=['CAPABILITY']).CAPABILITY,**({'messageInteractions':{'version':1,'methods':['reaction','read','receipt'],'quoteMeta':'amplifier.dev/messageReply','maxQuoteChars':4000,'privateReplySelection':True}} if self.message_principal else {}),**({'initialSelection':__import__('amplifier_acp.initial_selection',fromlist=['CAPABILITY']).CAPABILITY,'managedCreation':{'version':1,'passive':True,'configurationScope':'global-and-session','typedSelection':True,'historyCopy':{'version':1,'freshAllocation':True},'configurationCopy':{'version':1,'passive':True},'defaults':{'version':1,'globalOnly':True},'models':{'version':1,'globalOnly':True,'maxPageSize':100,'maxModels':1000,'maxBytes':524288}}} if self.config.get('managedSessionRoots') else {}),'inputOutcome':__import__('amplifier_acp.input_outcome',fromlist=['CAPABILITY']).CAPABILITY,'contextClear':__import__('amplifier_acp.native.history_revision',fromlist=['CONTEXT_CLEAR']).CONTEXT_CLEAR,'naming':__import__('amplifier_acp.naming_commands',fromlist=['CAPABILITY']).CAPABILITY,'bundleCommands':__import__('amplifier_acp.bundle_commands',fromlist=['CAPABILITY']).CAPABILITY,'history':{'version':1,'paging':'complete-turns','passive':True,'passiveInspect':True},'scheduledTurns':{'version':1,'completion':'settled'},'questionTurns':{'version':1,'completion':'settled','active':False},'observationTurns':{'version':1,'completion':'settled','active':False},'configurationClone':{'version':1},'taskState':{'version':1,'passive':True},'workers':{'version':1,'passiveInspection':True,'residentControls':True},'runtimeInspection':{'version':1,'residentOnly':True,'passiveStatus':True},'historyEdits':{'version':1,'completion':'settled','active':False,'originalContextVersion':1},'sessionLifecycle':{'version':1,'passive':True,'deletion':'preserve-history',**({'managedFiles':{'version':1,'preservesCanonical':True,'maxEntries':10000,'maxBytes':268435456}} if self.config.get('managedSessionRoots') and managed_disposal_supported() else {}),'retention':{'version':1,'preservesCanonical':True},**({'retiredCopies':{'version':1,'duplicateFilesOnly':True,'retirementAuthority':'launcher-assertion'}} if self.config.get('retiredSessionCopyRoots') else {}),'recoveryCopy':{'version':1,'mode':'readable-history'},'bundleFork':{'version':1,'configuredOnly':True},'descendantGuard':{'version':1,'maxSessions':100,'coverage':'indexed-and-native-worker-families'}},'activeSteering':{'version':1,'mode':'request_boundary','cancellable':False,'runtimeNegotiated':True},'lifecycle':{'version':1,'gracefulRetire':True,'retirementStatus':{'version':1,'method':'_amplifier/retire/status','passive':True},**({'runtimeRetention':{'version':1,'owner':'host','lifetime':'connection','standaloneIdleSeconds':self._standalone_idle_seconds}} if self.host_runtime_retention else {})},'relocation':{'version':1,'passiveInspection':True},**({'transfer':{'version':1,'passiveInspection':True,'lifecycle':{'version':1,'heldIntake':True,'serviceStop':{'version':1},'nativeAdminWriter':managed_probe(self.config),'admissionAbort':{'version':1}}}} if self.config.get('transferAuthorityDirectory') and self.config.get('transferWorkspaceRoots') else {}),**({'admin':{'version':1,'providerSignIn':{'version':1,'workspaceBound':True,'scopedAttempts':True},**({'permissions':{'version':1,'scopes':['global','project','local'],'cas':True,'receipt':True,'pathsPerList':64,'pathChars':4096,'requestBytes':262144,'application':'next-idle-execution'}} if self.config.get('adminPermissions') is True else {}),**({'historyImport':{'version':1,'staged':True,'maxBytes':1048576,'chunkBytes':16384}} if self.config.get('adminHistoryImport') is True else {}),'voice':{'version':1,'configuration':True,'credentials':self.config.get('adminVoiceCredentials') is True,**({'preferences':{'version':1,'cas':True,'receipt':True,'fields':['preferredModel','fallbackModel','voice','interruptions']}} if self.config.get('adminVoicePreferences') is True else {})},'lifecycle':{'version':1,'heldIntake':True,'crossProcessWriterFence':True,'admissionAbort':{'version':1,'durable':True,'receipt':True},'idleNotification':True,'serviceStop':{'version':1}},**({'generations':{'version':1}} if self.config.get('adminGenerations') else {}),**({'maintenance':{'version':1,'selectedOnly':self.config.get('maintenanceFullNative') is not True,'privateArtifacts':True,**({'captureScope':{'version':1,'connectionScoped':True,'beforePrepare':True,'retainsNativeHome':True,'maxArtifacts':16,'expiry':'connection-lifetime'}} if self.config.get('maintenanceFullNative') is True else {}),'appReset':{'version':1,'parts':['native.app-bundle-default'],'retainedUndo':True,'requiresRecoveryAdminLease':True},'cacheInventory':{'version':1,'cold':True,'paged':True,'clearKinds':['python-bytecode'],'sourceRetirement':False,'requiresRecoveryAdminLease':True},'archivePlans':{'version':1,'batchSize':32,'pagedManifest':True,'nativeStores':{'version':1,'parts':['native-import-records','native-preference-receipts','native-maintenance-records','native-retained-archives'],'requiresRecoveryAdminLease':True},**({'fullNative':{'version':1,'part':'full-native-authority','format':'amplifier-native-authority','coldInventory':True,'externalRootsDeclared':True,'artifactInspect':{'version':1},**({'restore':{'version':1,'newDestinationOnly':True,'pagedManifest':True,'receipt':True,'passiveInspect':True}} if self.config.get('maintenanceRestoreRoots') else {})}} if self.config.get('maintenanceFullNative') is True else {})}}} if self.config.get('adminMaintenance') is True else {})}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
+                    '_meta':{NATIVE:{'version':1,**runtime_preparation.metadata(),'publicMessagePreservation':__import__('amplifier_acp.public_message',fromlist=['CAPABILITY']).CAPABILITY,**({'messageInteractions':{'version':1,'methods':['reaction','read','receipt'],'quoteMeta':'amplifier.dev/messageReply','maxQuoteChars':4000,'privateReplySelection':True}} if self.message_principal else {}),**({'initialSelection':__import__('amplifier_acp.initial_selection',fromlist=['CAPABILITY']).CAPABILITY} if self.config.get('managedSessionRoots') or self.config.get('adminWorkspaceRoots') else {}),**({'managedCreation':{'version':1,'passive':True,'configurationScope':'global-and-session','typedSelection':True,'historyCopy':{'version':1,'freshAllocation':True},'configurationCopy':{'version':1,'passive':True},'defaults':{'version':1,'globalOnly':True},'models':{'version':1,'globalOnly':True,'maxPageSize':100,'maxModels':1000,'maxBytes':524288}}} if self.config.get('managedSessionRoots') else {}),'inputOutcome':__import__('amplifier_acp.input_outcome',fromlist=['CAPABILITY']).CAPABILITY,'contextClear':__import__('amplifier_acp.native.history_revision',fromlist=['CONTEXT_CLEAR']).CONTEXT_CLEAR,'naming':__import__('amplifier_acp.naming_commands',fromlist=['CAPABILITY']).CAPABILITY,'bundleCommands':__import__('amplifier_acp.bundle_commands',fromlist=['CAPABILITY']).CAPABILITY,'modelCalls':{'version':1,'passive':True,'recordedDetails':True},'history':{'version':1,'paging':'complete-turns','passive':True,'exactMessageRead':{'version':1,'visibleReferenceOnly':1,'mediaReferenceOnly':1,'scan':'stream','maxRecordBytes':67108864,'maxMessageBytes':65536},'savedMessages':__import__('amplifier_acp.saved_messages',fromlist=['CAPABILITY']).CAPABILITY,'passiveInspect':True,'planOverview':__import__('amplifier_acp.plan_overview',fromlist=['CAPABILITY']).CAPABILITY,'missingWorkspaceRead':{'version':1,'exactMetadata':True,'execution':False}},'scheduledTurns':{'version':1,'completion':'settled'},'questionTurns':{'version':1,'completion':'settled','active':False},'observationTurns':{'version':1,'completion':'settled','active':False},'peerTurns':{'version':1,'completion':'settled','guarded':True,'results':__import__('amplifier_acp.native.peer_results',fromlist=['CAPABILITY']).CAPABILITY,'modes':['queue','steer'],'passiveNotifications':{'version':1,'delivery':'provider-request'}},'configurationClone':{'version':1},'taskState':{'version':1,'passive':True,'capacity':{'version':1,'passivePolicy':True,'admission':'native-owner-snapshot'}},'workers':{'version':1,'passiveInspection':True,'residentControls':True},'runtimeInspection':{'version':1,'residentOnly':True,'passiveStatus':True},'historyEdits':{'version':1,'completion':'settled','active':False,'originalContextVersion':1},'sessionLifecycle':{'version':1,'outputReferences':{'version':1,'maxItems':500},'exportDetails':__import__('amplifier_acp.conversation_export',fromlist=['CAPABILITY']).CAPABILITY,'passive':True,'deletion':'preserve-history',**({'managedFiles':{'version':1,'preservesCanonical':True,'maxEntries':10000,'maxBytes':268435456}} if self.config.get('managedSessionRoots') and managed_disposal_supported() else {}),'retention':{'version':1,'preservesCanonical':True},**({'retiredCopies':{'version':1,'duplicateFilesOnly':True,'retirementAuthority':'launcher-assertion'}} if self.config.get('retiredSessionCopyRoots') else {}),'recoveryCopy':{'version':1,'mode':'readable-history'},'bundleFork':{'version':1,'configuredOnly':True},'descendantGuard':{'version':1,'maxSessions':100,'coverage':'indexed-and-native-worker-families'}},'activeSteering':{'version':1,'mode':'request_boundary','cancellable':False,'runtimeNegotiated':True,'content':{'version':1,'attachments':True,'quotedReplies':bool(self.message_principal)}},'lifecycle':{'version':1,'gracefulRetire':True,'retirementStatus':{'version':1,'method':'_amplifier/retire/status','passive':True},**({'runtimeRetention':{'version':1,'owner':'host','lifetime':'connection','standaloneIdleSeconds':self._standalone_idle_seconds}} if self.host_runtime_retention else {})},'relocation':{'version':1,'passiveInspection':True},**({'transfer':{'version':1,'passiveInspection':True,'lifecycle':{'version':1,'heldIntake':True,'serviceStop':{'version':1},'nativeAdminWriter':managed_probe(self.config),'admissionAbort':{'version':1}}}} if self.config.get('transferAuthorityDirectory') and self.config.get('transferWorkspaceRoots') else {}),**({'admin':{'version':1,'storageRoots':{'version':1,'passive':True,'launcherOwned':True},'imageSetup':__import__('amplifier_acp.image_setup_contract',fromlist=['CAPABILITY']).CAPABILITY,'imagePreferences':__import__('amplifier_acp.image_setup_contract',fromlist=['PREFERENCES_CAPABILITY']).PREFERENCES_CAPABILITY,**({'providerRecording':__import__('amplifier_acp.provider_recording_policy',fromlist=['CAPABILITY']).CAPABILITY} if self.config.get('adminProviderRecording') is True else {}),'providerSignIn':{'version':1,'workspaceBound':True,'scopedAttempts':True},'configurationTargets':__import__('amplifier_acp.configuration_target',fromlist=['CAPABILITY']).CAPABILITY,**({'permissions':{'version':1,'scopes':['global','project','local'],'cas':True,'receipt':True,'pathsPerList':64,'pathChars':4096,'requestBytes':262144,'application':'next-idle-execution'}} if self.config.get('adminPermissions') is True else {}),**({'historyImport':{'version':1,'staged':True,'maxBytes':1048576,'chunkBytes':16384}} if self.config.get('adminHistoryImport') is True else {}),'voice':{'version':1,'configuration':True,'credentials':self.config.get('adminVoiceCredentials') is True,**({'preferences':{'version':1,'cas':True,'receipt':True,'fields':list(__import__('amplifier_acp.voice_preferences',fromlist=['FIELDS']).FIELDS)}} if self.config.get('adminVoicePreferences') is True else {})},'lifecycle':{'version':1,'heldIntake':True,'crossProcessWriterFence':True,'admissionAbort':{'version':1,'durable':True,'receipt':True},'reconcileRelease':{'version':1,'durable':True,'receipt':True},'idleNotification':True,'serviceStop':{'version':1}},**({'generations':{'version':1,'progress':{'version':1,'metadataOnly':True,'notification':'_amplifier/admin/generationsChanged'}}} if self.config.get('adminGenerations') else {}),**({'maintenance':{'version':1,**({'bundleReferences':{'version':1,'metadataOnly':True,'previewRequired':True,'receipt':True,'paged':True,'workReplayed':False}} if self.config.get('maintenanceFullNative') is True and self.config.get('maintenanceExternalWriters') in {'foundation-cooperative','stopped'} else {}),'selectedOnly':self.config.get('maintenanceFullNative') is not True,'privateArtifacts':True,**({'captureScope':{'version':1,'connectionScoped':True,'beforePrepare':True,'retainsNativeHome':True,'maxArtifacts':16,'expiry':'connection-lifetime'}} if self.config.get('maintenanceFullNative') is True else {}),'appReset':{'version':1,'parts':['native.app-bundle-default'],'retainedUndo':True,'requiresRecoveryAdminLease':True},**({'workspaceCleanup':__import__('amplifier_acp.workspace_cleanup',fromlist=['CAPABILITY']).CAPABILITY,'backupCleanup':__import__('amplifier_acp.backup_cleanup',fromlist=['CAPABILITY']).CAPABILITY,'historyCleanup':__import__('amplifier_acp.history_cleanup',fromlist=['CAPABILITY']).CAPABILITY} if self.config.get('maintenanceExternalWriters')=='stopped' else {}),'cacheInventory':{'version':1,'cold':True,'paged':True,'clearKinds':['python-bytecode','app-source-cache'],'sourceRetirement':False,'requiresRecoveryAdminLease':True},'archivePlans':{'version':1,'batchSize':32,'pagedManifest':True,'nativeStores':{'version':1,'parts':['native-import-records','native-preference-receipts','native-recording-receipts','native-maintenance-records','native-retained-archives'],'requiresRecoveryAdminLease':True},**({'fullNative':{'version':1,'part':'full-native-authority','format':'amplifier-native-authority','coldInventory':True,'externalRootsDeclared':True,'artifactInspect':{'version':1},**({'restore':{'version':1,'newDestinationOnly':True,'pagedManifest':True,'receipt':True,'passiveInspect':True}} if self.config.get('maintenanceRestoreRoots') else {})}} if self.config.get('maintenanceFullNative') is True else {})}}} if self.config.get('adminMaintenance') is True else {})}} if self.config.get('adminWorkspaceRoots') else {})},HOST:{'version':1}}},'authMethods':[]}
         if not self.initialized:raise RpcError(-32600,'Initialize this connection first.')
         if method=='_amplifier/input/receipt':
             from .input_outcome import passive
@@ -694,7 +733,7 @@ class Server:
         if method in {'_amplifier/admin','_amplifier/admin/lifecycle'}:
             if NATIVE not in self.extensions or not self.config.get('adminWorkspaceRoots'):raise RpcError(-32601,'Native administration was not negotiated or launcher-enabled.')
             from .admin import Administration
-            if not hasattr(self,'admin'):self.admin=Administration(self.config,lambda:self.send({'jsonrpc':'2.0','method':'_amplifier/admin/idle','params':{'version':1}}))
+            if not hasattr(self,'admin'):self.admin=Administration(self.config,lambda:self.send({'jsonrpc':'2.0','method':'_amplifier/admin/idle','params':{'version':1}}),lambda:self.track(self.notify('_amplifier/admin/generationsChanged',{'version':1})))
             if method=='_amplifier/admin/lifecycle':
                 self.admin.workspace(params.get('cwd'))
                 return self.admin.lifecycle.perform(params.get('operation'),params.get('args',{}))
@@ -723,7 +762,7 @@ class Server:
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
             from .session_lifecycle import Lifecycle
             operation=params.get('operation');loaded=self.sessions.get(params.get('sessionId'))
-            if operation in {'fork','export','delete','restore','retention.hide','legacyCopy.purge','managedFiles.preview','managedFiles.dispose'} and loaded and (loaded.lock.locked() or loaded.config_cancel is not None or loaded.worker_retirement_pending):raise RpcError(-32000,'Native lifecycle mutation requires an idle, settled session.',{'executed':False})
+            if operation in {'fork','delete','restore','retention.hide','legacyCopy.purge','managedFiles.preview','managedFiles.dispose'} and loaded and (loaded.lock.locked() or loaded.config_cancel is not None or loaded.worker_retirement_pending):raise RpcError(-32000,'Native lifecycle mutation requires an idle, settled session.',{'executed':False})
             owner=Lifecycle(self,params.get('sessionId'),params.get('cwd',''))
             if operation.startswith('managedFiles.'):
                 from .managed_disposal import dispatch
@@ -783,17 +822,42 @@ class Server:
             if method.endswith('/reaction') and result['changed'] and previous is None:
                 await self.notify('_amplifier/message/update',result)
             return result
-        if method in {'_amplifier/history','_amplifier/history/inspect'}:
+        if method=='_amplifier/model-detail':
+            if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
+            from .model_detail import read
+            from .relocation import home
+            # Validate the exact native history scope without mounting a worker.
+            cwd=Path(params.get('cwd','')).expanduser()
+            if not cwd.is_absolute():raise RpcError(-32602,'cwd must be an absolute directory.')
+            directory=self.directory(str(cwd.resolve()),params.get('sessionId'))
+            if not (directory/'transcript.jsonl').is_file():raise RpcError(-32602,'Exact native history scope required.')
+            return read(home(self),params)
+        if method in {'_amplifier/history','_amplifier/history/inspect','_amplifier/history/message','_amplifier/history/plan','_amplifier/history/saved-messages'}:
             if NATIVE not in self.extensions:raise RpcError(-32601,'Native extension was not negotiated.')
             cwd=Path(params.get('cwd','')).expanduser()
             if not cwd.is_absolute():raise RpcError(-32602,'cwd must be an absolute directory.')
-            if not cwd.is_dir():
+            if 'readOnlyMissingWorkspace' in params and params['readOnlyMissingWorkspace'] is not True:raise RpcError(-32602,'Missing-workspace reads require an explicit true flag.')
+            if params.get('readOnlyMissingWorkspace') is True:
+                from .missing_workspace_history import validate
+                validate(self,str(cwd),params.get('sessionId'))
+            elif not cwd.is_dir():
                 from .managed_session import history_scope
                 if not history_scope(str(cwd),params.get('sessionId'),self.config):raise RpcError(-32602,'Existing or exactly disposed native history workspace required.')
             from .history import page,inspect
             directory=self.directory(str(cwd.resolve()),params.get('sessionId'))
             if method.endswith('/inspect'):return inspect(directory)
+            if method.endswith('/plan'):
+                if set(params)-{'sessionId','cwd','includeItems','readOnlyMissingWorkspace'}:raise RpcError(-32602,'Unexpected plan overview fields')
+                from .plan_overview import overview
+                return await asyncio.to_thread(overview,directory,params.get('includeItems',False))
             from .relocation import home
+            if method.endswith('/saved-messages'):
+                if set(params)-{'sessionId','cwd','readOnlyMissingWorkspace'}:raise RpcError(-32602,'Unexpected saved-message fields')
+                from .saved_messages import recent
+                return await asyncio.to_thread(recent,directory,app_home=home(self),history_cwd=str(cwd.resolve()))
+            if method.endswith('/message'):
+                from .history import exact_message
+                return await asyncio.to_thread(exact_message,directory,params.get('messageId'),params.get('expectedRevision'),app_home=home(self),history_cwd=str(cwd.resolve()),visible_reference_only=params.get('visibleReferenceOnly',False),media_reference_only=params.get('mediaReferenceOnly',False))
             public_rows=params.get('includePublicRows',False)
             if type(public_rows) is not bool:raise RpcError(-32602,'includePublicRows must be boolean')
             if 'rowLocator' in params:
@@ -802,7 +866,22 @@ class Server:
                 from .native.history_revision import context_head
                 return read_row(directory,params['rowLocator'],epoch=context_head(home(self),directory.name,str(cwd.resolve())),expected_revision=params.get('expectedRevision'))
             result=page(directory,cursor=params.get('cursor'),limit=params.get('limit',50),expected_revision=params.get('expectedRevision'),app_home=home(self),history_cwd=str(cwd.resolve()),include_public_rows=public_rows)
-            if self.message_principal:
+            metadata_path=directory/'metadata.json'
+            try:
+                if metadata_path.stat().st_size<=262144:
+                    metadata=json.loads(metadata_path.read_text())
+                    selected=metadata.get('bundle_name') or metadata.get('bundle')
+                    if isinstance(selected,str) and 0<len(selected)<=4096:
+                        aliases=self.config.get('forkBundles',{})
+                        label=next((name for name,value in aliases.items() if value==selected),selected)
+                        if '://' not in label and '/' not in label:
+                            label=label.replace('-',' ').replace('_',' ').title()
+                        else:
+                            label='Custom bundle'
+                        result['selection']={'version':1,'bundle':selected,'bundleLabel':label}
+            except (OSError,ValueError,TypeError):
+                pass
+            if self.message_principal and params.get('readOnlyMissingWorkspace') is not True:
                 scopes=getattr(self,'message_scopes',{})
                 identity=params.get('sessionId');canonical=str(cwd.resolve())
                 if identity in scopes and scopes[identity]!=canonical:raise RpcError(-32602,'Native message scope changed; original history preserved.')
@@ -812,7 +891,7 @@ class Server:
             return result
         if method=='_amplifier/initial-selection':
             from . import initial_selection
-            if not self.config.get('managedSessionRoots'):raise RpcError(-32601,'Initial selection is not enabled.')
+            if not (self.config.get('managedSessionRoots') or self.config.get('adminWorkspaceRoots')):raise RpcError(-32601,'Initial selection is not enabled.')
             if set(params)-{'cwd','selection'}:raise initial_selection.Refused('Initial selection accepts only cwd and a typed draft.')
             response,_=await initial_selection.resolve(self.config,params.get('cwd'),params.get('selection',{}))
             return response
@@ -835,7 +914,7 @@ class Server:
             raw_meta=(params.get('_meta') or {}).get(NATIVE,{})
             if not isinstance(raw_meta,dict):raise RpcError(-32602,'Native metadata must be an object.')
             selected=initial_selection.requested(raw_meta.get('selection'),
-                supported=bool(self.config.get('managedSessionRoots')),
+                supported=bool(self.config.get('managedSessionRoots') or self.config.get('adminWorkspaceRoots')),
                 negotiated=NATIVE in self.extensions,new=method=='session/new')
             native_meta=raw_meta if NATIVE in self.extensions else {}
             cwd=Path(native_meta.get('historyCwd') or requested).expanduser()
@@ -878,7 +957,7 @@ class Server:
             location=state(self,identity,session.cwd)
             result={'configOptions':session.config_options,'_meta':{NATIVE:{'nativeSessionId':identity,'agentKind':'amplifier-core-foundation','historyCwd':session.cwd,'executionDirectory':session.execution_directory,'executionRevision':location['executionRevision'],**({'publicMessagePreservation':session.report['publicMessagePreservation']} if 'publicMessagePreservation' in session.report else {})}}}
             if selected is not None:
-                result['_meta'][NATIVE]['initialSelection']=initial_selection.confirmed(self.config,session,selected)
+                result['_meta'][NATIVE]['initialSelection']=initial_selection.confirmed(self.config,session,selected,initial_bundle)
             if method=='session/new':result['sessionId']=identity
             return result
         identity=params.get('sessionId');session=self.sessions.get(identity)
@@ -918,15 +997,23 @@ class Server:
             if operation=='session.relocation.inspect':
                 from .relocation import state
                 return state(self,identity,session.cwd)
-            if operation in {'schedule.submit','question.submit','observation.submit','history.revise'}:return await session.settled_input(operation,args,require_existing=require_existing)
+            if operation=='peer.submit':
+                from .native.peer_input import validate
+                validate(args)
+            if operation in {'schedule.submit','question.submit','observation.submit','peer.submit','history.revise'}:return await session.settled_input(operation,args,require_existing=require_existing)
             if operation=='history.edit':raise RpcError(-32601,'Legacy host-projection history edits are unavailable; use negotiated history.revise.')
             if operation=='steer':raise RpcError(-32601,'Unanchored root steering is unavailable over ACP; use negotiated steer.submit.')
             if operation=='steer.submit':
                 from .message_metadata import guard_input_identity
                 from .relocation import home
-                guard_input_identity(home(self)/'sessions'/identity/'message-interactions.sqlite3',args.get('inputId'))
+                if not session.steering.read(args.get('inputId')):
+                    guard_input_identity(home(self)/'sessions'/identity/'message-interactions.sqlite3',args.get('inputId'),
+                        reference=args.get('reply'),input_payload=args,actor_id=self.message_principal(identity) if self.message_principal else None)
                 from .steering import submit
                 return await submit(session,args)
+            if operation=='peer.steer':
+                from .steering import submit_peer
+                return await submit_peer(session,args)
             if operation=='runtime.inspect':
                 from .runtime_inspection import resident
                 return await resident(session,args)
@@ -1002,8 +1089,8 @@ class Server:
 NATIVE_CONTROLS=['session.relocate','session.relocation.inspect','configuration.snapshot','configuration.inspect','configuration.exportResources','configuration.providers','configuration.providerModels',
     'configuration.providerTest','configuration.providerLogin','configuration.providerLoginStatus','configuration.providerLoginCancel','configuration.cancel','configuration.apply','configuration.toggle','catalog.inspect','usage.inspect',
     'context.clear.review','context.clear','goals.get','goals.set','goals.clear','budget.get','budget.set','provider.reset','provider.select','tool.invoke',
-    'voice.transcript.record','mode.list','mode.set','mode.clear','native.status','native.compact','history.snapshot','history.revise','bundle.preview','bundle.switch',
-    'session.naming','session.naming.generate','steer.submit','question.submit','schedule.submit','observation.submit','memory.consolidate','operations.submit','operations.cancel','operations.write',
+    'voice.transcript.record','voice.delivery.record','mode.list','mode.set','mode.clear','native.status','native.compact','history.snapshot','history.revise','bundle.preview','bundle.switch',
+    'session.naming','session.naming.generate','steer.submit','question.submit','schedule.submit','observation.submit','peer.submit','peer.steer','memory.consolidate','operations.submit','operations.cancel','operations.write',
     'kernels.create','kernels.execute','kernels.interrupt','kernels.reset','kernels.close','capacity.get','capacity.set','capacity.quota',
     'task.get','task.receipt','task.history','task.create','task.update','task.pause','task.resume','task.block','task.complete']
 

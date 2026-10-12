@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-CAPABILITY = {'version': 1, 'typedSelection': True, 'passive': True, 'resolveMethod': '_amplifier/initial-selection'}
+CAPABILITY = {'version': 1, 'typedSelection': True, 'bundleSelection': True, 'passive': True, 'resolveMethod': '_amplifier/initial-selection'}
 
 
 class Refused(ValueError):
@@ -18,17 +18,21 @@ def requested(value, *, supported, negotiated, new):
         return None
     if not supported or not negotiated or not new:
         raise Refused('Initial selection requires negotiated support on session/new.')
+    value=partial(value)
     from .managed_session import selection, Refused as Invalid
-    try:return dict(selection(value))
+    provider={key:item for key,item in value.items() if key!='bundle'}
+    try:
+        if provider:selection(provider)
+        return value
     except Invalid as exc:raise Refused(str(exc)) from None
 
 
 def partial(value):
     from .managed_session import bounded, Refused as Invalid
-    if not isinstance(value,dict) or set(value)-{'instance','model','effort'}:
-        raise Refused('Initial selection draft requires only typed instance, model and effort fields.')
+    if not isinstance(value,dict) or set(value)-{'instance','model','effort','bundle'}:
+        raise Refused('Initial selection draft requires only typed bundle, instance, model and effort fields.')
     try:
-        return {key:bounded(item,key,{'instance':200,'model':500,'effort':100}[key])
+        return {key:bounded(item,key,{'instance':200,'model':500,'effort':100,'bundle':4096}[key])
                 for key,item in value.items()}
     except Invalid as exc:raise Refused(str(exc)) from None
 
@@ -84,9 +88,11 @@ async def resolve(config, cwd, draft):
     if not workspace.is_absolute() or not workspace.is_dir():
         raise Refused('Initial selection cwd must be an existing absolute directory.')
     try:
-        bundle=selected_bundle(config)
+        bundle=draft.get('bundle') or selected_bundle(config)
+        provider={key:value for key,value in draft.items() if key!='bundle'}
+        pin=provider if provider or 'bundle' not in draft else None
         result=await resolve_defaults(app_home(config),str(workspace.resolve()),bundle,
-                                      initial_selection=draft,
+                                      initial_selection=pin,
                                       registry_home=config.get('registryHome'))
     except CatalogUnavailable:
         raise
@@ -94,7 +100,12 @@ async def resolve(config, cwd, draft):
         raise Refused('Initial selection could not be validated; no session was started.') from None
     if result.get('selectionRefused'):
         raise Refused('Initial provider, model or reasoning choice is unavailable.')
-    return result['initialOptions'],result['bundle']
+    response=result.get('initialOptions') or {'version':1,'schema':{'type':'object','additionalProperties':False,'required':[],'properties':{}},'values':{}}
+    if 'bundle' in draft:
+        response['schema']['properties']['bundle']={'type':'string','title':'Bundle','enum':[draft['bundle']]}
+        response['schema']['required'].append('bundle')
+        response['values']['bundle']=draft['bundle']
+    return response,result.get('bundleIdentity',result['bundle'])
 
 
 async def validate(config, cwd, selection):
@@ -108,13 +119,16 @@ def persist(config, identity, selection):
     from .managed_session import app_home, checked, write
     directory = checked(app_home(config) / 'sessions' / identity)
     directory.mkdir(mode=0o700, parents=True, exist_ok=False)
-    write(directory / 'control-state.json', {'selection': selection})
+    provider={key:value for key,value in selection.items() if key!='bundle'}
+    write(directory / 'control-state.json', {'selection': provider} if provider else {})
 
 
-def confirmed(config, session, selection):
+def confirmed(config, session, selection, bundle=None):
     from .managed_session import app_home
     saved = json.loads((app_home(config) / 'sessions' / session.identity / 'control-state.json').read_text())
-    if saved.get('selection') != selection or session.provider_state.get('selection') != selection:
+    provider={key:value for key,value in selection.items() if key!='bundle'}
+    if ((saved.get('selection') or {}) != provider or (session.provider_state.get('selection') or {}) != provider
+            or 'bundle' in selection and session.report.get('root_bundle')!=bundle):
         # Starting may already have written canonical state. Never classify this
         # post-start mismatch as a pre-effect refusal or retry it automatically.
         raise ValueError('Initial selection was not confirmed by the mounted runtime; inspect original session state.')

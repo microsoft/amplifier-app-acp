@@ -6,10 +6,6 @@
     "selection": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "instance",
-        "model"
-      ],
       "properties": {
         "instance": {
           "type": "string",
@@ -25,8 +21,45 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 100
+        },
+        "bundle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
         }
-      }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "instance",
+            "model"
+          ]
+        },
+        {
+          "required": [
+            "bundle"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "instance"
+                ]
+              },
+              {
+                "required": [
+                  "model"
+                ]
+              },
+              {
+                "required": [
+                  "effort"
+                ]
+              }
+            ]
+          }
+        }
+      ]
     },
     "capability": {
       "type": "object",
@@ -49,6 +82,9 @@
         },
         "resolveMethod": {
           "const": "_amplifier/initial-selection"
+        },
+        "bundleSelection": {
+          "const": true
         }
       }
     },
@@ -86,6 +122,11 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 100
+        },
+        "bundle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
         }
       }
     },
@@ -119,16 +160,7 @@
           "const": 1
         },
         "values": {
-          "allOf": [
-            {
-              "$ref": "#/$defs/partialSelection"
-            },
-            {
-              "required": [
-                "instance"
-              ]
-            }
-          ]
+          "$ref": "#/$defs/partialSelection"
         },
         "schema": {
           "type": "object",
@@ -147,18 +179,21 @@
               "const": false
             },
             "required": {
-              "const": [
-                "instance",
-                "model"
-              ]
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "instance",
+                  "model",
+                  "effort",
+                  "bundle"
+                ]
+              },
+              "maxItems": 4
             },
             "properties": {
               "type": "object",
               "additionalProperties": false,
-              "required": [
-                "instance",
-                "model"
-              ],
               "properties": {
                 "instance": {
                   "type": "object",
@@ -241,6 +276,33 @@
                     },
                     "title": {
                       "type": "string"
+                    }
+                  }
+                },
+                "bundle": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "type",
+                    "title",
+                    "enum"
+                  ],
+                  "properties": {
+                    "type": {
+                      "const": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "enum": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 1,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096
+                      }
                     }
                   }
                 }

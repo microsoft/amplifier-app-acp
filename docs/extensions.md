@@ -110,7 +110,7 @@ scoped schemas and return unsupported for absent capabilities. In particular,
 application snapshot to fulfill a narrow read.
 
 Without this extension the native agent does not install `app_control`. A saved
-enabled host-owned lifetime budget fails closed when its admission authority is
+enabled cumulative lifetime budget fails closed when its admission authority is
 unavailable. Ordinary native turns remain usable without host callbacks.
 
 ## Public ownership
@@ -229,6 +229,19 @@ text at 16,000 characters, provenance at 8 KiB. `activeInputId` must identify th
 currently collected ACP prompt. Wait for its `generation.started` event carrying
 `activeInputId` before sending. No second prompt collector is created.
 
+Rich corrections replace `text` with `prompt` (the standard ACP text and
+attachment blocks) and an optional canonical `reply` reference. They require
+`activeSteering.content:{version:1,attachments:true,quotedReplies:true}` in both
+the adapter handshake and the current generation report. Quoted replies require
+a trusted message principal. The mounted loop must support attachment encoding;
+the context must support public-original preservation. Host captures the literal
+message independently of file expansion and quote rendering. Native validates
+and converts prompt content before reserving the quote or steering receipt.
+`prompt` has 1–33 blocks, begins with at most 16,000 characters of text, and is
+bounded at 8 MiB. Malformed attachments do not reserve an input. The same anchored
+input receipt, quote authority, and loop steering boundary serve rich and plain
+corrections; a rich correction never starts an additional turn.
+
 The adapter reserves a durable exact-request receipt before native dispatch.
 Acceptance means queued, not delivered. Response `{accepted:true,inputId,
 activeInputId,generationId,disposition}` may race authoritative events.
@@ -264,3 +277,43 @@ passive exact command receipts. Committed archived groups remain visible but
 have archive-qualified, viewing-only message references. Canonical mutation and
 export still apply only to active history. Clients must negotiate this marker;
 older unreviewed clearing is not history-preserving authority.
+
+### Image setup
+
+When administration is enabled, initialize also advertises the closed
+`native.admin.imageSetup` marker
+`{version:1,catalog:"provider-image-models",preservesChat:true,exclusive:true}`.
+`providers.imageModels` takes a saved connection `id`, optional `refresh`, and
+normal authorized workspace/scope selectors. It reads the installed provider's
+optional `get_image_generation_info` and `list_image_models` methods. Missing
+support returns no choices; it never substitutes chat models or calls inference.
+
+`providers.configureImages` takes `id`, boolean `enabled`, an advertised image
+`model` when enabling, optional boolean `exclusive`, and the same scope selectors.
+It preserves credentials, chat configuration, opaque settings and tool policy.
+Only image fields are written at the requested scope; workspace settings cannot
+be promoted into global configuration. Exclusive selection atomically disables
+other configured image backends and rejects conflicting more-specific overrides.
+Choices are bound to the current credential/configuration catalog identity.
+Disabling requires no discovery. The result reports `takesEffect:new_sessions`.
+This does not change a running conversation or prove image-generation entitlement.
+
+The image settings implementation adapts Amplifier Unified main 0.20.98, with
+both exclusive and advanced writes restricted to image fields. The bridge and
+Web owners negotiate this grant rather than assuming every Native peer has it.
+
+## Passive cumulative budget policy
+
+The optional `taskState.capacity` initialize marker is
+`{version:1,passivePolicy:true,admission:"native-owner-snapshot"}`.
+`_amplifier/task/inspect` returns `capacity:{version:1,budget}` from the existing
+Native control-state file without creating a worker. Missing state has a disabled
+revision-zero policy; malformed existing policy is preserved and refused.
+
+Native remains the sole budget-policy writer. `capacity.set` retains its original
+command receipt and revision check; `capacity.admit` sends both the native call
+evidence and current policy snapshot to the negotiated Host immediately before
+a supported provider call. The Host owns cumulative scalar accounting, not the
+policy. Denial is retained until an explicit policy edit; a missing Host cannot
+bypass an enabled saved budget. This is optional product metadata, not a change
+to upstream ACP or AHP.

@@ -108,6 +108,30 @@
         "additionalProperties": true
       },
       "maxItems": 100000
+    },
+    "selection": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "bundle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "bundleLabel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        }
+      },
+      "required": [
+        "version",
+        "bundle",
+        "bundleLabel"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [
