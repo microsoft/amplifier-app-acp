@@ -31,6 +31,7 @@ async def test_protocol_app_default_reset_exact_retention_undo_and_no_shared_cha
     try:
         denied=await call(client,cwd,'prepare',{'commandId':'unheld','parts':['native.app-bundle-default'],'privateContentReviewed':True});assert denied['error']['data']['executed'] is False
         auth=await hold(client,cwd);review=await prepare(client,cwd,auth,'prepare')
+        assert review['storage']=={'affectedPaths':[str(path)],'retainedOriginals':{'path':str(app/'maintenance/receipts.sqlite3'),'table':'app_reset_previews','recordId':review['preparedId']}}
         retained_receipt='{"commandId":"unrelated","operation":"maintenance.inspect","state":"succeeded","result":{"preserved":true}}'
         with sqlite3.connect(app/'maintenance/receipts.sqlite3') as db:db.execute('INSERT INTO commands VALUES(?,?,?,?)',('unrelated',str(cwd),'fixture',retained_receipt))
         assert 'never-present' not in json.dumps(review) and 'fixture-secret' not in json.dumps(review)
@@ -39,6 +40,7 @@ async def test_protocol_app_default_reset_exact_retention_undo_and_no_shared_cha
         same=(await call(client,cwd,'apply',args,auth))['result'];assert same['postResetRevision']==changed['postResetRevision'] and same['replayed'] is False
         receipt=(await call(client,cwd,'inspect',{'commandId':'apply'}))['result']['receipt'];assert receipt['state']=='succeeded'
         restore=await prepare(client,cwd,auth,'restore-review',restoreCommandId='apply')
+        assert restore['storage']['retainedOriginals']==review['storage']['retainedOriginals']
         undo=(await call(client,cwd,'restore',{'commandId':'undo','preparedId':restore['preparedId'],'reviewHash':restore['reviewHash'],'resetCommandId':'apply','expectedPostResetRevision':changed['postResetRevision']},auth))['result'];assert undo['restored'] and path.read_bytes()==raw
         assert (home/'keys.env').read_text()=='fixture-secret-preserved' and (home/'settings.yaml').read_text()=='shared: retained'
         assert all((history/name).read_bytes()==body for name,body in canonical.items())
