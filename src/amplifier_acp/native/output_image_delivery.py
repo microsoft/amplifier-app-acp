@@ -215,6 +215,13 @@ class OutputImageDelivery:
             identity = (message.metadata or {}).get('outputImageObservation')
             if identity:
                 try:
+                    observation = self.observation
+                    if not observation or observation.get('pair') or self.output_selection() != [identity]:
+                        raise ValueError('The saved image selection changed.')
+                    manifest = await asyncio.wait_for(self.bridge('context.manifest', {}), 1.5)
+                    if manifest.get('inputIds', []) != observation['epoch']:
+                        self.observation = None
+                        raise ValueError('The input changed.')
                     await asyncio.wait_for(self.bridge('outputs.image.read', identity), 2)
                 except Exception:
                     messages[index] = Message(role='user', content='Saved output image unavailable before transport; no pixels were delivered.', metadata={'ephemeral': True})

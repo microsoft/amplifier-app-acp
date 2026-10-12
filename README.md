@@ -445,3 +445,21 @@ prevent restart, copy or restore of removed or uncertain identities. After any
 possible effect, an interruption stays unknown; the original receipt can be read
 without replay, and another removal is refused. Product artifacts and indexes are
 separate owner responsibilities, not implicitly deleted by this contract.
+
+### Saved output message references and visual evidence
+
+`sessionLifecycle.outputReferences` version 1 lets the trusted Host include up to
+500 exact output references in an authorized fork. Native proves each source
+message and returns retained/omitted dispositions plus the copied canonical IDs.
+Host input/response witnesses bind the admitted input identity, public role and
+exact text digest; ambiguous repeats refuse before creating a target. Migrated
+Main display IDs additionally bind the native session and original row ordinal.
+No output bytes or new execution authority enter this protocol. The completed
+fork receipt retains this proof for acknowledgment recovery.
+
+When the composition advertises saved-output inspection, the existing tool
+adapter attaches actual verified pixels to the current model request. It checks
+selection, exact hashes and the active input again before transport; stale
+selection or input changes strip visual content and leave truthful text. No
+image generation or earlier user request is replayed. Tests cover exact fork
+boundaries, actual stdio copy and request-local image delivery.

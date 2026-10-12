@@ -34,8 +34,11 @@ async def test_native_history_fork_keeps_exact_context_tools_and_configuration_w
         native=next((tmp_path/'home/projects').glob('*/sessions/'+sid));before=(native/'transcript.jsonl').read_bytes();(native/'events.jsonl').write_text('retained historical log\n')
         source_configuration=tmp_path/'app/sessions'/sid/'configuration.json'
         source_configuration.write_text(json.dumps({'tools':[{'module':'disabled-fixture','enabled':False,'config':{'preserved':True}}]}))
-        target=str(uuid.uuid4());args={'commandId':'fork1','targetSessionId':target,'expectedHistoryRevision':revision,'throughMessageId':'turn1'}
+        target=str(uuid.uuid4());args={'commandId':'fork1','targetSessionId':target,'expectedHistoryRevision':revision,'throughMessageId':'turn1','outputReferences':[{'key':'first-output','messageId':'turn1'},{'key':'later-output','messageId':'turn2'}]}
         forked=await action(client,sid,cwd,'fork',args);assert forked.get('result',{}).get('creationConfirmed'),forked
+        references=forked['result']['outputReferences'];assert references['complete'] and references['execution'] is False
+        assert [r['disposition'] for r in references['items']]==['retained','omitted']
+        assert references['items'][0]['targetMessageId'].startswith('native:')
         assert (native/'transcript.jsonl').read_bytes()==before
         assert (native/'events.jsonl').read_text()=='retained historical log\n'
         target_path=native.parent/target;copied=[json.loads(line) for line in (target_path/'transcript.jsonl').read_text().splitlines()]

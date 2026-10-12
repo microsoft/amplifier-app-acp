@@ -21,6 +21,19 @@ def test_tail_pages_preserve_whole_turns_and_stable_ids(tmp_path):
     assert [r['id'] for r in d['turnGroups']]==['turn-0'];assert d['nextCursor'] is None
     assert all(u['_meta']['amplifier.dev/history']['turnId']=='turn-5' for u in a['turnGroups'][0]['updates'])
 
+def test_exact_visible_output_reference_is_passive_and_does_not_gain_input_authority(tmp_path):
+    from amplifier_acp.history import exact_message, inspect, message_id
+    p=tmp_path/'session';p.mkdir();row={'role':'assistant','content':'saved writing '*6000}
+    data=(json.dumps(row)+'\n').encode();(p/'transcript.jsonl').write_bytes(data);(p/'metadata.json').write_text('{}')
+    identity=message_id(row,0);revision=inspect(p)['revision']
+    result=exact_message(p,identity,revision,visible_reference_only=True)
+    assert result['selection']=='exact-visible-reference' and result['message']=={'id':identity,'role':'assistant'}
+    assert result['complete'] and not result['execution'] and result['mutationAuthority']=='none'
+    assert len(json.dumps(result))<4096 and (p/'transcript.jsonl').read_bytes()==data
+    with pytest.raises(ValueError,match='user message'):exact_message(p,identity,revision)
+    with pytest.raises(ValueError,match='boolean'):exact_message(p,identity,revision,visible_reference_only=1)
+    with pytest.raises(ValueError,match='changed'):exact_message(p,identity,'stale',visible_reference_only=True)
+
 def test_exact_old_source_refuses_duplicate_changed_and_oversized_originals(tmp_path):
     from amplifier_acp.history import exact_message, inspect
     p=tmp_path/'session';file=history(p,75)
@@ -68,7 +81,7 @@ async def test_exact_source_over_stdio_is_not_limited_to_recent_turns_or_a_worke
     client=await Client.launch(config)
     try:
         initialized=await client.request('initialize',{'protocolVersion':1,'clientCapabilities':{'_meta':{'amplifier.dev/native':{'version':1}}}})
-        assert initialized['result']['agentCapabilities']['_meta']['amplifier.dev/native']['history']['exactMessageRead']=={'version':1,'scan':'stream','maxRecordBytes':67108864,'maxMessageBytes':65536}
+        assert initialized['result']['agentCapabilities']['_meta']['amplifier.dev/native']['history']['exactMessageRead']=={'version':1,'visibleReferenceOnly':1,'scan':'stream','maxRecordBytes':67108864,'maxMessageBytes':65536}
         scope={'sessionId':sid,'cwd':str(cwd)}
         revision=(await client.request('_amplifier/history/inspect',scope))['result']['revision']
         result=await client.request('_amplifier/history/message',{**scope,'messageId':'turn-0','expectedRevision':revision})

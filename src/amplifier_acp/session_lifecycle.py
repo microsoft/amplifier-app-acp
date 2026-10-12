@@ -180,9 +180,9 @@ class Lifecycle:
         if operation.startswith('legacyCopy.'):
             from .retired_copy import perform
             return perform(self,operation,args)
-        fields={'inspect':set(),'receipt':{'commandId'},'export.read':{'snapshotId','offset','limit'},'delete.preview':set(),'fork':{'commandId','targetSessionId','expectedHistoryRevision','throughMessageId','mode','bundle','bundleRevision','resetModel','descendants','managedTarget'},'export':{'commandId','expectedHistoryRevision','format','scope','fromMessageId','throughMessageId','minimal','includeExecution','includeConversationId','includeTimestamps','includeReferenceIds','exportContext'},'delete':{'commandId','expectedHistoryRevision','confirmationToken'},'delete.standard':{'commandId','expectedHistoryRevision'},'restore':{'commandId','expectedHistoryRevision'},'retention.hide':{'commandId','expectedHistoryRevision','modifiedBefore','descendants'}}
+        fields={'inspect':set(),'receipt':{'commandId'},'export.read':{'snapshotId','offset','limit'},'delete.preview':set(),'fork':{'commandId','targetSessionId','expectedHistoryRevision','throughMessageId','mode','bundle','bundleRevision','resetModel','descendants','managedTarget','outputReferences'},'export':{'commandId','expectedHistoryRevision','format','scope','fromMessageId','throughMessageId','minimal','includeExecution','includeConversationId','includeTimestamps','includeReferenceIds','exportContext'},'delete':{'commandId','expectedHistoryRevision','confirmationToken'},'delete.standard':{'commandId','expectedHistoryRevision'},'restore':{'commandId','expectedHistoryRevision'},'retention.hide':{'commandId','expectedHistoryRevision','modifiedBefore','descendants'}}
         if operation not in fields or not isinstance(args,dict) or set(args)-fields[operation]:raise ValueError('Unsupported lifecycle operation or arguments')
-        if len(json.dumps({key:value for key,value in args.items() if key!='exportContext'}).encode())>32768:raise ValueError('Lifecycle arguments exceed their bound')
+        if len(json.dumps({key:value for key,value in args.items() if key not in {'exportContext','outputReferences'}}).encode())>32768:raise ValueError('Lifecycle arguments exceed their bound')
         if 'exportContext' in args:
             from .conversation_export import contribution
             contribution(args['exportContext'])
@@ -333,14 +333,16 @@ class Lifecycle:
             boundary_index=positions.get(bound(selected,args['throughMessageId'],user=True))
             if boundary_index is None or context[boundary_index].get('role')!='user':
                 raise ValueError('The selected user boundary is not retained in the fork')
-        return context,metadata,revision,copied,managed,reactions,boundary_index
+        from .fork_references import prepare as prepare_references
+        references=prepare_references(args.get('outputReferences'),rows,selected,positions,source_session=self.identity)
+        return context,metadata,revision,copied,managed,reactions,boundary_index,references
     def fork_bundles(self):
         choices=self.server.config.get('forkBundles',{})
         if not isinstance(choices,dict) or len(choices)>64 or any(not isinstance(k,str) or not 1<=len(k)<=200 or not isinstance(v,str) or not 1<=len(v)<=4096 for k,v in choices.items()):raise ValueError('Launcher fork bundle choices are invalid')
         return choices
     def fork(self,args,prepared):
         from amplifier_foundation.session.history import SessionHistoryStore
-        context,metadata,revision,copied,managed,reactions,boundary_index=prepared;target=args['targetSessionId'];target_app=location(home(self.server),target)
+        context,metadata,revision,copied,managed,reactions,boundary_index,references=prepared;target=args['targetSessionId'];target_app=location(home(self.server),target)
         from .managed_session import reserve_copy,complete_copy,copied_configuration,location as managed_location
         cwd=managed['workspace'] if managed else self.cwd
         target_app.mkdir(parents=True,exist_ok=False,mode=0o700)
@@ -363,7 +365,7 @@ class Lifecycle:
             from .message_copy import publish
             target_revision=history.inspect(destination)['revision']
             verify_originals=any((row.get('metadata') or {}).get('amplifier_public_message') is not None for row in context)
-            target_rows,_,_=canonical(destination,target_revision,app_home=home(self.server)) if reactions or verify_originals or boundary_index is not None else ([],None,None)
+            target_rows,_,_=canonical(destination,target_revision,app_home=home(self.server)) if reactions or verify_originals or boundary_index is not None or references else ([],None,None)
             if target_rows or verify_originals:
                 expected=[row for row in context if preserve_system or row.get('role') not in {'system','developer'}]
                 if [row for _,row in target_rows] != expected:raise ValueError('Persisted target rows differ from prepared copy; creation remains unknown')
@@ -371,6 +373,9 @@ class Lifecycle:
             for name,value in copied.items():write(target_app/name,value)
             write(target_app/'execution-location.json',{'sessionId':target,'historyCwd':cwd,'executionDirectory':execution,'executionRevision':0})
             result={'sessionId':target,'creationConfirmed':True,'historyCwd':cwd,'executionDirectory':execution,'historyRevision':history.inspect(destination)['revision'],'source':{'sessionId':self.identity,'historyRevision':revision,**({'throughMessageId':args['throughMessageId']} if args.get('throughMessageId') else {})},'workReplayed':False,'mode':args.get('mode','complete'),'bundleSelection':args.get('bundle'),'preservedSource':True,'messageAnnotations':reaction_copy}
+            if references is not None:
+                from .fork_references import publish as publish_references
+                result['outputReferences']=publish_references(references,target_rows,context,preserve_system)
             if boundary_index is not None:
                 # IDs include canonical bytes/offsets. A copied row can acquire a
                 # different ID even when its visible text is identical.

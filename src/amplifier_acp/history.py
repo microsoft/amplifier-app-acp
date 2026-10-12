@@ -68,12 +68,14 @@ def _exact_segments(directory, app_home, history_cwd):
     return head, result, guards
 
 
-def exact_message(directory, identity, expected_revision, *, app_home=None, history_cwd=None):
+def exact_message(directory, identity, expected_revision, *, app_home=None, history_cwd=None, visible_reference_only=False):
     """Read one original source across current and preserved context, without execution.
 
     Original IDs remain source references. Archive UI IDs never gain mutation or
     new-input authority. Scan every selected segment to refuse duplicate IDs.
     """
+    if type(visible_reference_only) is not bool:
+        raise HistoryError('Visible-reference selection must be boolean')
     if not isinstance(identity, str) or not identity or len(identity) > 512:
         raise HistoryError('Exact historical message identity required')
     if identity.startswith('archive:'):
@@ -119,6 +121,11 @@ def exact_message(directory, identity, expected_revision, *, app_home=None, hist
     record(directory/'metadata.json')
     if matches!=1:raise HistoryError('The selected native message boundary is unavailable or ambiguous')
     position,row,descriptor=selected
+    if visible_reference_only:
+        updates, diagnostics = content_updates(row, position)
+        if not visible(row) or row.get('role') not in {'user','assistant'} or diagnostics or not any(update.get('content',{}).get('type')=='text' and update['content'].get('text','').strip() for update in updates):
+            raise HistoryError('Choose a visible original user or assistant message')
+        return {'revision':revision,'selection':'exact-visible-reference','message':{'id':identity,'role':row['role']},'complete':True,'execution':False,'mutationAuthority':'none'}
     if not visible(row) or row.get('role')!='user':raise HistoryError('Choose a visible native user message boundary')
     updates, diagnostics = content_updates(row, position)
     if diagnostics or any(update.get('sessionUpdate') != 'user_message_chunk' for update in updates):
