@@ -213,6 +213,10 @@ class Session:
                 identity=str(event.get('sessionId') or self.identity)+':'+str(identity)
                 status={'running':'in_progress','completed':'completed','error':'failed','cancelled':'failed'}.get(event.get('phase'),'pending')
                 data={'toolCallId':identity,'status':status}
+                # Presentation-only metadata travels with standard ACP calls;
+                # it never grants worker controls or changes execution identity.
+                detail={key:event[key] for key in ('sessionId','parentId','startedAt','endedAt','delegate') if key in event}
+                data['_meta']={'amplifier.dev/execution':{'version':1,**detail}}
                 if 'input' in event:data['rawInput']=event['input']
                 if 'output' in event:
                     data['rawOutput']=event['output']

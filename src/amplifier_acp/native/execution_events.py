@@ -168,6 +168,13 @@ class ExecutionEvents:
                     self.children[sid] = observed
                     self.publish(observed)
         row = {**self.nodes.get(row["id"], {}), **row, "revision": self.nodes.get(row["id"], {}).get("revision", 0) + 1}
+        # Each call carries its own small owner header. A delegate may have
+        # started in an earlier turn/page; history readers need no global body.
+        child = self.children.get(row.get("sessionId"))
+        if child and row.get("kind") in {"llm", "tool"}:
+            fields = ("id", "sessionId", "label", "provider", "model", "phase",
+                      "routing", "parentProvider", "runId", "workerId")
+            row["delegate"] = {key: child[key] for key in fields if key in child}
         row = {**row, "liveObservation": True}
         self.nodes[row["id"]] = row
         self.emit({"type": "execution.event", "event": dict(row)})

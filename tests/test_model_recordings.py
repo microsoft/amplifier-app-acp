@@ -28,3 +28,35 @@ def test_recorded_wire_details_redacted_bounded_and_scoped(tmp_path,keys):
         read(tmp_path,{'sessionId':'different','callId':call,'field':'request','sha256':node['requestDetail']['sha256']})
     with pytest.raises(ValueError):
         read(tmp_path,{'sessionId':sid,'callId':call,'field':'request','sha256':'0'*64})
+
+def test_delegate_header_stays_with_calls_across_interim_messages_and_revisions():
+    events=[];observer=ExecutionEvents('root',events.append)
+    observer.turn_id='turn'
+    observer.lifecycle({'type':'child.updated','sessionId':'review','agent':'Reviewer','status':'running','report':'Large report must not enter call headers'})
+    observer.publish({'id':'llm:one','kind':'llm','sessionId':'review','provider':'fixture','model':'review-model','phase':'running'})
+    observer.publish({'id':'tool:later','kind':'tool','sessionId':'review','phase':'running'})
+    observer.publish({'id':'tool:later','kind':'tool','phase':'completed'})
+    node=events[-1]['event']
+    assert node['delegate']['id']=='worker:review'
+    assert node['delegate']['label']=='Reviewer'
+    assert node['delegate']['model']=='review-model'
+    assert node['sessionId']=='review'
+    assert 'summary' not in node['delegate']
+    observer.publish({'id':'root-call','kind':'llm','sessionId':'root'})
+    assert 'delegate' not in events[-1]['event']
+
+def test_standard_acp_tool_updates_keep_delegate_header(tmp_path):
+    from types import SimpleNamespace
+    from amplifier_acp.server import Session
+    messages=[]
+    async def notify(method,params):messages.append((method,params))
+    server=SimpleNamespace(config={'home':str(tmp_path)},extensions=set(),notify=notify)
+    session=Session(server,'root',str(tmp_path))
+    header={'id':'worker:review','sessionId':'review','label':'Reviewer'}
+    async def observe():
+        for phase in ('running','completed'):
+            await session.observe({'type':'execution.event','event':{'id':'tool:one','kind':'tool','sessionId':'review','toolCallId':'one','label':'read','phase':phase,'delegate':header,'startedAt':12,'endedAt':13 if phase=='completed' else None}})
+    asyncio.run(observe())
+    assert [p['update']['sessionUpdate'] for _,p in messages]==['tool_call','tool_call_update']
+    assert all(p['update']['_meta']['amplifier.dev/execution']['delegate']==header for _,p in messages)
+    assert all(p['update']['toolCallId']=='review:one' for _,p in messages)
