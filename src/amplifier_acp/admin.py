@@ -43,7 +43,7 @@ class Administration:
   from .module_sources import configure
   configure(config)
   self.on_idle=on_idle
-  self.config=config;self.lock=asyncio.Lock();self.setup=None;self.bundles=None;self.registry=None;self.background_gates={}
+  self.config=config;self.lock=asyncio.Lock();self.setup=None;self.bundles=None;self.registry=None;self.background_gates={};self.configuration_managers={}
   from .admin_lifecycle import AdminLifecycle
   self.lifecycle=AdminLifecycle(self);self.effects=set();self.requests=set()
   self.roots=[Path(p).expanduser().resolve(strict=True) for p in config.get('adminWorkspaceRoots',[])]
@@ -83,10 +83,12 @@ class Administration:
   if operation in GENERATION_OPERATIONS and self.config.get('adminGenerations') is not True:raise AdminLauncherRefusal('Native generation maintenance requires explicit trusted launcher enablement.',operation,'adminGenerations')
   if operation in {'voice.credential','voice.configure'} and self.config.get('adminVoiceCredentials') is not True:raise AdminLauncherRefusal('Voice credentials require explicit trusted launcher enablement.',operation,'adminVoiceCredentials')
   if not isinstance(args,dict):raise ValueError('Administration args must be an object.')
+  from .configuration_target import validate as validate_configuration_target
+  validate_configuration_target(operation,args)
   if any(key in args for key in ('home','appHome','sessionId','session_id')) or 'cwd' in args and operation!='maintenance.reset.preview':raise ValueError('Native homes and session identity are launcher-owned.')
   if operation in {'providers.imageModels','providers.configureImages'}:
    from .image_setup_contract import validate
-   validate(operation,args)
+   validate(operation,{k:v for k,v in args.items() if k!='configurationTarget'})
   if args.get('workspace') and self.workspace(args['workspace'])!=workspace:raise ValueError('Workspace selector disagrees with authorized cwd.')
   settings_dir=Path(workspace)/'.amplifier'
   if settings_dir.exists() and not settings_dir.resolve().is_relative_to(Path(workspace)):
@@ -168,7 +170,7 @@ class Administration:
    finally:
     # Interactive sign-in outlives its initial request and can later commit
     # settings. Retain it even if its initial presentation callback failed.
-    for row in getattr(self.setup,'logins',{}).values():
+    for row in [row for manager in [self.setup,*self.configuration_managers.values()] for row in getattr(manager,'logins',{}).values()]:
      task=row.get('task')
      if task is not None and not task.done() and task not in self.background_gates:
       from .admin_lifecycle import AdminGate
@@ -190,12 +192,26 @@ class Administration:
    return result
   async with self.lock:
    self.initialize();values={**args,'workspace':workspace}
+   target=values.pop('configurationTarget',None);setup=self.setup
+   if target:
+    from .native.setup import SetupManager
+    values.setdefault('scope','global' if target['kind']=='global' else 'local')
+    # Separate provider probes and sign-in attempts by effective configuration
+    # owner. The opaque workspace ID never supplies filesystem authority.
+    key='global' if target['kind']=='global' else workspace
+    setup=self.configuration_managers.get(key)
+    if setup is None:
+     if len(self.configuration_managers)>=32:
+      idle=next((k for k,m in self.configuration_managers.items() if not any(r.get('task') is not None and not r['task'].done() for r in m.logins.values())),None)
+      if idle is None:raise ValueError('Finish a pending sign-in before opening more configuration owners.')
+      await self.configuration_managers.pop(idle).close()
+     setup=SetupManager(self.home,global_only=target['kind']=='global');self.configuration_managers[key]=setup
    if operation.startswith('voice.'):
     from .native.voice_admin import perform
     result=perform(self.setup,workspace,operation,args,preferences_access=self.config.get('adminVoicePreferences') is True)
    elif operation.startswith(('providers.','routing.')):
-    result=await self.setup.perform(operation,values)
-    if operation=='providers.loginStatus':result.update(providers=self.setup.provider_rows(workspace),providersWorkspace=workspace)
+    result=await setup.perform(operation,values)
+    if operation=='providers.loginStatus':result.update(providers=setup.provider_rows(workspace),providersWorkspace=workspace)
    elif operation.startswith(('modules.','sources.')):result=await self.registry.perform(operation,values)
    elif operation=='configuration.defaults':
     from .native.draft_defaults import resolve_defaults
@@ -220,6 +236,7 @@ class Administration:
     if operation=='bundles.list':
      from .native.bundle_selection import defaults
      result['bundleDefaults']=defaults(self.home,workspace,self.app_bundle())
+   if target:result={**result,'configurationTarget':target}
    if len(json.dumps(result).encode())>768*1024:raise ValueError('Native administration result exceeds bounded representation limit.')
    return result
  async def close(self):
@@ -227,6 +244,7 @@ class Administration:
   if self.requests:await asyncio.gather(*list(self.requests),return_exceptions=True)
   if hasattr(self,'maintenance'):await self.maintenance.close()
   if self.setup:await self.setup.close()
+  for manager in self.configuration_managers.values():await manager.close()
   from .maintenance import release_all
   for gates in list(self.background_gates.values()):release_all(gates)
   self.background_gates.clear()

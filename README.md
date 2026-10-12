@@ -372,6 +372,23 @@ bridge and explicitly resuming the same Native identity for a **new** turn;
 no original uncertain turn is replayed. Definite `active_request` / `owned_work`
 retirement refusals keep the existing handle usable.
 
+## Explicit administration settings owners
+
+The initialized administration peer advertises `admin.configurationTargets`
+only with the complete v1 global-only, workspace-bound, isolated-results marker.
+Provider, routing, module and source operations can then carry an exact global
+or opaque-workspace `configurationTarget`. The distribution must resolve the
+workspace through its catalog and authorized working directory before dispatch.
+Mixed session, path or scope selectors refuse before admission. Native returns
+the owner on every completed result; clients must not apply it to another owner.
+
+Global provider/routing reads use a global-only SetupManager. Workspace managers
+remain keyed by the authorized canonical folder, with separate sign-in attempts
+and a bounded cache that never evicts an active login. Existing selected-session
+administration is unchanged. This adds no settings database or worker route.
+`tests/test_configuration_target.py` covers actual initialize metadata, global
+inheritance, workspace isolation and invalid-selector refusal.
+
 ## Canonical naming metadata extension
 
 Negotiated `_amplifier/naming` accepts exact `sessionId`, canonical history `cwd`,
