@@ -220,6 +220,16 @@ it never restores cleared execution context. This lets a separately verified,
 previously imported memory retain its original quotation. Archive UI IDs remain
 viewing-only and do not become original source IDs or new human admission.
 
+`history.savedMessages.version:1` advertises the passive
+`_amplifier/history/saved-messages` read. It returns up to 12 saved assistant
+messages from the current source segment, with canonical IDs and 512-character
+text previews. It scans at most 2 MiB / 512 rows, excludes hidden and ephemeral
+content, and refuses changed sources, incomplete writes and backup substitution.
+It does not open a worker or mutate history. During an already-running turn,
+the normal `app_control` pre-tool boundary checkpoints commentary before
+`get_state {path:"/messages"}` requests those IDs. This permits exact output
+placement without treating an unsaved streaming part as a persisted message.
+
 `questionTurns:{version:1,completion:'settled',active:false}` advertises the
 host-admitted `question.submit` native operation. It uses the same ACP streaming
 collector and terminal settlement as scheduled turns. Active sessions return

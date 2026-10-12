@@ -969,6 +969,20 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
             return HookResult()
         for event in ("tool:post", "tool:error", "orchestrator:complete", "context:compaction_finished"):
             coordinator.hooks.register(event, checkpoint_hook, name="unified-checkpoint-" + event)
+        async def saved_message_boundary(event, data):
+            # The streaming loop has added this response to context before tool
+            # execution, but tool:post has not checkpointed it yet. Commit that
+            # ordinary execution boundary before the agent asks for saved IDs.
+            # Passive history reads still never mount or write a session.
+            args = data.get('tool_input') or {}
+            if (data.get('session_id', runtime.session_id) == runtime.session_id
+                    and data.get('tool_name') == 'app_control'
+                    and args.get('operation') == 'get_state'
+                    and (args.get('args') or {}).get('path') == '/messages'):
+                await checkpoint()
+            return HookResult()
+        coordinator.hooks.register('tool:pre', saved_message_boundary,
+                                   name='unified-saved-message-boundary')
         async def cleanup_jobs():
             jobs.close()
         coordinator.register_cleanup(cleanup_jobs)

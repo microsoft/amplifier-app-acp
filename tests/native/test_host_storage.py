@@ -7,6 +7,60 @@ from amplifier_acp.native.host.storage import SessionStore
 from amplifier_acp.native.host.approvals import Approvals
 
 
+@pytest.mark.parametrize('persistent', [False, True])
+def test_metadata_write_during_read_is_retried_once(tmp_path, monkeypatch, persistent):
+    from amplifier_foundation.session import history
+    store = SessionStore(tmp_path / 'sessions')
+    store.save('root', [{'role': 'user', 'content': 'Keep my question'}], {'status': 'idle'})
+    transcript = store.directory('root') / 'transcript.jsonl'
+    before = transcript.read_bytes()
+    original = history._read_metadata
+    calls = 0
+
+    def racing_read(path):
+        nonlocal calls
+        result = original(path)
+        calls += 1
+        if persistent or calls == 1:
+            path.write_text(json.dumps({**result, 'status': f'updated-{calls}'}))
+        return result
+
+    monkeypatch.setattr(history, '_read_metadata', racing_read)
+    diagnostics = []
+    if persistent:
+        with pytest.raises(ValueError, match='changed while'):
+            store.load('root', diagnostics=diagnostics)
+        assert any(item.code == 'changed_during_read' for item in diagnostics)
+    else:
+        rows, metadata = store.load('root', diagnostics=diagnostics)
+        assert rows == [{'role': 'user', 'content': 'Keep my question'}]
+        assert metadata['status'] == 'updated-1'
+        assert not any(item.code == 'changed_during_read' for item in diagnostics)
+    assert calls == (2 if persistent else 3)
+    assert transcript.read_bytes() == before
+
+
+def test_changing_transcript_is_not_retried(tmp_path, monkeypatch):
+    from amplifier_foundation.session import history
+    store = SessionStore(tmp_path / 'sessions')
+    store.save('root', [{'role': 'user', 'content': 'Original'}], {})
+    original = history._read_messages
+    calls = 0
+
+    def racing_read(path):
+        nonlocal calls
+        rows = original(path)
+        calls += 1
+        path.write_text(json.dumps({'role': 'user', 'content': 'Newer work'}) + '\n')
+        return rows
+
+    monkeypatch.setattr(history, '_read_messages', racing_read)
+    with pytest.raises(ValueError, match='changed while'):
+        store.load('root')
+    assert calls == 1
+    assert 'Newer work' in (store.directory('root') / 'transcript.jsonl').read_text()
+
+
 def test_checkpoint_roundtrip_keeps_transcript_and_removes_credentials(tmp_path):
     store = SessionStore(tmp_path / "sessions")
     messages = [{"role": "system", "content": "regenerate"}, {"role": "user", "content": "continue"}]

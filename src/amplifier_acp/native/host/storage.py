@@ -201,6 +201,12 @@ class SessionStore:
         from ..naming import read
         if self.has_transcript(session_id):
             value = self.history(session_id).load(include_events=False)
+            changed = {item.source for item in value.diagnostics if item.code == 'changed_during_read'}
+            # Main 0.20.121: retry one metadata-only race, never a changing
+            # transcript or the inconsistent first snapshot. Edit callers
+            # retain their before/after transcript revision guards.
+            if changed and changed <= {'metadata', 'metadata_backup'}:
+                value = self.history(session_id).load(include_events=False)
             if diagnostics is not None:
                 diagnostics.extend(value.diagnostics)
             if any(item.code == 'changed_during_read' for item in value.diagnostics):
