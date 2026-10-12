@@ -92,7 +92,8 @@ def source_key(url, ref):
             ref.removeprefix('refs/heads/'))
 
 async def process(*args, cwd=None, env=None, timeout=90, raw=False):
-    env=dict(os.environ if env is None else env);env.pop('VIRTUAL_ENV',None)
+    from ..repository_access import repository_environment
+    env=repository_environment(env);env.pop('VIRTUAL_ENV',None)
     started=time.monotonic()
     proc = await asyncio.create_subprocess_exec(*map(str,args), cwd=cwd, env=env,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, start_new_session=os.name != 'nt')
