@@ -72,3 +72,37 @@ def test_delegate_report_forwarding_is_negotiated_and_input_bound(tmp_path,negot
     report={'id':'worker:review','kind':'worker','sessionId':'review','label':'Reviewer','revision':2,'phase':'completed','summary':'**Review complete.**'}
     asyncio.run(session.observe({'type':'execution.event','event':report}))
     assert messages==([('_amplifier/event',{'sessionId':'root','event':{'type':'execution.event','event':report,'activeInputId':'original-input'}})] if negotiated else [])
+
+
+@pytest.mark.parametrize('field', ['request', 'response'])
+def test_recorded_export_retains_prior_capture_limits_and_large_payloads(tmp_path, field):
+    observer=ExecutionEvents('session',lambda _:None,tmp_path/'sessions/session/model-calls')
+    row={'id':'llm:'+str(uuid.uuid4())}
+    event='llm:'+field
+    captured=observer.capture(row,event,{'raw_'+field:{'body':'x'*300000}})
+    assert not captured[field+'Capture']['truncated']
+    assert captured[field+'Capture']['limit_chars']==1_000_000
+    result=read(tmp_path,{'sessionId':'session','callId':row['id'],'field':field,'sha256':captured[field+'Detail']['sha256']})
+    assert len(json.loads(result['text'])['body'])==300000
+    prior=observer.capture(row,event,{'raw_'+field:'omitted upstream','request_capture':{'truncated':True,'limit_chars':2000}})
+    assert prior[field+'Capture']['truncated'] is True
+    assert prior[field+'Capture']['limit_chars']==2000
+    large=observer.capture(row,event,{'raw_'+field:'🌟'*400000})
+    assert large[field+'Capture']['truncated'] is True
+    assert large[field+'Capture']['limit_bytes']==1_000_000
+    bounded=read(tmp_path,{'sessionId':'session','callId':row['id'],'field':field,'sha256':large[field+'Detail']['sha256']})
+    assert len(bounded['text'].encode())<=1_000_000
+    assert bounded['text'].endswith('[capture limit]')
+
+
+def test_long_unbroken_record_scrubs_token_assignments_without_quadratic_search():
+    import subprocess, sys
+    # A timeout prevents a regression in the assignment search from hanging CI.
+    subprocess.run([sys.executable, '-c', '''
+from amplifier_acp.native.provider_recording import redact_request
+text='x'*300000+' custom-access_token="private-value", token=private-other; password=private-password'
+result,truncated=redact_request(text)
+assert not truncated and result.startswith('x'*300000)
+assert 'private-value' not in result and 'private-other' not in result and 'private-password' not in result
+assert result.count('[REDACTED]')==3
+'''],check=True,timeout=5)

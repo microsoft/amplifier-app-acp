@@ -403,15 +403,22 @@ class ExecutionEvents:
         if raw is None:
             return row
         # Capture only adapter-supplied wire records. Never reconstruct a request.
-        from .provider_recording import redact_request
+        from .provider_recording import redact_request, MAX_CAPTURE_CHARS
         from pathlib import Path
         import hashlib, os
         try:
-            safe, truncated = redact_request(raw, limit=200000)
+            prior = data.get(field + '_capture', data.get('request_capture', {}))
+            prior = prior if isinstance(prior, dict) else {}
+            limit = MAX_CAPTURE_CHARS
+            if type(prior.get('limit_chars')) is int and prior['limit_chars'] > 0:
+                limit = min(limit, prior['limit_chars'])
+            safe, truncated = redact_request(raw, limit=limit)
+            truncated = truncated or prior.get('truncated') is True
             text = json.dumps(safe, ensure_ascii=False, indent=2)
             body = text.encode()
             if len(body) > 1000000:
-                text = text[:100000] + '\n[capture limit]'
+                marker = b'\n[capture limit]'
+                text = body[:1000000-len(marker)].decode('utf-8', errors='ignore') + marker.decode()
                 body = text.encode(); truncated = True
             digest = hashlib.sha256(body).hexdigest()
             directory = Path(self.detail_directory)
@@ -424,7 +431,7 @@ class ExecutionEvents:
             temporary.replace(directory / name)
             return {**row, field+'Detail': {'callId':row['id'], 'field':field,
                 'sha256':digest, 'length':len(text), 'lines':text.count('\n')+1},
-                field+'Capture':{'redacted':True,'truncated':truncated}}
+                field+'Capture':{'redacted':True,'truncated':truncated,'limit_chars':limit,'limit_bytes':1000000}}
         except Exception:
             # Diagnostic failure cannot affect generation or export unsanitized data.
             return row

@@ -27,7 +27,7 @@ _SECRET_KEY = re.compile(r'(?i)(api.?key|password|secret|authorization|cookie|cr
 
 
 _TOKEN_ASSIGNMENT = re.compile(
-    r'''(?ix)(["']?(?:token|[\w-]+[-_]token)["']?\s*[:=]\s*)
+    r'''(?ix)(?<![\w-])(["']?(?:token|[\w-]+[-_]token)["']?\s*[:=]\s*)
     (?:"[^"\n]*"|'[^'\n]*'|[^\s,;}]+)''')
 
 
