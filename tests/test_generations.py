@@ -7,6 +7,53 @@ from client import Client
 from native_setup import configuration
 
 @pytest.mark.asyncio
+async def test_diagnostic_attempts_survive_restart_and_replay_does_not_add_progress(tmp_path,monkeypatch):
+    from amplifier_acp.native.update_diagnostics import CommandFailure
+    owner=Generations(tmp_path,{})
+    async def fail():
+        raise CommandFailure({'exitCode':1,'stderrBytes':20,'probe':{'ok':False,'repositoryAccessFailure':True}})
+    async def check():return await owner.diagnostics.run('source-fetch',fail)
+    monkeypatch.setattr(owner,'check',check)
+    args={'commandId':'first-check'}
+    failed=await owner.perform(str(tmp_path),'generations.check',args)
+    assert failed['state']=='failed'
+    before=owner.inspect({})['diagnostics']
+    assert before['attemptId']=='first-check'
+    assert before['lastFailure']['probe']['repositoryAccessFailure'] is True
+    assert all(row['attemptId']=='first-check' for row in before['events'])
+    fetch=[row for row in before['events'] if row['phase']=='source-fetch']
+    assert len(fetch)==2 and fetch[0]['commandId']==fetch[1]['commandId']
+    assert len({row['id'] for row in before['events']})==4
+    restarted=Generations(tmp_path,{})
+    assert await restarted.perform(str(tmp_path),'generations.check',args)==failed
+    assert restarted.inspect({})['diagnostics']==before
+    async def succeed():return {'checkId':'second'}
+    monkeypatch.setattr(restarted,'check',succeed)
+    await restarted.perform(str(tmp_path),'generations.check',{'commandId':'second-check'})
+    after=restarted.inspect({})['diagnostics']
+    assert after['attemptId']=='second-check'
+    assert after['lastFailure']==before['lastFailure']
+    assert [row['status'] for row in after['events'] if row['attemptId']=='second-check']==['started','succeeded']
+
+@pytest.mark.asyncio
+async def test_generation_progress_is_advisory_coalesced_and_never_required_for_completion(tmp_path):
+    import asyncio
+    changes=[]
+    def changed():
+        changes.append(owner.inspect({}))
+        raise RuntimeError('Observer disconnected')
+    owner=Generations(tmp_path,{},changed)
+    owner.diagnostics.state={'attemptId':'progress'}
+    await owner.publish(attemptId='progress',phase='staging')
+    owner.diagnostics.record('ecosystem-prepare','started',commandId='phase')
+    await asyncio.sleep(0)
+    assert len(changes)==1 and changes[0]['phase']=='staging'
+    assert changes[0]['diagnostics']['events'][0]['commandId']=='phase'
+    await owner.publish(phase='installed')
+    await asyncio.sleep(0)
+    assert len(changes)==2 and changes[-1]['phase']=='installed'
+
+@pytest.mark.asyncio
 async def test_admin_generation_passive_authority_and_no_worker(tmp_path):
     config,cwd=configuration(tmp_path,adminWorkspaceRoots=[str(tmp_path)],adminGenerations=True,workerCommand=['/missing/no-worker'])
     client=await Client.launch(config)

@@ -37,12 +37,13 @@ class AdminPreflightRefusal(ValueError):
   if isinstance(operation,str) and operation in OPERATIONS:self.data['operation']=operation
 
 class Administration:
- def __init__(self,config,on_idle=None):
+ def __init__(self,config,on_idle=None,on_generations_changed=None):
   from .preparation_policy import configure as configure_preparation
   configure_preparation(config)
   from .module_sources import configure
   configure(config)
   self.on_idle=on_idle
+  self.on_generations_changed=on_generations_changed
   self.config=config;self.lock=asyncio.Lock();self.setup=None;self.bundles=None;self.registry=None;self.background_gates={};self.configuration_managers={}
   from .admin_lifecycle import AdminLifecycle
   self.lifecycle=AdminLifecycle(self);self.effects=set();self.requests=set()
@@ -186,7 +187,7 @@ class Administration:
   if operation in GENERATION_OPERATIONS:
    self.initialize()
    from .generations import Generations
-   if not hasattr(self,'generations'):self.generations=Generations(self.home,self.config)
+   if not hasattr(self,'generations'):self.generations=Generations(self.home,self.config,self.on_generations_changed)
    result=await self.generations.perform(workspace,operation,args)
    if len(json.dumps(result).encode())>768*1024:raise ValueError('Native generation result exceeds bounded representation limit.')
    return result

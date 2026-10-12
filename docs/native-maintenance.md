@@ -456,3 +456,21 @@ deadline; transport loss never indicates that native work has stopped.
 For an offline product archive that needs exclusion before native preparation
 and through the external seal, negotiate [continuous capture scope](capture-scope.md).
 A prebuilt native artifact remains insufficient evidence of that wider lifetime.
+
+## Runtime generation progress
+
+When the launcher enables native generations, initialize additionally advertises
+`admin.generations.progress` as `{version:1,metadataOnly:true,notification:"_amplifier/admin/generationsChanged"}`.
+The optional notification has exactly `{version:1}` and means only that the
+persisted generation projection changed. It carries no paths, subprocess output,
+credentials, receipt outcome or authority to replay work. Consumers invalidate
+their selected maintenance resource and read bounded `generations.inspect` data.
+Notifications coalesce within an event-loop turn; a disconnected observer cannot
+turn a saved result into a failure. Older consumers can keep explicit refresh.
+
+Inspection returns the latest 50 sanitized diagnostic events, the latest attempt
+ID and the most recent retained failure. Every new operation has its original
+command ID as attempt identity; each started/settled subprocess phase has one
+stable phase command ID. Reading or replaying a retained operation receipt adds
+no progress and executes no work. A new successful attempt preserves older
+failure evidence without treating it as a failure of the newer attempt.
