@@ -333,8 +333,9 @@ class Lifecycle:
             boundary_index=positions.get(bound(selected,args['throughMessageId'],user=True))
             if boundary_index is None or context[boundary_index].get('role')!='user':
                 raise ValueError('The selected user boundary is not retained in the fork')
-        from .fork_references import prepare as prepare_references
-        references=prepare_references(args.get('outputReferences'),rows,selected,positions,source_session=self.identity)
+        from .fork_references import prepare as prepare_references, preserved_rows
+        archived=preserved_rows(self.directory,home(self.server),self.cwd,revision) if args.get('outputReferences') and rows.epoch else ()
+        references=prepare_references(args.get('outputReferences'),rows,selected,positions,source_session=self.identity,preserved=archived)
         return context,metadata,revision,copied,managed,reactions,boundary_index,references
     def fork_bundles(self):
         choices=self.server.config.get('forkBundles',{})

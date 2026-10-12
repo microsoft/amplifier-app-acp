@@ -46,3 +46,16 @@ def test_main_identity_binds_native_session_ordinal_role_and_raw_text():
             prepare(refs,rows,rows,{0:0,1:1},source_session=wrong)
     with pytest.raises(ValueError,match='unavailable'):
         prepare(refs,HistoryRows(rows,epoch='cleared'),rows,{0:0,1:1},source_session='source')
+
+
+def test_preserved_output_origins_are_verified_but_never_gain_current_copy_positions():
+    old=HistoryRows([(0,{'role':'user','content':'Before','metadata':{'amplifier_input':{'id':'before'}}}),
+        (80,{'role':'assistant','content':'Original report'})])
+    current=HistoryRows([(0,{'role':'user','content':'After','metadata':{'amplifier_input':{'id':'after'}}})],epoch='cleared')
+    legacy=hashlib.sha256(json.dumps(['source',1,'assistant','Original report'],ensure_ascii=False).encode()).hexdigest()[:32]
+    refs=[{'key':'old','legacyMessageId':legacy},{'key':'current','messageId':'after'}]
+    plan=prepare(refs,current,current,{0:0},source_session='source',preserved=[old])
+    assert plan[0]['targetIndex'] is None
+    assert plan[1]['targetIndex']==0
+    with pytest.raises(ValueError,match='ambiguous'):
+        prepare(refs,current,current,{0:0},source_session='source',preserved=[old,old])
