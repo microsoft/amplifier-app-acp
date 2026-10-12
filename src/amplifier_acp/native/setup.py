@@ -243,7 +243,10 @@ class SetupManager:
             if reference and reference.group(1) not in names:names.append(reference.group(1))
         chosen=next((name for name in names if os.environ.get(name)),result['envVar'])
         if chosen:result=environment_credential(module,env_var=chosen)
-        result['alternatives']=[name for name in names if name!=chosen]
+        # Alternatives describe the default variable's supported fallbacks,
+        # independently of which available variable was selected. Otherwise an
+        # alternative selection repeats the default and hides its own name.
+        result['alternatives']=[name for name in names if name!=result['defaultEnvVar']]
         return result
 
     @contextmanager

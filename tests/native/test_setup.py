@@ -323,6 +323,24 @@ async def test_implicit_environment_and_provider_fallback_are_reported_without_v
     assert row['credential']['defaultEnvVar']=='GOOGLE_API_KEY'
     assert 'private-google-key' not in str(row)
 
+@pytest.mark.parametrize('module', ['provider-openai','provider-azure-openai','provider-chat-completions','provider-anthropic','provider-gemini','provider-github-copilot'])
+def test_credential_alternatives_keep_default_semantics_when_fallback_is_selected(manager,tmp_path,monkeypatch,module):
+    from amplifier_acp.native.setup import PROVIDER_ENV,credential_field
+    defaults=PROVIDER_ENV[module]
+    for name in defaults:monkeypatch.delenv(name,raising=False)
+    monkeypatch.setenv('CONFIGURED_ALTERNATIVE','private-synthetic-value')
+    manager.store.update(tmp_path,'global',lambda settings:settings.update(config={'providers':[{'module':module,'config':{credential_field(module):'${CONFIGURED_ALTERNATIVE}'}}]}))
+    checked=manager.credential_check(tmp_path,module)
+    assert checked['envVar']=='CONFIGURED_ALTERNATIVE' and checked['available']
+    assert checked['defaultEnvVar']==defaults[0]
+    assert checked['alternatives']==[*defaults[1:],'CONFIGURED_ALTERNATIVE']
+    if len(defaults)>1:
+        monkeypatch.setenv(defaults[1],'another-private-synthetic-value')
+        checked=manager.credential_check(tmp_path,module)
+        assert checked['envVar']==defaults[1]
+        assert checked['alternatives']==[*defaults[1:],'CONFIGURED_ALTERNATIVE']
+    assert 'private-synthetic-value' not in str(checked)
+
 @pytest.mark.asyncio
 async def test_probe_references_implicit_environment_credential_without_serializing_its_value(manager,tmp_path,monkeypatch):
     import sys
