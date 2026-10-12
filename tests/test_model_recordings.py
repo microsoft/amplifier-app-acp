@@ -60,3 +60,15 @@ def test_standard_acp_tool_updates_keep_delegate_header(tmp_path):
     assert [p['update']['sessionUpdate'] for _,p in messages]==['tool_call','tool_call_update']
     assert all(p['update']['_meta']['amplifier.dev/execution']['delegate']==header for _,p in messages)
     assert all(p['update']['toolCallId']=='review:one' for _,p in messages)
+
+@pytest.mark.parametrize('negotiated',[False,True])
+def test_delegate_report_forwarding_is_negotiated_and_input_bound(tmp_path,negotiated):
+    from types import SimpleNamespace
+    from amplifier_acp.server import Session,NATIVE
+    messages=[]
+    async def notify(method,params):messages.append((method,params))
+    server=SimpleNamespace(config={'home':str(tmp_path)},extensions={NATIVE} if negotiated else set(),notify=notify)
+    session=Session(server,'root',str(tmp_path));session.input_id='original-input'
+    report={'id':'worker:review','kind':'worker','sessionId':'review','label':'Reviewer','revision':2,'phase':'completed','summary':'**Review complete.**'}
+    asyncio.run(session.observe({'type':'execution.event','event':report}))
+    assert messages==([('_amplifier/event',{'sessionId':'root','event':{'type':'execution.event','event':report,'activeInputId':'original-input'}})] if negotiated else [])

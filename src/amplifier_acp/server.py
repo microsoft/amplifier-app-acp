@@ -204,7 +204,7 @@ class Session:
                 self.prompt_calls[event['id']]=event.get('usage',{})
             if event.get('kind')=='llm' and event.get('phase')=='running' and event.get('lifecycle')!='background' and event.get('sessionId')==self.identity and event.get('id')!=self.last_model_id:
                 self.last_model_id=event.get('id');self.streamed=False;self.had_deltas=False
-            if event.get('kind')=='llm' and NATIVE in self.server.extensions:
+            if event.get('kind') in {'llm','worker'} and NATIVE in self.server.extensions:
                 await self.server.notify('_amplifier/event',{'sessionId':self.identity,'event':{'type':'execution.event','event':event,'activeInputId':self.input_id}})
             if event.get('kind')=='tool':
                 identity=event.get('toolCallId') or event.get('id')

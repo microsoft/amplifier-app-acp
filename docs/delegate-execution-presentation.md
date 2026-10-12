@@ -13,3 +13,10 @@ show delegate ownership without requesting the full execution family.
 
 `tests/test_model_recordings.py` covers partial updates, current child model
 identity, root-call exclusion and the standard ACP tool envelope.
+
+When the Host negotiates Native version 1, worker execution events are forwarded
+with their current active input identity as well. This separate observation
+carries the bounded report produced by the execution store; it does not place a
+report body in every child tool header or create an additional reply. Hosts can
+persist the report for later work-detail inspection. Unnegotiated clients do not
+receive this extension. The forwarding test covers both negotiated states.
