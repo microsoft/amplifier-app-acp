@@ -78,6 +78,43 @@ async def test_concurrent_new_requests_share_the_connection_bound(tmp_path):
     backend.create.assert_awaited_once()
 
 
+async def test_default_owner_connections_have_no_session_count_ceiling(tmp_path):
+    backend = owner()
+    backend.create.side_effect = [f"owned-{index}" for index in range(40)]
+    server = Server({}, io.StringIO(), execution_owner=backend)
+    await server.dispatch("initialize", {})
+    results = await asyncio.gather(*(server.dispatch("session/new", {"cwd": str(tmp_path)})
+                                    for _ in range(40)))
+    assert len({result["sessionId"] for result in results}) == 40
+    assert backend.create.await_count == 40
+
+
+async def test_owner_tool_projection_retains_only_current_input_and_unique_wire_ids(tmp_path):
+    backend = owner()
+    wire = io.StringIO()
+    server = Server({}, wire, execution_owner=backend)
+    await server.dispatch("initialize", {})
+    await server.dispatch("session/new", {"cwd": str(tmp_path)})
+    session = server.sessions["owned-session"]
+    async def prompt(identity, input_id, text, observe):
+        assert session.tools == set()
+        for phase in ("running", "completed"):
+            await observe({"type": "execution.event", "event": {
+                "kind": "tool", "toolCallId": "reused-provider-id", "phase": phase}})
+        assert len(session.tools) == 1
+        return {"outcome": "completed"}
+    backend.prompt.side_effect = prompt
+    for _ in range(2):
+        await server.dispatch("session/prompt", {"sessionId": "owned-session",
+            "prompt": [{"type": "text", "text": "next"}]})
+    import json
+    updates = [json.loads(line)["params"]["update"] for line in wire.getvalue().splitlines()]
+    assert [row["sessionUpdate"] for row in updates] == ["tool_call", "tool_call_update"] * 2
+    assert updates[0]["toolCallId"] == updates[1]["toolCallId"]
+    assert updates[2]["toolCallId"] == updates[3]["toolCallId"]
+    assert updates[0]["toolCallId"] != updates[2]["toolCallId"]
+
+
 async def test_shared_projection_keeps_text_tool_scope_and_final_deduplication():
     session = SimpleNamespace(identity="root", streamed=False, had_deltas=False,
         last_model_id=None, tools=set(), update=AsyncMock())

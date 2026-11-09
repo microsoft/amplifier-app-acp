@@ -1,7 +1,7 @@
 """Shared standard ACP text/tool projection; never admission or accounting."""
 import json
 
-async def project(session, row, is_root=True):
+async def project(session, row, is_root=True, *, tool_namespace=None):
     kind = row.get("type")
     if kind=='assistant.delta' and is_root:
         session.streamed=True;session.had_deltas=True
@@ -18,6 +18,8 @@ async def project(session, row, is_root=True):
             if not identity:return
             # Child IDs are scoped so concurrent delegates cannot collide.
             identity=str(event.get('sessionId') or session.identity)+':'+str(identity)
+            if tool_namespace is not None:
+                identity=str(tool_namespace)+':'+identity
             status={'running':'in_progress','completed':'completed','error':'failed','cancelled':'failed'}.get(event.get('phase'),'pending')
             data={'toolCallId':identity,'status':status}
             if 'input' in event:data['rawInput']=event['input']

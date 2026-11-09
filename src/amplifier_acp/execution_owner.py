@@ -38,17 +38,18 @@ class OwnedSession:
         async with self.lock:
             self.streamed = self.had_deltas = False
             self.last_model_id = None
-            result = await self.server.execution_owner.prompt(self.identity, str(uuid.uuid4()),
-                "\n".join(block["text"] for block in blocks), self.observe)
+            self.tools.clear()
+            input_id = str(uuid.uuid4())
+            async def observe(event):
+                await project(self, event, tool_namespace=input_id)
+            result = await self.server.execution_owner.prompt(self.identity, input_id,
+                "\n".join(block["text"] for block in blocks), observe)
             outcome = result.get("outcome")
             if outcome not in {"completed", "cancelled"}:
                 raise RpcError(-32000, "Execution outcome is unresolved; inspect owner state before retrying.")
             if result.get("text") and not self.streamed:
                 await self.update("agent_message_chunk", content={"type": "text", "text": result["text"]})
             return {"stopReason": "end_turn" if outcome == "completed" else "cancelled"}
-
-    async def observe(self, event):
-        await project(self, event)
 
     async def close(self):
         # Attachment release is not execution Stop or conversation deletion.
@@ -73,7 +74,8 @@ async def dispatch(server, method, params):
         if params.get("mcpServers") or params.get("additionalDirectories"):
             raise RpcError(-32602, "MCP servers and additional directories are not supported by this owner.")
         async with server._owner_creation_lock:
-            if len(server.sessions) >= server.config.get("maxSessions", 32):
+            limit = server.config.get("maxSessions")
+            if limit is not None and len(server.sessions) >= limit:
                 raise RpcError(-32000, "Connection session capacity reached.")
             identity = await server.execution_owner.create(str(cwd.resolve()))
             if identity in server.sessions:
