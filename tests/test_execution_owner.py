@@ -12,6 +12,7 @@ from amplifier_acp.event_projection import project
 
 def owner():
     return SimpleNamespace(create=AsyncMock(return_value="owned-session"),
+        attach=AsyncMock(side_effect=lambda identity, cwd: identity),
         prompt=AsyncMock(return_value={"outcome": "completed", "text": "finished"}),
         cancel=AsyncMock(), release=AsyncMock(), close=AsyncMock())
 
@@ -22,8 +23,9 @@ async def test_owner_mode_has_no_native_extensions_or_unsupported_fallback(tmp_p
     initialized = await server.dispatch("initialize", {"protocolVersion": 1,
         "clientCapabilities": {"_meta": {"amplifier.dev/host": {"version": 1}, "amplifier.dev/native": {"version": 1}}}})
     assert initialized["agentCapabilities"]["loadSession"] is False
+    assert initialized["agentCapabilities"]["sessionCapabilities"] == {"resume": {}}
     assert "_meta" not in initialized["agentCapabilities"]
-    for method in ("session/load", "session/resume", "session/set_mode", "_amplifier/native"):
+    for method in ("session/load", "session/set_mode", "_amplifier/native"):
         with pytest.raises(RpcError) as error:
             await server.dispatch(method, {"sessionId": "missing", "cwd": str(tmp_path)})
         assert error.value.code == -32601
@@ -34,6 +36,53 @@ async def test_owner_mode_has_no_native_extensions_or_unsupported_fallback(tmp_p
     await server.sessions["owned-session"].close()
     backend.release.assert_awaited_once_with("owned-session")
     backend.cancel.assert_not_called()
+
+
+async def test_resume_preserves_identity_without_replay_or_creation(tmp_path):
+    backend, wire = owner(), io.StringIO()
+    server = Server({}, wire, execution_owner=backend)
+    await server.dispatch("initialize", {})
+    assert await server.dispatch("session/resume", {
+        "sessionId": "saved", "cwd": str(tmp_path), "mcpServers": []}) == {}
+    backend.attach.assert_awaited_once_with("saved", str(tmp_path))
+    backend.create.assert_not_called()
+    backend.prompt.assert_not_called()
+    assert wire.getvalue() == ""
+    assert await server.dispatch("session/prompt", {"sessionId": "saved",
+        "prompt": [{"type": "text", "text": "New input"}]}) == {"stopReason": "end_turn"}
+    assert backend.prompt.call_args.args[0] == "saved"
+
+
+async def test_failed_resume_has_no_creation_fallback(tmp_path):
+    backend = owner()
+    backend.attach.side_effect = ValueError("Saved conversation is unavailable")
+    server = Server({}, io.StringIO(), execution_owner=backend)
+    await server.dispatch("initialize", {})
+    with pytest.raises(ValueError, match="unavailable"):
+        await server.dispatch("session/resume", {"sessionId": "missing", "cwd": str(tmp_path)})
+    assert not server.sessions
+    backend.create.assert_not_called()
+
+
+async def test_new_and_resume_share_explicit_connection_limit(tmp_path):
+    backend = owner()
+    entered, finish = asyncio.Event(), asyncio.Event()
+    async def attach(identity, cwd):
+        entered.set()
+        await finish.wait()
+        return identity
+    backend.attach.side_effect = attach
+    server = Server({"maxSessions": 1}, io.StringIO(), execution_owner=backend)
+    await server.dispatch("initialize", {})
+    first = asyncio.create_task(server.dispatch("session/resume", {
+        "sessionId": "saved", "cwd": str(tmp_path)}))
+    await entered.wait()
+    second = asyncio.create_task(server.dispatch("session/new", {"cwd": str(tmp_path)}))
+    finish.set()
+    assert await first == {}
+    with pytest.raises(RpcError, match="capacity"):
+        await second
+    backend.create.assert_not_called()
 
 
 async def test_cancel_acceptance_does_not_override_completed_race(tmp_path):

@@ -2,7 +2,7 @@
 
 The launcher supplies the owner object; ACP input cannot select its principal,
 implementation, configuration or standing authority. Native default mode is
-unchanged. This first owner mode advertises only new text conversations.
+unchanged. Saved conversations can resume without replaying their history.
 """
 import asyncio
 from pathlib import Path
@@ -63,25 +63,35 @@ async def dispatch(server, method, params):
             raise RpcError(-32600, "Connection already initialized.")
         server.initialized = True
         return {"protocolVersion": 1, "agentInfo": {"name": "amplifier-owned-execution", "version": "0.1"},
-            "agentCapabilities": {"loadSession": False, "promptCapabilities": {
+            "agentCapabilities": {"loadSession": False, "sessionCapabilities": {"resume": {}}, "promptCapabilities": {
                 "image": False, "audio": False, "embeddedContext": False}}, "authMethods": []}
     if not server.initialized:
         raise RpcError(-32002, "Initialize the connection first.")
-    if method == "session/new":
+    if method in {"session/new", "session/resume"}:
         cwd = Path(params.get("cwd", "")).expanduser()
         if not cwd.is_absolute() or not cwd.is_dir():
             raise RpcError(-32602, "cwd must be an existing absolute directory.")
         if params.get("mcpServers") or params.get("additionalDirectories"):
             raise RpcError(-32602, "MCP servers and additional directories are not supported by this owner.")
+        identity = params.get("sessionId") if method == "session/resume" else None
+        if method == "session/resume" and (not isinstance(identity, str) or not identity):
+            raise RpcError(-32602, "sessionId is required.")
         async with server._owner_creation_lock:
+            if identity in server.sessions:
+                raise RpcError(-32000, "This session is already attached to this connection.")
             limit = server.config.get("maxSessions")
             if limit is not None and len(server.sessions) >= limit:
                 raise RpcError(-32000, "Connection session capacity reached.")
-            identity = await server.execution_owner.create(str(cwd.resolve()))
+            if method == "session/new":
+                identity = await server.execution_owner.create(str(cwd.resolve()))
+            else:
+                attached = await server.execution_owner.attach(identity, str(cwd.resolve()))
+                if attached != identity:
+                    raise RpcError(-32000, "Execution owner did not attach the requested identity.")
             if identity in server.sessions:
                 raise RpcError(-32000, "Execution owner returned an existing attachment.")
             server.sessions[identity] = OwnedSession(server, identity)
-            return {"sessionId": identity}
+            return {"sessionId": identity} if method == "session/new" else {}
     if method not in {"session/prompt", "session/cancel"}:
         raise RpcError(-32601, "Method is not supported by this execution owner.")
     session = server.sessions.get(params.get("sessionId"))
