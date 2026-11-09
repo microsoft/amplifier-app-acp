@@ -53,6 +53,20 @@ async def test_resume_preserves_identity_without_replay_or_creation(tmp_path):
     assert backend.prompt.call_args.args[0] == "saved"
 
 
+async def test_older_owner_does_not_advertise_or_fall_back_from_resume(tmp_path):
+    backend = owner()
+    del backend.attach
+    server = Server({}, io.StringIO(), execution_owner=backend)
+    initialized = await server.dispatch("initialize", {})
+    assert "resume" not in initialized["agentCapabilities"]["sessionCapabilities"]
+    with pytest.raises(RpcError) as error:
+        await server.dispatch("session/resume", {"sessionId": "saved", "cwd": str(tmp_path)})
+    assert error.value.code == -32601
+    backend.create.assert_not_called()
+    assert not server.sessions
+    assert await server.dispatch("session/new", {"cwd": str(tmp_path)}) == {"sessionId": "owned-session"}
+
+
 async def test_failed_resume_has_no_creation_fallback(tmp_path):
     backend = owner()
     backend.attach.side_effect = ValueError("Saved conversation is unavailable")

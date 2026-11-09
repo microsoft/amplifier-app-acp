@@ -63,10 +63,13 @@ async def dispatch(server, method, params):
             raise RpcError(-32600, "Connection already initialized.")
         server.initialized = True
         return {"protocolVersion": 1, "agentInfo": {"name": "amplifier-owned-execution", "version": "0.1"},
-            "agentCapabilities": {"loadSession": False, "sessionCapabilities": {"resume": {}}, "promptCapabilities": {
+            "agentCapabilities": {"loadSession": False, "sessionCapabilities": {
+                **({"resume": {}} if callable(getattr(server.execution_owner, "attach", None)) else {})}, "promptCapabilities": {
                 "image": False, "audio": False, "embeddedContext": False}}, "authMethods": []}
     if not server.initialized:
         raise RpcError(-32002, "Initialize the connection first.")
+    if method == "session/resume" and not callable(getattr(server.execution_owner, "attach", None)):
+        raise RpcError(-32601, "Resume is not supported by this execution owner.")
     if method in {"session/new", "session/resume"}:
         cwd = Path(params.get("cwd", "")).expanduser()
         if not cwd.is_absolute() or not cwd.is_dir():
