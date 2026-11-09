@@ -1,0 +1,91 @@
+"""Opt-in standard ACP attachment to a trusted, already owned execution service.
+
+The launcher supplies the owner object; ACP input cannot select its principal,
+implementation, configuration or standing authority. Native default mode is
+unchanged. This first owner mode advertises only new text conversations.
+"""
+import asyncio
+from pathlib import Path
+import uuid
+
+from .event_projection import project
+
+
+class OwnedSession:
+    def __init__(self, server, identity):
+        self.server, self.identity = server, identity
+        self.active_requests = 0
+        self.lock = asyncio.Lock()
+        self.streamed = self.had_deltas = False
+        self.last_model_id = None
+        self.tools = set()
+
+    async def update(self, session_update, **data):
+        await self.server.notify("session/update", {"sessionId": self.identity,
+            "update": {"sessionUpdate": session_update, **data}})
+
+    async def publish_title(self):
+        pass
+
+    async def prompt(self, blocks):
+        from .server import RpcError
+        if (not isinstance(blocks, list) or not blocks or any(
+                not isinstance(block, dict) or block.get("type") != "text"
+                or not isinstance(block.get("text"), str) for block in blocks)):
+            raise RpcError(-32602, "This execution owner accepts text prompt blocks only.")
+        if self.lock.locked():
+            raise RpcError(-32000, "A prompt is already active for this session.")
+        async with self.lock:
+            self.streamed = self.had_deltas = False
+            self.last_model_id = None
+            result = await self.server.execution_owner.prompt(self.identity, str(uuid.uuid4()),
+                "\n".join(block["text"] for block in blocks), self.observe)
+            outcome = result.get("outcome")
+            if outcome not in {"completed", "cancelled"}:
+                raise RpcError(-32000, "Execution outcome is unresolved; inspect owner state before retrying.")
+            if result.get("text") and not self.streamed:
+                await self.update("agent_message_chunk", content={"type": "text", "text": result["text"]})
+            return {"stopReason": "end_turn" if outcome == "completed" else "cancelled"}
+
+    async def observe(self, event):
+        await project(self, event)
+
+    async def close(self):
+        # Attachment release is not execution Stop or conversation deletion.
+        await self.server.execution_owner.release(self.identity)
+
+
+async def dispatch(server, method, params):
+    from .server import RpcError
+    if method == "initialize":
+        if server.initialized:
+            raise RpcError(-32600, "Connection already initialized.")
+        server.initialized = True
+        return {"protocolVersion": 1, "agentInfo": {"name": "amplifier-owned-execution", "version": "0.1"},
+            "agentCapabilities": {"loadSession": False, "promptCapabilities": {
+                "image": False, "audio": False, "embeddedContext": False}}, "authMethods": []}
+    if not server.initialized:
+        raise RpcError(-32002, "Initialize the connection first.")
+    if method == "session/new":
+        cwd = Path(params.get("cwd", "")).expanduser()
+        if not cwd.is_absolute() or not cwd.is_dir():
+            raise RpcError(-32602, "cwd must be an existing absolute directory.")
+        if params.get("mcpServers") or params.get("additionalDirectories"):
+            raise RpcError(-32602, "MCP servers and additional directories are not supported by this owner.")
+        async with server._owner_creation_lock:
+            if len(server.sessions) >= server.config.get("maxSessions", 32):
+                raise RpcError(-32000, "Connection session capacity reached.")
+            identity = await server.execution_owner.create(str(cwd.resolve()))
+            if identity in server.sessions:
+                raise RpcError(-32000, "Execution owner returned an existing attachment.")
+            server.sessions[identity] = OwnedSession(server, identity)
+            return {"sessionId": identity}
+    if method not in {"session/prompt", "session/cancel"}:
+        raise RpcError(-32601, "Method is not supported by this execution owner.")
+    session = server.sessions.get(params.get("sessionId"))
+    if session is None:
+        raise RpcError(-32602, "Session is not attached to this connection.")
+    if method == "session/prompt":
+        return await session.prompt(params.get("prompt"))
+    await server.execution_owner.cancel(session.identity)
+    return None

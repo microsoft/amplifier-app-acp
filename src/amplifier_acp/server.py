@@ -186,34 +186,9 @@ class Session:
             await self.server.notify('_amplifier/event',{'sessionId':self.identity,'event':safe})
         if kind=='runtime.ready':self.report=row.get('report',{})
         if kind=='approval.requested':self.server.track(self.permission(row))
-        elif kind=='assistant.delta' and is_root:
-            self.streamed=True;self.had_deltas=True
-            await self.update('agent_message_chunk',content={'type':'text','text':row.get('text','')})
-        elif kind=='assistant.message' and is_root and not self.had_deltas:
-            text=row.get('text','')
-            if text:await self.update('agent_message_chunk',content={'type':'text','text':text});self.streamed=True
-        elif kind=='execution.event':
-            event=row.get('event',{})
-            if event.get('kind')=='llm' and event.get('phase')=='running' and event.get('lifecycle')!='background' and event.get('sessionId')==self.identity and event.get('id')!=self.last_model_id:
-                self.last_model_id=event.get('id');self.streamed=False;self.had_deltas=False
-            if event.get('kind')=='tool':
-                identity=event.get('toolCallId') or event.get('id')
-                if not identity:return
-                # Child IDs are scoped so concurrent delegates cannot collide.
-                identity=str(event.get('sessionId') or self.identity)+':'+str(identity)
-                status={'running':'in_progress','completed':'completed','error':'failed','cancelled':'failed'}.get(event.get('phase'),'pending')
-                data={'toolCallId':identity,'status':status}
-                if 'input' in event:data['rawInput']=event['input']
-                if 'output' in event:
-                    data['rawOutput']=event['output']
-                    output=event['output']
-                    text=output if isinstance(output,str) else json.dumps(output,ensure_ascii=True,separators=(',',':'))
-                    data['content']=[{'type':'content','content':{'type':'text','text':text}}]
-                if identity not in self.tools:
-                    self.tools.add(identity);data.update(title=event.get('label','Tool'),kind='other')
-                    await self.update('tool_call',**data)
-                else:
-                    await self.update('tool_call_update',**data)
+        elif kind in {'assistant.delta', 'assistant.message', 'execution.event'}:
+            from .event_projection import project
+            await project(self, row, is_root)
         elif kind in {'generation.finished','generation.failed','generation.detached'} and is_root:
             if not self.prompt or self.prompt.done():return
             ids=row.get('input_ids',[])
@@ -519,13 +494,17 @@ class Session:
         if self.worker:await self.worker.close()
 
 class Server:
-    def __init__(self,config,output,*,message_principal=None):
+    def __init__(self,config,output,*,message_principal=None,execution_owner=None):
         from .preparation_policy import configure as configure_preparation
         configure_preparation(config)
         from .module_sources import configure
         configure(config)
         self.config,self.output=config,output
         self.message_principal=message_principal
+        self.execution_owner=execution_owner
+        self._owner_output=None
+        self._owner_output_lock=asyncio.Lock()
+        self._owner_creation_lock=asyncio.Lock()
         self._host_runtime_retention=False;self._standalone_idle_seconds=None
         # One ACP process owns one configured native home. Passive Foundation
         # fence/lifecycle APIs must resolve the same canonical files as workers.
@@ -543,6 +522,11 @@ class Server:
     async def send(self,row):
         text=json.dumps(row,ensure_ascii=False,allow_nan=False)+'\n'
         if len(text.encode())>MAX_LINE:raise RpcError(-32000,'Response exceeds transport bound; use a narrower operation.')
+        if self._owner_output is not None:
+            async with self._owner_output_lock:
+                self._owner_output.write(text.encode())
+                await self._owner_output.drain()
+            return
         self.output.write(text);self.output.flush()
 
     async def notify(self,method,params):await self.send({'jsonrpc':'2.0','method':method,'params':params})
@@ -610,6 +594,9 @@ class Server:
 
     @runtime_preparation.governed
     async def dispatch(self,method,params):
+        if self.execution_owner is not None:
+            from .execution_owner import dispatch
+            return await dispatch(self, method, params)
         if method=='initialize' or method in {'_amplifier/admin','_amplifier/admin/lifecycle'} or not self.initialized:
             return await self._dispatch(method,params)
         if method.startswith('_amplifier/') and NATIVE not in self.extensions:
@@ -980,6 +967,13 @@ class Server:
         raise RpcError(-32601,'Method is not supported.')
 
     async def run(self):
+        output_transport=None
+        if self.execution_owner is not None:
+            # A slow ACP peer must not block the composite owner's event loop.
+            loop=asyncio.get_running_loop()
+            output_protocol=asyncio.StreamReaderProtocol(asyncio.StreamReader())
+            output_transport,_=await loop.connect_write_pipe(lambda:output_protocol,self.output)
+            self._owner_output=asyncio.StreamWriter(output_transport,output_protocol,None,loop)
         reader=asyncio.StreamReader(limit=MAX_LINE+1);protocol=asyncio.StreamReaderProtocol(reader)
         transport,_=await asyncio.get_running_loop().connect_read_pipe(lambda:protocol,sys.stdin)
         try:
@@ -994,10 +988,12 @@ class Server:
             if hasattr(self,'admin'):await self.admin.close()
             # A lost client means cancellation, never automatic replay on reconnect.
             for session in list(self.sessions.values()):await session.close()
+            if self.execution_owner is not None:await self.execution_owner.close()
             for future in self.pending.values():
                 if not future.done():future.cancel()
             for task in self.tasks:task.cancel()
             await asyncio.gather(*self.tasks,return_exceptions=True)
+            if output_transport is not None:output_transport.abort()
 
 NATIVE_CONTROLS=['session.relocate','session.relocation.inspect','configuration.snapshot','configuration.inspect','configuration.exportResources','configuration.providers','configuration.providerModels',
     'configuration.providerTest','configuration.providerLogin','configuration.providerLoginStatus','configuration.providerLoginCancel','configuration.cancel','configuration.apply','configuration.toggle','catalog.inspect','usage.inspect',
