@@ -36,3 +36,40 @@ async def install(coordinator,servers):
         coordinator.register_cleanup(manager.stop)
     except BaseException:
         await manager.stop();raise
+
+
+def owned_servers(servers, *, http=False):
+    """Translate standard ACP descriptors; the native module owns installation."""
+    from urllib.parse import urlsplit
+    if not isinstance(servers, list):
+        raise ValueError("mcpServers must be an array.")
+    result = {}
+    def entries(values, field):
+        if not isinstance(values, list):
+            raise ValueError("MCP " + field + " must be name/value entries.")
+        parsed = {}
+        for row in values:
+            if (not isinstance(row, dict) or not isinstance(row.get("name"), str)
+                    or not row["name"] or row["name"] in parsed
+                    or not isinstance(row.get("value"), str)):
+                raise ValueError("MCP " + field + " entries must have unique names and string values.")
+            parsed[row["name"]] = row["value"]
+        return parsed
+    for server in servers:
+        if (not isinstance(server, dict) or not isinstance(server.get("name"), str)
+                or not server["name"] or server["name"] in result):
+            raise ValueError("MCP server names must be nonempty and unique.")
+        if server.get("type") == "http":
+            if not http:
+                raise ValueError("HTTP MCP is not supported by this execution owner.")
+            url = server.get("url")
+            if not isinstance(url, str) or urlsplit(url).scheme not in {"http", "https"} or not urlsplit(url).netloc:
+                raise ValueError("HTTP MCP requires an absolute HTTP(S) URL.")
+            config = {"type": "http", "url": url,
+                      "headers": entries(server.get("headers", []), "header")}
+        else:
+            validate_servers([server])
+            config = {"command": server["command"], "args": list(server.get("args", [])),
+                      "env": entries(server.get("env", []), "environment")}
+        result[server["name"]] = config
+    return result

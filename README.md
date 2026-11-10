@@ -68,6 +68,13 @@ ACP connection independently of browser connections.
   that original operation retains its native ownership until it settles.
 - MCP stdio servers use `amplifier-module-tool-mcp`; server startup failure fails
   session setup. Client MCP names cannot silently replace configured tools.
+  The separately supplied execution-owner path can opt into standard stdio and
+  HTTP MCP when its trusted launcher selects a bundle with qualified `tool-mcp`
+  support. Session setup attaches metadata; first-prompt worker preparation
+  confirms requested servers before admitting model work. Temporary descriptors
+  stay outside saved plans/history and use the canonical module's one manager.
+  Releasing observation preserves admitted work; fresh use of its released
+  credentials requires the existing worker to retire and a new attachment.
 - `session/prompt` returns at native completion, not input admission. Background
   child work keeps the prompt open until the native manager finishes it.
 - `session/load` replays all visible retained history; `resume` does not replay.

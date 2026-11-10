@@ -58,12 +58,16 @@ class OwnedSession:
 
 async def dispatch(server, method, params):
     from .server import RpcError
+    capabilities = getattr(server.execution_owner, "mcp_capabilities", None)
+    mcp_enabled = isinstance(capabilities, dict)
     if method == "initialize":
         if server.initialized:
             raise RpcError(-32600, "Connection already initialized.")
         server.initialized = True
         return {"protocolVersion": 1, "agentInfo": {"name": "amplifier-owned-execution", "version": "0.1"},
-            "agentCapabilities": {"loadSession": False, "sessionCapabilities": {
+            "agentCapabilities": {"loadSession": False,
+                **({"mcpCapabilities": {"http": capabilities.get("http") is True, "sse": False}} if mcp_enabled else {}),
+                "sessionCapabilities": {
                 **({"resume": {}} if callable(getattr(server.execution_owner, "attach", None)) else {})}, "promptCapabilities": {
                 "image": False, "audio": False, "embeddedContext": False}}, "authMethods": []}
     if not server.initialized:
@@ -74,8 +78,14 @@ async def dispatch(server, method, params):
         cwd = Path(params.get("cwd", "")).expanduser()
         if not cwd.is_absolute() or not cwd.is_dir():
             raise RpcError(-32602, "cwd must be an existing absolute directory.")
-        if params.get("mcpServers") or params.get("additionalDirectories"):
-            raise RpcError(-32602, "MCP servers and additional directories are not supported by this owner.")
+        if params.get("additionalDirectories"):
+            raise RpcError(-32602, "Additional directories are not supported by this owner.")
+        options = {}
+        if mcp_enabled:
+            from .mcp import owned_servers
+            options["mcp_servers"] = owned_servers(params.get("mcpServers", []), http=capabilities.get("http") is True)
+        elif params.get("mcpServers"):
+            raise RpcError(-32602, "MCP servers are not supported by this owner.")
         identity = params.get("sessionId") if method == "session/resume" else None
         if method == "session/resume" and (not isinstance(identity, str) or not identity):
             raise RpcError(-32602, "sessionId is required.")
@@ -86,9 +96,9 @@ async def dispatch(server, method, params):
             if limit is not None and len(server.sessions) >= limit:
                 raise RpcError(-32000, "Connection session capacity reached.")
             if method == "session/new":
-                identity = await server.execution_owner.create(str(cwd.resolve()))
+                identity = await server.execution_owner.create(str(cwd.resolve()), **options)
             else:
-                attached = await server.execution_owner.attach(identity, str(cwd.resolve()))
+                attached = await server.execution_owner.attach(identity, str(cwd.resolve()), **options)
                 if attached != identity:
                     raise RpcError(-32000, "Execution owner did not attach the requested identity.")
             if identity in server.sessions:
