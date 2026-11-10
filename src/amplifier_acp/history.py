@@ -105,6 +105,8 @@ def content_updates(row,position):
     for block in blocks:
         if not isinstance(block,dict):raise HistoryError('Malformed native content block.')
         tag=block.get('type')
+        if tag in {'image','image_url'} and block.get('visibility') in {'internal','developer'}:
+            continue
         if tag in {'text','output_text','input_text'} and isinstance(block.get('text'),str):
             if block.get('visibility') in {'internal','developer'} or not block['text']:continue
             updates.append({'sessionUpdate':kind,'content':{'type':'text','text':block['text']},'_meta':meta})
