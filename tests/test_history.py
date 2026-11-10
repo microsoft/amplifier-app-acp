@@ -2,6 +2,68 @@ import json
 import pytest
 from amplifier_acp.history import page,HistoryError
 
+
+@pytest.mark.parametrize('visibility', ['internal', 'developer'])
+@pytest.mark.parametrize('image', [
+    {'type': 'image', 'source': {'type': 'base64', 'media_type': 'image/png', 'data': 'cHJpdmF0ZQ=='}},
+    {'type': 'image', 'source': {'type': 'url', 'url': 'https://example.invalid/private.png'}},
+    {'type': 'image_url', 'image_url': {'url': 'https://example.invalid/private.png'}},
+])
+def test_private_images_do_not_enter_public_history(visibility, image):
+    import copy
+    from amplifier_acp.history import content_updates
+    row = {'role': 'assistant', 'content': [
+        {'type': 'text', 'text': 'First public text'},
+        {**image, 'visibility': visibility},
+        {'type': 'text', 'text': 'Last public text'},
+        {'type': 'image', 'source': {'type': 'base64', 'media_type': 'image/png', 'data': 'cHVibGlj'}},
+    ]}
+    original = copy.deepcopy(row)
+    updates, diagnostics = content_updates(row, 3)
+    assert [update['content'] for update in updates] == [
+        {'type': 'text', 'text': 'First public text'},
+        {'type': 'text', 'text': 'Last public text'},
+        {'type': 'image', 'data': 'cHVibGlj', 'mimeType': 'image/png'},
+    ]
+    assert diagnostics == [] and row == original
+
+
+@pytest.mark.parametrize('visibility', [None, 'user'])
+@pytest.mark.parametrize('image, expected', [
+    ({'type': 'image', 'source': {'type': 'base64', 'media_type': 'image/png', 'data': 'YWJj'}},
+     {'type': 'image', 'data': 'YWJj', 'mimeType': 'image/png'}),
+    ({'type': 'image', 'source': {'type': 'url', 'url': 'https://example.invalid/public.png'}},
+     {'type': 'resource_link', 'uri': 'https://example.invalid/public.png', 'name': 'Image'}),
+    ({'type': 'image_url', 'image_url': {'url': 'https://example.invalid/public.png'}},
+     {'type': 'resource_link', 'uri': 'https://example.invalid/public.png', 'name': 'Image'}),
+])
+def test_public_image_projection_stays_exact(visibility, image, expected):
+    from amplifier_acp.history import content_updates
+    updates, diagnostics = content_updates({'role': 'user', 'content': [{**image, 'visibility': visibility}]}, 4)
+    assert len(updates) == 1 and updates[0]['sessionUpdate'] == 'user_message_chunk'
+    assert updates[0]['content'] == expected and diagnostics == []
+
+
+def test_retained_public_original_wins_over_private_model_image():
+    import copy
+    from amplifier_acp.history import content_updates
+    original = {'version': 1, 'inputId': 'input', 'capture': 'host-standard', 'blocks': [
+        {'type': 'text', 'text': 'Literal original'},
+        {'type': 'attachment', 'reference': {'owner': 'resources', 'id': 'resource://original-owner/picture'},
+         'name': 'Original picture', 'mimeType': 'image/png'},
+    ]}
+    row = {'role': 'user', 'metadata': {
+        'amplifier_input': {'version': 1, 'kind': 'user', 'source': 'user', 'id': 'input'},
+        'amplifier_public_message': original,
+    }, 'content': [{'type': 'image', 'visibility': 'internal', 'source': {'type': 'base64', 'data': 'cHJpdmF0ZQ=='}}]}
+    before = copy.deepcopy(row)
+    updates, diagnostics = content_updates(row, 0)
+    assert [update['content'] for update in updates] == [
+        {'type': 'text', 'text': 'Literal original'},
+        {'type': 'resource_link', 'uri': 'resource://original-owner/picture', 'name': 'Original picture', 'mimeType': 'image/png'},
+    ]
+    assert diagnostics == [] and row == before
+
 def history(path,count=7):
     path.mkdir();file=path/'transcript.jsonl'
     with file.open('w') as out:
