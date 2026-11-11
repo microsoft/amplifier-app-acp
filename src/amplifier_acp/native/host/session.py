@@ -639,8 +639,8 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
                           refresh_dependencies=False, install_overrides=None, qualification_readonly=False, global_only=False, runtime_plan=None, **kwargs):
     if refresh_dependencies and resume:
         raise ValueError("Dependency refresh is limited to a new isolated qualification session.")
-    from ..runtime_qualification import required_transcript_guard
-    NativeTranscriptGuard = required_transcript_guard()
+    from ..runtime_qualification import require_session_api
+    NativeTranscriptGuard = require_session_api()
     from amplifier_foundation import SessionConfigurator
     from amplifier_module_loop_live.runtime import Runtime
     from amplifier_module_loop_live.job_store import JobStore

@@ -19,23 +19,29 @@ class RuntimeDependencyError(RuntimeError):
     """The selected worker lacks a required native runtime API."""
 
 
-def required_transcript_guard():
-    """Check the selected Foundation without installing or changing it."""
+def require_session_api():
+    """Check session APIs without side effects and return the canonical guard."""
     from importlib import import_module
+    from inspect import iscoroutinefunction
 
     module = 'amplifier_foundation.session.transcript_guard'
+    state_module = 'amplifier_foundation.session.shared_state'
     message = ('This native runtime needs an updated Amplifier Foundation with '
-               'the shared transcript guard. Update the adapter dependencies and retry. '
+               'the shared transcript guard and cancellation-safe writer acquisition. '
+               'Update the adapter dependencies and retry. '
                'This check has not changed the saved runtime or conversation.')
     try:
         guards = import_module(module)
+        state = import_module(state_module)
     except ModuleNotFoundError as error:
-        if error.name not in {'amplifier_foundation', 'amplifier_foundation.session', module}:
+        if error.name not in {'amplifier_foundation', 'amplifier_foundation.session', module, state_module}:
             raise
         raise RuntimeDependencyError(message) from error
     guard = getattr(guards, 'NativeTranscriptGuard', None)
     conflict = getattr(guards, 'NativeTranscriptConflict', None)
-    if not isinstance(guard, type) or not isinstance(conflict, type):
+    store = getattr(state, 'SharedSessionStore', None)
+    if (not isinstance(guard, type) or not isinstance(conflict, type)
+            or not iscoroutinefunction(getattr(store, 'acquire_async', None))):
         raise RuntimeDependencyError(message)
     return guard
 

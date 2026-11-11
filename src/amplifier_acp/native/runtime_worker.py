@@ -353,8 +353,8 @@ class Worker:
             from amplifier_acp.native.execution_events import ExecutionEvents
             from amplifier_acp.native.runtime_controls import RuntimeControls
             from amplifier_acp.native.shared_state import configuration_stamp
-            from amplifier_acp.native.runtime_qualification import required_transcript_guard
-            required_transcript_guard()
+            from amplifier_acp.native.runtime_qualification import require_session_api
+            require_session_api()
             from amplifier_foundation.session.activation import ActivationGate
             from amplifier_module_loop_live.runtime import Runtime
             self.home = app_home()
@@ -377,8 +377,8 @@ class Worker:
                 self.shared_store_stamp = file_stamp
                 self.activation_gate = ActivationGate()
             if self.shared_handle is None:
-                self.shared_handle = await asyncio.to_thread(
-                    self.shared_store.acquire, app="amplifier-acp", pid=os.getpid())
+                self.shared_handle = await self.shared_store.acquire_async(
+                    app="amplifier-acp", pid=os.getpid())
             if recover_bundle:
                 from amplifier_acp.native.bundle_selection import BundleTransaction
                 BundleTransaction(self.home, workspace, config["id"]).restore()
@@ -614,8 +614,8 @@ class Worker:
 
         if not self.parked:
             return
-        handle = await asyncio.to_thread(
-            self.shared_store.acquire, app="amplifier-acp", pid=os.getpid())
+        handle = await self.shared_store.acquire_async(
+            app="amplifier-acp", pid=os.getpid())
         try:
             history_stamp = self.history_stamp()
             from amplifier_acp.native.shared_state import configuration_stamp
