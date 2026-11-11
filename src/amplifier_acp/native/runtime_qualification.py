@@ -15,6 +15,31 @@ from urllib.parse import unquote, urlsplit, urlunsplit
 from . import runtime_environment as environments
 
 
+class RuntimeDependencyError(RuntimeError):
+    """The selected worker lacks a required native runtime API."""
+
+
+def required_transcript_guard():
+    """Check the selected Foundation without installing or changing it."""
+    from importlib import import_module
+
+    module = 'amplifier_foundation.session.transcript_guard'
+    message = ('This native runtime needs an updated Amplifier Foundation with '
+               'the shared transcript guard. Update the adapter dependencies and retry. '
+               'This check has not changed the saved runtime or conversation.')
+    try:
+        guards = import_module(module)
+    except ModuleNotFoundError as error:
+        if error.name not in {'amplifier_foundation', 'amplifier_foundation.session', module}:
+            raise
+        raise RuntimeDependencyError(message) from error
+    guard = getattr(guards, 'NativeTranscriptGuard', None)
+    conflict = getattr(guards, 'NativeTranscriptConflict', None)
+    if not isinstance(guard, type) or not isinstance(conflict, type):
+        raise RuntimeDependencyError(message)
+    return guard
+
+
 def installed_graph(project):
     """Read complete PEP 610 provenance, including Foundation's editable caches."""
     paths = list((Path(project) / '.venv').glob('lib/python*/site-packages'))

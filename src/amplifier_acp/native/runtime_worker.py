@@ -353,6 +353,8 @@ class Worker:
             from amplifier_acp.native.execution_events import ExecutionEvents
             from amplifier_acp.native.runtime_controls import RuntimeControls
             from amplifier_acp.native.shared_state import configuration_stamp
+            from amplifier_acp.native.runtime_qualification import required_transcript_guard
+            required_transcript_guard()
             from amplifier_foundation.session.activation import ActivationGate
             from amplifier_module_loop_live.runtime import Runtime
             self.home = app_home()

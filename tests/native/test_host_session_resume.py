@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from amplifier_foundation.session import NativeTranscriptConflict
 
 from amplifier_acp.native.host import session as host
 from amplifier_acp.native.host.session import compose_configured_bundle
@@ -233,31 +234,37 @@ async def test_native_history_does_not_even_read_corrupt_common_checkpoint(mount
 
 
 @pytest.mark.parametrize("mutation", ["append", "delete", "replace", "symlink"])
-async def test_out_of_band_native_change_blocks_later_checkpoint(mounted_host, mutation):
+@pytest.mark.parametrize("filename", ["transcript.jsonl", "transcript.jsonl.backup"])
+async def test_out_of_band_native_change_blocks_later_checkpoint(mounted_host, mutation, filename):
     h = mounted_host
     rows = [{"role": "user", "content": "first"}]
     h.store.save("native-root", rows, {})
+    changed = h.path.with_name(filename)
+    if changed != h.path:
+        changed.write_bytes(h.path.read_bytes())
     await h.prepare(snapshot(rows))
     assert not h.checkpoint.exists()
     original_metadata = (h.path.parent / "metadata.json").read_bytes()
     if mutation == "append":
-        with h.path.open("a") as stream:
+        with changed.open("a") as stream:
             stream.write('{"role":"assistant","content":"from CLI"}\n')
     elif mutation == "replace":
-        replacement = h.path.with_suffix(".replacement")
-        replacement.write_bytes(h.path.read_bytes())
-        replacement.replace(h.path)
+        replacement = changed.with_suffix(".replacement")
+        replacement.write_bytes(changed.read_bytes())
+        replacement.replace(changed)
     elif mutation == "delete":
-        h.path.unlink()
+        changed.unlink()
     else:
-        target = h.path.with_suffix(".outside")
-        target.write_bytes(h.path.read_bytes())
-        h.path.unlink()
-        h.path.symlink_to(target)
+        target = changed.with_suffix(".outside")
+        target.write_bytes(changed.read_bytes())
+        changed.unlink()
+        changed.symlink_to(target)
+    changed_after = changed.read_bytes() if changed.exists() else None
     native_after = h.path.read_bytes() if h.path.exists() else None
     h.context.messages.append({"role": "assistant", "content": "stale in-memory answer"})
-    with pytest.raises(host.NativeTranscriptConflict):
+    with pytest.raises(NativeTranscriptConflict):
         await h.capabilities["live.checkpoint"]("completed")
+    assert (changed.read_bytes() if changed.exists() else None) == changed_after
     assert (h.path.read_bytes() if h.path.exists() else None) == native_after
     assert not h.checkpoint.exists()
     assert (h.path.parent / "metadata.json").read_bytes() == original_metadata
