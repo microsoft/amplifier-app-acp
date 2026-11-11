@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -87,7 +87,7 @@ wheels = [
 [[package]]
 name = "amplifier-foundation"
 version = "1.0.0"
-source = { git = "https://github.com/microsoft/amplifier-foundation?rev=main#8462030de39e2f86beda8b7758925520683e3678" }
+source = { git = "https://github.com/microsoft/amplifier-foundation?rev=main#82798febe57899497eccd659c8657f8bd8960138" }
 dependencies = [
     { name = "amplifier-core" },
     { name = "filelock" },
@@ -102,7 +102,7 @@ source = { git = "https://github.com/microsoft/amplifier-module-context-simple?r
 [[package]]
 name = "amplifier-module-hooks-session-naming"
 version = "0.2.0"
-source = { git = "https://github.com/microsoft/amplifier-foundation?subdirectory=modules%2Fhooks-session-naming&rev=main#8462030de39e2f86beda8b7758925520683e3678" }
+source = { git = "https://github.com/microsoft/amplifier-foundation?subdirectory=modules%2Fhooks-session-naming&rev=main#82798febe57899497eccd659c8657f8bd8960138" }
 
 [[package]]
 name = "amplifier-module-loop-live"
@@ -135,7 +135,7 @@ dependencies = [
 [[package]]
 name = "amplifier-module-tool-delegate"
 version = "0.1.0"
-source = { git = "https://github.com/microsoft/amplifier-foundation?subdirectory=modules%2Ftool-delegate&rev=main#8462030de39e2f86beda8b7758925520683e3678" }
+source = { git = "https://github.com/microsoft/amplifier-foundation?subdirectory=modules%2Ftool-delegate&rev=main#82798febe57899497eccd659c8657f8bd8960138" }
 dependencies = [
     { name = "amplifier-core" },
 ]
@@ -162,7 +162,7 @@ dependencies = [
 [[package]]
 name = "amplifier-worktrees"
 version = "0.1.0"
-source = { git = "https://github.com/microsoft/amplifier-foundation?subdirectory=libraries%2Fworktrees&rev=main#8462030de39e2f86beda8b7758925520683e3678" }
+source = { git = "https://github.com/microsoft/amplifier-foundation?subdirectory=libraries%2Fworktrees&rev=main#82798febe57899497eccd659c8657f8bd8960138" }
 dependencies = [
     { name = "filelock" },
 ]
