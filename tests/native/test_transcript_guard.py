@@ -17,8 +17,38 @@ MODULE = 'amplifier_foundation.session.transcript_guard'
 def test_selected_guard_is_the_canonical_foundation_class():
     from amplifier_foundation.session import NativeTranscriptGuard
 
-    assert runtime_qualification.required_transcript_guard() is NativeTranscriptGuard
+    assert runtime_qualification.require_session_api() is NativeTranscriptGuard
     assert NativeTranscriptGuard.__module__ == MODULE
+
+
+@pytest.mark.parametrize('method', [None, lambda self, **kwargs: None])
+async def test_old_acquisition_api_refuses_before_ownership_or_history(tmp_path, monkeypatch, method):
+    class OldStore:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError('API admission must precede ownership')
+
+    OldStore.acquire_async = method
+    monkeypatch.setattr('amplifier_foundation.session.shared_state.SharedSessionStore', OldStore)
+    monkeypatch.setattr('amplifier_acp.native.runtime_bootstrap.bootstrap_app_package', lambda: None)
+    prepare, recover = AsyncMock(), Mock()
+    monkeypatch.setattr(host, 'prepare_manager', prepare)
+    monkeypatch.setattr('amplifier_acp.native.history_revision.recover_pending', recover)
+    events = []
+    monkeypatch.setattr('amplifier_acp.native.runtime_worker.publish', events.append)
+    worker = Worker()
+    try:
+        await worker.start({'id': 'old-acquisition', 'workspace': str(tmp_path)}, recover_bundle=False)
+        assert worker.shutdown.is_set() and worker.shared_handle is None
+        assert worker.runtime is None and worker.execution is None
+        prepare.assert_not_awaited()
+        recover.assert_not_called()
+        errors = [event for event in events if event['type'] == 'runtime.error']
+        assert len(errors) == 1
+        assert errors[0]['error'].startswith('RuntimeDependencyError: ')
+        assert 'cancellation-safe writer acquisition' in errors[0]['error']
+    finally:
+        if worker.maintenance_gate:
+            worker.maintenance_gate.release()
 
 
 @pytest.mark.parametrize('missing', ['module', 'guard', 'conflict'])
@@ -63,12 +93,13 @@ def test_unrelated_import_failure_is_not_reported_as_an_old_foundation(monkeypat
     error = ModuleNotFoundError('broken unrelated dependency', name='unrelated_native_dependency')
     monkeypatch.setattr(importlib, 'import_module', Mock(side_effect=error))
     with pytest.raises(ModuleNotFoundError) as raised:
-        runtime_qualification.required_transcript_guard()
+        runtime_qualification.require_session_api()
     assert raised.value is error
 
 
 async def test_dependency_preparation_can_import_and_enter_without_new_guard(tmp_path, monkeypatch):
     import amplifier_foundation.session as foundation_session
+    from amplifier_foundation.session.shared_state import SharedSessionStore
 
     class PreparationReached(Exception):
         pass
@@ -82,6 +113,7 @@ async def test_dependency_preparation_can_import_and_enter_without_new_guard(tmp
         old.setitem(sys.modules, MODULE, None)
         old.delattr(foundation_session, 'NativeTranscriptGuard')
         old.delattr(foundation_session, 'NativeTranscriptConflict')
+        old.delattr(SharedSessionStore, 'acquire_async')
         importlib.reload(host)
         old.setattr(host, 'load_config', load)
         try:
