@@ -74,8 +74,9 @@ def live_plan(plan, background_delegate=True):
 
 
 def repair_interrupted_receipts(messages):
-    result = copy.deepcopy(messages)
-    for row in result:
+    """Repair receipt text without mutating input; other rows and fields are borrowed."""
+    result = list(messages)
+    for index, row in enumerate(messages):
         if row.get("role") != "tool" or not isinstance(row.get("content"), str):
             continue
         try:
@@ -83,9 +84,9 @@ def repair_interrupted_receipts(messages):
         except ValueError:
             continue
         if isinstance(receipt, dict) and receipt.get("status") == "queued" and receipt.get("job_id") and receipt.get("call_id") == row.get("tool_call_id"):
-            row["content"] = json.dumps({"status": "interrupted", "job_id": receipt["job_id"],
+            result[index] = {**row, "content": json.dumps({"status": "interrupted", "job_id": receipt["job_id"],
                 "call_id": receipt["call_id"], "outcome": "unconfirmed", "effects": "not_rolled_back",
-                "instruction": "This receipt was imported from a stopped host. Inspect actual state; do not automatically repeat the operation."})
+                "instruction": "This receipt was imported from a stopped host. Inspect actual state; do not automatically repeat the operation."})}
     return result
 
 
