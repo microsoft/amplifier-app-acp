@@ -25,9 +25,6 @@ import os
 from pathlib import Path
 
 
-import stat
-
-
 from .config import app_home, HostConfig, expand_environment, load_config, merge, write_private
 
 
@@ -90,59 +87,6 @@ def repair_interrupted_receipts(messages):
                 "call_id": receipt["call_id"], "outcome": "unconfirmed", "effects": "not_rolled_back",
                 "instruction": "This receipt was imported from a stopped host. Inspect actual state; do not automatically repeat the operation."})
     return result
-
-
-class NativeTranscriptConflict(RuntimeError):
-    """An older host changed native history outside the shared lock."""
-
-
-class _NativeTranscriptGuard:
-    """Fail closed when native history changes after admission.
-
-    Foundation's lock coordinates participating hosts. Older CLI releases do
-    not use it, so their native file must also be checked before each write.
-    This is conflict detection, not a lock over non-cooperating processes.
-    """
-    def __init__(self, path):
-        self.path = Path(path)
-        self.stamp = self._stamp()
-        self.companion_stamps = self._companions()
-
-    @staticmethod
-    def conflict():
-        return NativeTranscriptConflict(
-            "The native CLI transcript changed outside this session's shared lock. "
-            "Both histories were preserved. Resolve the conflicting transcript before continuing this session.")
-
-    def _stamp(self):
-        try:
-            info = self.path.lstat()
-        except FileNotFoundError:
-            return None
-        if not stat.S_ISREG(info.st_mode):
-            raise NativeTranscriptConflict("The native CLI transcript is not a regular file; it was not changed.")
-        return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
-
-    def _companions(self):
-        values = []
-        for name in ('transcript.jsonl.backup',):
-            path = self.path.with_name(name)
-            try:
-                info = path.lstat()
-                if not stat.S_ISREG(info.st_mode):
-                    raise NativeTranscriptConflict('Native session history must use regular files; nothing was changed.')
-                values.append((info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns))
-            except FileNotFoundError:
-                values.append(None)
-        return tuple(values)
-
-    def check(self):
-        if self._stamp() != self.stamp or self._companions() != self.companion_stamps:
-            raise self.conflict()
-
-    def saved(self):
-        self.stamp = self._stamp()
-        self.companion_stamps = self._companions()
 
 
 class SelectedProvider:
@@ -694,6 +638,8 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
                           refresh_dependencies=False, install_overrides=None, qualification_readonly=False, global_only=False, runtime_plan=None, **kwargs):
     if refresh_dependencies and resume:
         raise ValueError("Dependency refresh is limited to a new isolated qualification session.")
+    from ..runtime_qualification import required_transcript_guard
+    NativeTranscriptGuard = required_transcript_guard()
     from amplifier_foundation import SessionConfigurator
     from amplifier_module_loop_live.runtime import Runtime
     from amplifier_module_loop_live.job_store import JobStore
@@ -717,7 +663,7 @@ async def prepare_manager(workspace, *, runtime=None, bundle=None, background_de
     # Native history is authoritative, including an intentionally empty file.
     # A common checkpoint is read only for an explicitly legacy-only session;
     # a stale or corrupt checkpoint cannot prevent opening valid native history.
-    native_guard = _NativeTranscriptGuard(store.directory(runtime.session_id) / "transcript.jsonl")
+    native_guard = NativeTranscriptGuard(store.directory(runtime.session_id) / "transcript.jsonl")
     resume_diagnostics = []
     saved = store.load(runtime.session_id, diagnostics=resume_diagnostics) if resume else None
     history_source = "native" if saved is not None else "new"
