@@ -138,7 +138,7 @@ async def test_worker_rejects_uncontrolled_naming_before_execute(tmp_path, monke
     import sys
     from unittest.mock import AsyncMock, Mock
     from amplifier_acp.native.runtime_worker import Worker
-    from amplifier_acp.native.shared_state import ActivationGate
+    from amplifier_foundation.session.activation import ActivationGate
     hooks = HookRegistry()
     async def scheduler(event, data): raise AssertionError('Uncontrolled model call')
     count = 2 if duplicate else 1
@@ -166,15 +166,17 @@ async def test_worker_rejects_uncontrolled_naming_before_execute(tmp_path, monke
     events = []
     monkeypatch.setattr('amplifier_acp.native.runtime_worker.publish', events.append)
     worker = Worker()
-    worker.shared_store = SimpleNamespace()
-    from amplifier_foundation.session.shared_state import file_stamp
-    worker.shared_store_stamp = file_stamp
-    worker.shared_handle = SimpleNamespace()
-    worker.activation_gate = ActivationGate()
-    await worker.start({'id': 'blocked', 'workspace': str(tmp_path)}, recover_bundle=False)
-    session.execute.assert_not_awaited()
-    assert worker.execution is None and worker.shutdown.is_set()
-    assert any(event['type'] == 'runtime.error' and 'recognized lifecycle' in event['error'] for event in events)
+    try:
+        await worker.start({'id': 'blocked', 'workspace': str(tmp_path)}, recover_bundle=False)
+        assert type(worker.activation_gate) is ActivationGate
+        session.execute.assert_not_awaited()
+        assert worker.execution is None and worker.shutdown.is_set()
+        assert any(event['type'] == 'runtime.error' and 'recognized lifecycle' in event['error'] for event in events)
+    finally:
+        if worker.shared_handle:
+            worker.shared_handle.release()
+        if worker.maintenance_gate:
+            worker.maintenance_gate.release()
 
 
 async def test_actual_mounted_parent_late_result_preserves_manual_rename(native_home, community):

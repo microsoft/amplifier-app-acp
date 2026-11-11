@@ -352,7 +352,8 @@ class Worker:
             from amplifier_acp.native.host.session import prepare_manager
             from amplifier_acp.native.execution_events import ExecutionEvents
             from amplifier_acp.native.runtime_controls import RuntimeControls
-            from amplifier_acp.native.shared_state import ActivationGate, configuration_stamp
+            from amplifier_acp.native.shared_state import configuration_stamp
+            from amplifier_foundation.session.activation import ActivationGate
             from amplifier_module_loop_live.runtime import Runtime
             self.home = app_home()
             from amplifier_acp.native.runtime_qualification import active_install_overrides
