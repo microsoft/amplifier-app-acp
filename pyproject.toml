@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "amplifier-acp"
-version = "0.1.5"
+version = "0.1.6"
 description = "ACP v1 adapter for the full modular Amplifier Core and Foundation runtime"
 requires-python = ">=3.13"
 license = "MIT"
