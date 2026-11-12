@@ -12,6 +12,7 @@ replacement implementation is imported.
 | Behavior | Native implementation / acceptance |
 |---|---|
 | Branch policy versus immutable receipts | Future preparation uses the branch manifest; lock/installed source graph are qualification and rollback evidence only. Existing graphs never refreshed in place. |
+| Prepared graph versus inherited baseline | Freeze reproduces the actual prepared project manifest and installed graph. A lazy child retains its parent's baseline policy (or copied parent manifest for legacy receipts); it does not claim adoption of newly offered dependencies. A fresh explicit generation still adopts the current offered baseline. |
 | Preparation and profile mount | Foundation batched dependency preparation, one frozen resolver transaction, separate read-only profile probes. Real owned fixture passed. |
 | Source protection | Exact checked revision/ref/dirty-state preflight; only reviewed generated artifacts restored, only inside staged copy. |
 | Git staging | Four independent candidates concurrently; writes to one target serialize; failure cancels siblings before qualification. |

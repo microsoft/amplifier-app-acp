@@ -299,8 +299,12 @@ def _local_directory_identity(row):
     return row
 
 
-async def freeze(manager, generation, project):
-    """Freeze the post-probe graph into a distinct project and verify its install."""
+async def freeze(manager, generation, project, *, baseline_manifest=None):
+    """Reproduce the prepared graph; keep inherited baseline policy separate.
+
+    Fresh generations use the current offered baseline. Lazy profiles pass the
+    parent's policy rather than claiming adoption of newer declarations.
+    """
     from .updates import process
     receipt = environments.receipt_directory(manager.home, generation)
     if (receipt / 'runtime.lock').exists():
@@ -326,7 +330,8 @@ async def freeze(manager, generation, project):
             policies[name]['ref'] = ref
     if not graph:
         raise ValueError('The prepared worker has no installed distribution evidence.')
-    content = frozen_manifest(environments.manifest_path().read_bytes(), graph)
+    content = frozen_manifest((Path(project) / 'pyproject.toml').read_bytes(), graph)
+    baseline_manifest = environments.manifest_path().read_bytes() if baseline_manifest is None else baseline_manifest
     # Share only a fully qualified immutable graph with the same Python/OS
     # contract. Active environments are never uv-synced or repaired in place.
     # Generation receipts retain separate ref policy and rollback identity.
@@ -386,7 +391,7 @@ async def freeze(manager, generation, project):
             manager.diagnostics.record('ecosystem-runtime-reuse', 'succeeded')
     from .host.config import write_private
     write_private(receipt / 'runtime-project.json', json.dumps({'project': final.name}))
-    receipt.joinpath('runtime-base.toml').write_bytes(environments.manifest_path().read_bytes())
+    receipt.joinpath('runtime-base.toml').write_bytes(baseline_manifest)
     shutil.copy2(final / 'pyproject.toml', receipt / 'runtime.toml')
     shutil.copy2(final / 'uv.lock', receipt / 'runtime.lock')
     receipt.joinpath('runtime-sources.json').write_text(json.dumps(policies, indent=2) + '\n')
