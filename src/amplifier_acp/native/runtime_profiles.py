@@ -220,6 +220,10 @@ async def ensure(home, generation, session, *, shared_home=None):
         current = project_path(home, generation)
         shutil.copy2(current / "pyproject.toml", project / "pyproject.toml")
         shutil.copy2(current / "uv.lock", project / "uv.lock")
+        # An inherited graph has not adopted the current package's policy.
+        # Older receipts without a baseline retain their copied parent manifest.
+        baseline = receipt / "runtime-base.toml"
+        baseline_manifest = (baseline if baseline.exists() else project / "pyproject.toml").read_bytes()
         from .runtime_qualification import freeze, prepare_overrides, verify_recorded
         from .update_sources import store_environment
 
@@ -282,7 +286,7 @@ async def ensure(home, generation, session, *, shared_home=None):
                 pass
 
         manager = SimpleNamespace(home=home, diagnostics=Diagnostics())
-        final = await freeze(manager, selected, project)
+        final = await freeze(manager, selected, project, baseline_manifest=baseline_manifest)
         overrides = stage / "runtime-install-overrides.txt"
         command[command.index("--project") + 1] = str(final)
         env = staging_environment(env, final, Path(home)/"runtime", readonly=True)

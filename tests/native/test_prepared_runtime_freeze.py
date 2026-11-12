@@ -3,6 +3,7 @@
 Use the real native ensure/freeze owners and offline uv with tiny local wheels.
 Only Foundation's bundle probes are replaced; no model or live account is used.
 """
+import asyncio
 import hashlib
 import json
 import os
@@ -90,11 +91,16 @@ async def prepared_profile(tmp_path, monkeypatch):
                         manager=manager, a=baseline_a, b=baseline_b, uv=uv, process=process,
                         session={'id': 'fixture', 'workspace': str(workspace), 'bundle': 'work'},
                         prepared_graphs=[], origins=[], commands=[], corruption=None, wheels=wheels)
+    h.readonly_entered = asyncio.Event()
+    h.hold_readonly = False
 
     async def controlled_process(*args, **kwargs):
         h.commands.append(args)
         if any(str(arg).endswith('/update_probe.py') for arg in args):
             project = Path(args[args.index('--project') + 1])
+            if '--read-only' in args and h.hold_readonly:
+                h.readonly_entered.set()
+                await asyncio.Event().wait()
             if '--read-only' not in args:
                 # A profile-only dependency prevents immutable parent reuse from
                 # hiding which manifest was used for the newly frozen project.
@@ -162,6 +168,28 @@ async def test_lazy_profile_keeps_prepared_graph_and_inherited_baseline(prepared
     commands = list(h.commands)
     assert await runtime_profiles.ensure(h.home, h.generation, h.session) == selected
     assert h.commands == commands and h.snapshot() == h.before
+
+
+async def test_cancelled_profile_cannot_publish_validated_or_index(prepared_profile):
+    h = prepared_profile
+    h.hold_readonly = True
+    task = asyncio.create_task(runtime_profiles.ensure(h.home, h.generation, h.session))
+    try:
+        await asyncio.wait_for(h.readonly_entered.wait(), 5)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    stages = [p for p in (h.home / 'updates/releases').iterdir() if p != h.receipt]
+    assert len(stages) == 1
+    stage = stages[0]
+    # Freeze may retain a qualified candidate, but interrupted admission cannot
+    # make it a validated profile or a reuse-index hit.
+    assert (stage / 'runtime.lock').exists()
+    assert not (stage / 'validated.json').exists()
+    assert not (stage / 'profiles-qualified.json').exists()
+    assert not list((h.home / 'updates/profiles').glob('*.json'))
+    assert h.snapshot() == h.before
 
 
 async def test_fresh_generation_still_adopts_offered_baseline(prepared_profile):
