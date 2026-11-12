@@ -1,0 +1,7 @@
+{
+  "home": "/absolute/path/to/new-native-room-pilot/native",
+  "appHome": "/absolute/path/to/new-native-room-pilot/native-app",
+  "registryHome": "/absolute/path/to/new-native-room-pilot/cache",
+  "bundle": "/absolute/path/to/selected-bundle.yaml",
+  "startupTimeout": 180
+}

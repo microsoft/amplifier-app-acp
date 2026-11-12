@@ -45,6 +45,10 @@ reviewed module source without editing shared settings. Omitted homes use existi
 native configuration/environment; they are never ACP authentication payloads.
 Do not point an experiment at another owner's state.
 
+For a separate browser room using an already installed native agent, follow the
+[opt-in Conversations pilot](docs/conversations-pilot.md). It uses the existing
+Conversations commands and keeps experience and native state in separate homes.
+
 Each loaded native session uses a separate worker subprocess so cwd, provider
 credentials, module imports and native ownership never mix across sessions.
 Standalone settled workers retire after `idleSeconds`; active turns, children, approvals,
