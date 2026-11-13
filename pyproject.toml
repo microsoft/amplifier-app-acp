@@ -9,6 +9,7 @@ description = "ACP v1 adapter for the full modular Amplifier Core and Foundation
 requires-python = ">=3.13"
 license = "MIT"
 dependencies = [
+  "amplifier-kernels @ git+https://github.com/microsoft/amplifier-unified@8f4c05c53e5343a39433bc4a64f0d9e0104ce0e8#subdirectory=amplifier_kernels",
   "amplifier-core>=2.0.1",
   "amplifier-foundation",
   "amplifier-module-loop-live",
@@ -43,6 +44,9 @@ amplifier-module-provider-fixture = { path = "tests/fixtures/provider", editable
 
 amplifier-module-tool-delegate = { git = "https://github.com/microsoft/amplifier-foundation", rev = "main", subdirectory = "modules/tool-delegate" }
 amplifier-module-provider-openai = { git = "https://github.com/microsoft/amplifier-module-provider-openai", rev = "main" }
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/amplifier_acp"]

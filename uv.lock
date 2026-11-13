@@ -13,6 +13,7 @@ source = { editable = "." }
 dependencies = [
     { name = "amplifier-core" },
     { name = "amplifier-foundation" },
+    { name = "amplifier-kernels" },
     { name = "amplifier-module-hooks-session-naming" },
     { name = "amplifier-module-loop-live" },
     { name = "amplifier-module-tool-mcp" },
@@ -42,6 +43,7 @@ dev = [
 requires-dist = [
     { name = "amplifier-core", specifier = ">=2.0.1" },
     { name = "amplifier-foundation", git = "https://github.com/microsoft/amplifier-foundation?rev=main" },
+    { name = "amplifier-kernels", git = "https://github.com/microsoft/amplifier-unified?subdirectory=amplifier_kernels&rev=8f4c05c53e5343a39433bc4a64f0d9e0104ce0e8" },
     { name = "amplifier-module-hooks-session-naming", git = "https://github.com/microsoft/amplifier-foundation?subdirectory=modules%2Fhooks-session-naming&rev=main" },
     { name = "amplifier-module-loop-live", git = "https://github.com/microsoft/amplifier-module-loop-live?rev=main" },
     { name = "amplifier-module-tool-mcp", git = "https://github.com/microsoft/amplifier-module-tool-mcp?rev=main" },
@@ -93,6 +95,11 @@ dependencies = [
     { name = "filelock" },
     { name = "pyyaml" },
 ]
+
+[[package]]
+name = "amplifier-kernels"
+version = "0.1.0"
+source = { git = "https://github.com/microsoft/amplifier-unified?subdirectory=amplifier_kernels&rev=8f4c05c53e5343a39433bc4a64f0d9e0104ce0e8#8f4c05c53e5343a39433bc4a64f0d9e0104ce0e8" }
 
 [[package]]
 name = "amplifier-module-context-simple"

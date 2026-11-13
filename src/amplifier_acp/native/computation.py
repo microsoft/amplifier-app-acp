@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 
-from .kernels import Kernels
+from amplifier_kernels import Kernels
 
 
 KERNEL_TRANSPORT = contextvars.ContextVar("kernel_transport", default=False)

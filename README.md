@@ -103,6 +103,10 @@ controls, passive bounded history and host callbacks. Extensions are negotiated
 with versioned `_meta` capabilities; an ordinary ACP client requires none.
 Private drafts, UI selection and layout never enter this package.
 
+Persistent computation uses the canonical public [kernel package](docs/computation-package.md)
+in both the launcher and isolated workers; the adapter owns its existing permission
+and observation integration.
+
 ## Verification and source
 
 ```sh
