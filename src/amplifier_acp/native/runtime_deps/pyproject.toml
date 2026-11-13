@@ -4,6 +4,7 @@ version = "0.1.1"
 description = "Standalone Foundation and loop-live runtime for Amplifier Unified"
 requires-python = ">=3.13"
 dependencies = [
+  "amplifier-kernels @ git+https://github.com/microsoft/amplifier-unified@8f4c05c53e5343a39433bc4a64f0d9e0104ce0e8#subdirectory=amplifier_kernels",
   "amplifier-memory @ git+https://github.com/microsoft/amplifier-bundle-memory@main",
   "amplifier-core>=2.0.1",
   "amplifier-module-loop-live",
