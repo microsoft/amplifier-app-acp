@@ -45,6 +45,9 @@ amplifier-module-provider-fixture = { path = "tests/fixtures/provider", editable
 amplifier-module-tool-delegate = { git = "https://github.com/microsoft/amplifier-foundation", rev = "main", subdirectory = "modules/tool-delegate" }
 amplifier-module-provider-openai = { git = "https://github.com/microsoft/amplifier-module-provider-openai", rev = "main" }
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/amplifier_acp"]
 
