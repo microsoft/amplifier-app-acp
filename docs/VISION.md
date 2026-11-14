@@ -46,7 +46,7 @@ the host and upstream AHP, not a competing protocol inside this agent.
 
 The approved family [AP1–6 agent protocol](https://github.com/microsoft/amplifier-unified/blob/main/contracts/agent-protocol.v1.md),
 [WS1–6 working set](https://github.com/microsoft/amplifier-unified/blob/main/contracts/working-set.v1.md)
-and [CB1–7 component boundaries](https://github.com/microsoft/amplifier-unified/blob/main/contracts/component-boundaries.v1.md)
+and [component boundaries](https://github.com/microsoft/amplifier-unified/blob/main/contracts/component-boundaries.v1.md)
 govern the corresponding promises when this agent participates in Unified.
 Their [family vision](https://github.com/microsoft/amplifier-unified/blob/main/docs/architecture/VISION.md)
 owns the broader product destination. This repository links that authority
