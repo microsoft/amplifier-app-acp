@@ -64,6 +64,27 @@ ordinary ACP client. Audio uses a separate capability.
 - [Permissions](docs/permissions.md) and [session lifecycle](docs/session-lifecycle.md)
 - [Native agent contract](contracts/native-agent.v1.md) and [contributor entry](AGENTS.md)
 
+
+<!-- ecosystem-map:start -->
+## Where this fits
+
+An ACP execution adapter exposing configured Amplifier bundles to independent clients.
+
+Supports: Agent Instance, Connection, Tool.
+
+![Ecosystem roles and component relationships](docs/ecosystem-map.svg)
+
+[Open the map](docs/ecosystem-map.svg) · [Product page source (private)](docs/product/index.html) · [Map guide](https://github.com/microsoft/amplifier-constellation/blob/main/docs/ecosystem-maps.md)
+
+<details>
+<summary>The five shared building blocks</summary>
+
+[![Experience, Conversation, Agent Instance, Connection and Tool](https://raw.githubusercontent.com/microsoft/amplifier-constellation/main/site/assets/art/building-blocks.png)](https://microsoft.github.io/amplifier-constellation/)
+
+</details>
+
+<!-- ecosystem-map:end -->
+
 ## Contributing
 
 Most contributions require you to agree to a
