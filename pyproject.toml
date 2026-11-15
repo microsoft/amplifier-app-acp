@@ -9,7 +9,7 @@ description = "ACP v1 adapter for the full modular Amplifier Core and Foundation
 requires-python = ">=3.13"
 license = "MIT"
 dependencies = [
-  "amplifier-kernels @ git+https://github.com/microsoft/amplifier-unified@8f4c05c53e5343a39433bc4a64f0d9e0104ce0e8#subdirectory=amplifier_kernels",
+  "amplifier-kernels @ https://github.com/microsoft/amplifier-unified/releases/download/kernels-v0.1.0/amplifier_kernels-0.1.0-py3-none-any.whl#sha256=ff709a59c79b88c9050770894d675ba4a3962a130149fb46578f201435b97b78",
   "amplifier-core>=2.0.1",
   "amplifier-foundation",
   "amplifier-module-loop-live",
