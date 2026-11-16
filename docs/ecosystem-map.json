@@ -1,18 +1,18 @@
 {
   "citations": [
     {
-      "git_blob": "162b2b6336f65b59630f997cad7756efea55ad63",
+      "git_blob": "f3e58d498bf63220f448f9c1d9cef405ae55f63b",
       "path": "README.md",
-      "ref": "d1bf768ee2c30dba32f87c72708a83abb94bbf30",
-      "sha256": "3fe2aec74a8ca01430f8458ddf8ffebc47511a9c106f5b1395ef07bdf6098888",
-      "url": "https://github.com/microsoft/amplifier-app-acp/blob/d1bf768ee2c30dba32f87c72708a83abb94bbf30/README.md"
+      "ref": "222c4401fc20bc8d0d45c7930ceaf6baf9130ee9",
+      "sha256": "1d46a7010614f3aebc447cb20650d82c06cf7b1888b9df45c6eea30897ecc796",
+      "url": "https://github.com/microsoft/amplifier-app-acp/blob/222c4401fc20bc8d0d45c7930ceaf6baf9130ee9/README.md"
     },
     {
       "git_blob": "4993e8cb4e56329a2d98200f7d499da80c7b5161",
       "path": "contracts/native-agent.v1.md",
-      "ref": "d1bf768ee2c30dba32f87c72708a83abb94bbf30",
+      "ref": "222c4401fc20bc8d0d45c7930ceaf6baf9130ee9",
       "sha256": "d5107230c9ed27e2bdf2680294439d425c758bc489a6ccbd52d8a76a18f71d5c",
-      "url": "https://github.com/microsoft/amplifier-app-acp/blob/d1bf768ee2c30dba32f87c72708a83abb94bbf30/contracts/native-agent.v1.md"
+      "url": "https://github.com/microsoft/amplifier-app-acp/blob/222c4401fc20bc8d0d45c7930ceaf6baf9130ee9/contracts/native-agent.v1.md"
     }
   ],
   "consumer_cta": {
@@ -87,7 +87,7 @@
     "Do not label ordinary ACP support as compliance with every Agent Instance lifecycle contract."
   ],
   "purpose": "Expose configured Amplifier bundles, tools and delegation through the Agent Client Protocol.",
-  "ref": "d1bf768ee2c30dba32f87c72708a83abb94bbf30",
+  "ref": "222c4401fc20bc8d0d45c7930ceaf6baf9130ee9",
   "repository": "microsoft/amplifier-app-acp",
   "roles": [],
   "scope": "agent execution adapter",
@@ -102,5 +102,5 @@
     "Connection",
     "Tool"
   ],
-  "visibility": "private"
+  "visibility": "public"
 }
